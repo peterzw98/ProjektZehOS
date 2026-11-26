@@ -32,8 +32,8 @@ internal static unsafe partial class CosmosUserModeProbe
     private const ulong UserEnd = 0x0000_8000_0000_0000;
     private const ulong UserCs = 0x4B;
 
-    private static ulong userBase;
-    private static readonly ulong[] data = new ulong[DataPages];
+    internal static ulong userBase; // N1-B4 kernelread: Adresse, die nur die Kerneltabellen der unteren Haelfte abbilden
+    internal static readonly ulong[] data = new ulong[DataPages];
     private static int failed;
 
     private static long calls;
@@ -48,9 +48,9 @@ internal static unsafe partial class CosmosUserModeProbe
 
     private delegate void NmiHandler(ref UserFrame frame);
 
-    [LibraryImport("*", EntryPoint = "zehos_user_probe_address"), SuppressGCTransition] private static partial ulong ImageAddress();
-    [LibraryImport("*", EntryPoint = "zehos_user_probe_size"), SuppressGCTransition] private static partial ulong ImageSize();
-    [LibraryImport("*", EntryPoint = "zehos_user_probe_cr3"), SuppressGCTransition] private static partial ulong ReadCr3();
+    [LibraryImport("*", EntryPoint = "zehos_user_probe_address"), SuppressGCTransition] internal static partial ulong ImageAddress();
+    [LibraryImport("*", EntryPoint = "zehos_user_probe_size"), SuppressGCTransition] internal static partial ulong ImageSize();
+    [LibraryImport("*", EntryPoint = "zehos_user_probe_cr3"), SuppressGCTransition] internal static partial ulong ReadCr3();
     [LibraryImport("*", EntryPoint = "zehos_user_probe_cr4"), SuppressGCTransition] private static partial ulong ReadCr4();
     [LibraryImport("*", EntryPoint = "zehos_user_probe_mask"), SuppressGCTransition] private static partial ulong Mask();
     [LibraryImport("*", EntryPoint = "zehos_user_probe_restore"), SuppressGCTransition] private static partial void Restore(ulong flags);
@@ -111,6 +111,8 @@ internal static unsafe partial class CosmosUserModeProbe
             Case("killspin", KillSpin);
             Case("nmi", Nmi);
             Case("leave", Leave);
+            // N1-B4: Faelle mit eigenen Seitentabellen, danach muss das Programm der Kerneltabellen weiter laufen (Case).
+            CosmosAddressSpaceProbe.Run(&OnSyscall, &OnFault);
             return Done();
 #endif
         }
@@ -125,9 +127,9 @@ internal static unsafe partial class CosmosUserModeProbe
     private static volatile int sink;
 #endif
 
-    private static void Write(string text) => Log.WriteString("USER_PROBE " + text + "\n");
+    internal static void Write(string text) => Log.WriteString("USER_PROBE " + text + "\n");
 
-    private static void Report(string name, bool ok, string text)
+    internal static void Report(string name, bool ok, string text)
     {
         if (!ok) failed++;
         Write(name + " ok=" + (ok ? "1 " : "0 ") + text);
@@ -139,7 +141,7 @@ internal static unsafe partial class CosmosUserModeProbe
         return false;
     }
 
-    private static void Case(string name, Func<(bool Ok, string Text)> body)
+    internal static void Case(string name, Func<(bool Ok, string Text)> body)
     {
         var clock = Stopwatch.StartNew();
         try
@@ -157,7 +159,7 @@ internal static unsafe partial class CosmosUserModeProbe
 
     // ---- Seiten ----
 
-    private static ulong hhdm;
+    internal static ulong hhdm;
 
     // Der Heap liegt im HHDM und ist dort physisch zusammenhaengend; die Seiten bleiben bis zum Ende der Probe belegt.
     private static ulong NewPages(int count)
@@ -200,7 +202,10 @@ internal static unsafe partial class CosmosUserModeProbe
         return ready;
     }
 
-    private static ulong Entry(string name)
+    private static ulong Entry(string name) => userBase + Offset(name);
+
+    /// <summary>Versatz eines Einstiegs im Abbild, aus der Kopftabelle (N1-B4 bildet das Abbild an eine eigene Basis ab).</summary>
+    internal static uint Offset(string name)
     {
         byte* image = (byte*)ImageAddress();
         uint count = *(uint*)(image + 4), size = *(uint*)(image + 8);
@@ -209,13 +214,13 @@ internal static unsafe partial class CosmosUserModeProbe
             byte* entry = image + 16 + i * size;
             int length = 0;
             while (length < name.Length && entry[length] == name[length]) length++;
-            if (length == name.Length && entry[length] == 0) return userBase + *(uint*)(entry + 24);
+            if (length == name.Length && entry[length] == 0) return *(uint*)(entry + 24);
         }
         throw new InvalidOperationException("no entry " + name);
     }
 
     private static ulong DataUser(int page) => userBase + (ulong)(FirstDataPage + page) * PageSize;
-    private static ulong Stack(int page) => DataUser(page) + StackOffset;
+    internal static ulong Stack(int page) => DataUser(page) + StackOffset;
     private static ref ulong Counter(int page) => ref *(ulong*)(data[page] + StackOffset + 8);
 
     // ---- Handler (auf dem Kernelstack des Threads, Interrupts an) ----
@@ -278,17 +283,17 @@ internal static unsafe partial class CosmosUserModeProbe
 
     // ---- Threads ----
 
-    private static uint ProgramCpu => (uint)KernelCpus.Count - 1;
+    internal static uint ProgramCpu => (uint)KernelCpus.Count - 1;
 
-    private static void PinTo(uint cpu)
+    internal static void PinTo(uint cpu)
     {
         ThreadAffinity.Current = CpuSet.Single(cpu);
         while (KernelCpus.Current != cpu) Thread.Sleep(1);
     }
 
-    private static bool Join(Thread thread, int seconds = 240) => thread.Join(seconds * 1000);
+    internal static bool Join(Thread thread, int seconds = 240) => thread.Join(seconds * 1000);
 
-    private static bool WaitFor(Func<bool> condition, int seconds = 240)
+    internal static bool WaitFor(Func<bool> condition, int seconds = 240)
     {
         var clock = Stopwatch.StartNew();
         while (!condition())

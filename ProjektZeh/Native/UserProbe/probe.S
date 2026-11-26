@@ -37,6 +37,7 @@ probe_base:
 .equ KERNEL_ADDR, 0xFFFF800000000000     /* kanonisch, obere Haelfte: #PF statt #GP */
 
 .equ SYS_CHECK, 0x7A03
+.equ SYS_DEVICE, 0x7A04                  /* N1-B4 device: Kernel fasst ein Geraet an; 0 weiter, 1 fertig, sonst Fehlerkennung */
 
 /* Endlosschleife. Kein `jmp .`: den Punkt als Sprungziel kennt der Assembler von clang (Kernelbau) in Intel-Schreibweise nicht. */
 .macro HANG
@@ -52,7 +53,7 @@ probe_base:
 /* Kopf: "ZUP1", Anzahl, Eintragsgroesse (32), Kapazitaet; je Eintrag Name (24 Byte, mit 0 aufgefuellt), Versatz (u32), 0 (u32). */
         .org TABLE_OFF
         .ascii "ZUP1"
-        .long 16
+        .long 21
         .long 32
         .long CAPACITY
 
@@ -80,6 +81,11 @@ probe_base:
         NAMED fault_avx, 13
         NAMED fpu2, 14
         NAMED switch, 15
+        NAMED isolate, 16
+        NAMED readat, 17
+        NAMED execat, 18
+        NAMED sparse, 19
+        NAMED device, 20
 
 .macro SLOT index, target
         .org SLOT_OFF + SLOT_SIZE * \index, 0xCC   /* Luecken als int3 */
@@ -102,6 +108,11 @@ probe_base:
         SLOT 13, body_fault_avx
         SLOT 14, body_fpu2
         SLOT 15, body_switch
+        SLOT 16, body_isolate
+        SLOT 17, body_readat
+        SLOT 18, body_execat
+        SLOT 19, body_sparse
+        SLOT 20, body_device
 
         .org BODY_OFF, 0xCC
 
@@ -291,6 +302,98 @@ body_switch:
         jz 1b
         mov edi, 5
 3:      xor esi, esi
+        mov eax, SYS_EXIT
+        syscall
+        HANG
+
+/* ---- N1-B4 (Adressraeume, CosmosAddressSpaceProbe.cs): laufen auf einer eigenen UserPageTable ---- */
+
+/* isolate: Kennung bei [rsp], Zaehler bei [rsp + 8], Datenadresse bei [rsp + 16]. Zwei Programme nutzen dieselben Adressen in
+ * verschiedenen Tabellen: Jedes schreibt seine Kennung, wartet und liest sie zurueck. Teilten sie eine Seite (CR3 nicht
+ * gewechselt), saehe eines die Kennung des anderen. Ende nur durch RequestLeave oder rdi = 1 Daten, 4 Stack, 5 SYS_CHECK. */
+body_isolate:
+        mov rbx, [rsp]
+        mov r12, [rsp + 16]
+1:      mov r9d, 20000
+2:      mov [r12], rbx
+        mov ecx, 64
+3:      pause
+        dec ecx
+        jnz 3b
+        mov edi, 1
+        cmp [r12], rbx
+        jne 4f
+        mov edi, 4
+        cmp [rsp], rbx
+        jne 4f
+        inc qword ptr [rsp + 8]
+        dec r9d
+        jnz 2b
+        mov rdi, rbx
+        mov eax, SYS_CHECK
+        syscall
+        test rax, rax
+        jz 1b
+        mov edi, 5
+4:      xor esi, esi
+        mov eax, SYS_EXIT
+        syscall
+        HANG
+
+/* readat: liest das Wort an der Adresse bei [rsp]. Gelingt das, endet der Fall mit rdi = 0x10 (der Kernel erwartet meist #PF). */
+body_readat:
+        mov rax, [rsp]
+        mov rax, [rax]
+        mov edi, 0x10
+        xor esi, esi
+        mov eax, SYS_EXIT
+        syscall
+        HANG
+
+/* execat: springt an die Adresse bei [rsp] (nx: Datenseite, #PF erwartet). */
+body_execat:
+        mov rax, [rsp]
+        jmp rax
+
+/* sparse: Adressliste bei [rsp] (8-Byte-ausgerichtet), Anzahl bei [rsp + 8]. Schreibt jede Adresse an sich selbst, dann
+ * zweiter Durchgang mit Vergleich; die Seiten belegt der FaultHandler beim ersten Zugriff. Ende rdi = 0 oder 1, rsi = Index. */
+body_sparse:
+        mov r12, [rsp]
+        mov r13, [rsp + 8]
+        xor ecx, ecx
+1:      cmp rcx, r13
+        jae 2f
+        mov rax, [r12 + 8 * rcx]
+        mov [rax], rax
+        inc rcx
+        jmp 1b
+2:      xor ecx, ecx
+3:      cmp rcx, r13
+        jae 5f
+        mov rax, [r12 + 8 * rcx]
+        mov edi, 1
+        cmp [rax], rax
+        jne 6f
+        inc rcx
+        jmp 3b
+5:      xor edi, edi
+6:      mov rsi, rcx
+        mov eax, SYS_EXIT
+        syscall
+        HANG
+
+/* device: ruft SYS_DEVICE, bis der Kernel 1 (fertig) oder eine Fehlerkennung liefert; die Geraetearbeit laeuft im Handler,
+ * also im Kernel auf der Tabelle des Programms. */
+body_device:
+1:      mov eax, SYS_DEVICE
+        syscall
+        test rax, rax
+        jz 1b
+        xor edi, edi
+        cmp rax, 1
+        je 2f
+        mov rdi, rax
+2:      xor esi, esi
         mov eax, SYS_EXIT
         syscall
         HANG
