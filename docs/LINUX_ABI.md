@@ -64,13 +64,22 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
 | 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD` 0, `F_SETFD` ohne Wirkung (kein `execve`); `F_GETFL` immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar); `F_SETFL` ohne Wirkung (Abweichung); sonst `-EINVAL` |
 | 79 | `getcwd` | Rückgabe Länge mit NUL; zu kleiner Puffer `-ERANGE` |
 | 80, 81 | `chdir`, `fchdir` | Ziel muss Verzeichnis sein (`-ENOTDIR`) und Suchrecht haben (`access X_OK`); cwd ist der textuell normalisierte Pfad (Symlinks bleiben darin stehen) |
-| 4, 5, 6, 262 | `stat`, `fstat`, `lstat`, `newfstatat` | `struct stat` 144 Bytes; `fstat` auf Terminal: Zeichengerät 136:0; `AT_EMPTY_PATH` mit leerem Pfad wie `fstat` |
+| 4, 5, 6, 262 | `stat`, `fstat`, `lstat`, `newfstatat` | `struct stat` 144 Bytes; `fstat` auf Terminal: Zeichengerät 136:0; `AT_EMPTY_PATH` mit leerem Pfad wie `fstat`, mit `AT_FDCWD` das Arbeitsverzeichnis |
 | 21, 269, 439 | `access`, `faccessat`, `faccessat2` | Modus nur `F_OK`/`R_OK`/`W_OK`/`X_OK`; Flags ohne Wirkung |
 | 217 | `getdents64` | Position = Index am Deskriptor, `d_off` = nächster Index; erster Eintrag passt nicht `-EINVAL` |
 | 89, 267 | `readlink`, `readlinkat` | gekürzt ohne NUL wie Linux |
 | 83, 258, 84, 87, 263 | `mkdir(at)`, `rmdir`, `unlink(at)` | `AT_REMOVEDIR`; andere Flags `-EINVAL` |
 | 82, 264, 316 | `rename`, `renameat`, `renameat2` | `renameat2` nur mit Flags 0 (`RENAME_NOREPLACE`/`EXCHANGE` `-EINVAL`) |
 | 88, 266 | `symlink`, `symlinkat` | Ziel ist beliebiger Text und wird nicht aufgelöst |
+
+Grenzen (Review V2, bewusst offen):
+
+- Der Pfad einer offenen Datei (`ILinuxFile.Path`) ist der beim Öffnen. Wird ein offenes Verzeichnis oder ein Ordner darüber umbenannt, lösen `openat`/`*at` mit diesem
+  Deskriptor und `fchdir` weiter gegen den alten Pfad auf (Linux folgt dem Verzeichnis).
+- Scheitert bei `read`/`readv` das Zurückschreiben in den Prozess (`-EFAULT`), wird die Position per Seek zurückgesetzt. Bei Dateien ohne Seek (Pipes, Geräte, sobald es sie gibt)
+  sind die gelesenen Bytes dann verloren.
+- `close` schließt die Datei, wenn keine andere Nummer **dieser** Tabelle (0–1023) mehr auf sie zeigt. Das stimmt, solange Nummern unter 1024 bleiben und kein zweiter Prozess
+  die Tabelle oder Dateien teilt (`fork`, Übergabe); dann braucht `ILinuxFile` einen Referenzzähler.
 
 ## Prozess und Terminal (V3)
 

@@ -187,6 +187,9 @@ public class LinuxFileMetaSyscallsTests
         Assert.AreEqual(-20L, Call(p, Newfstatat, 6, p.Mem.Put(0x100, "k"), Base, 0), "Datei als Verzeichnis-fd");
         Assert.AreEqual(-22L, Call(p, Newfstatat, Cwd, p.Mem.Put(0x100, "k"), Base, 0x4));
         Assert.AreEqual(0L, Call(p, Newfstatat, 9, p.Mem.Put(0x100, "/abs"), Base, 0), "absoluter Pfad ignoriert dirfd");
+        Assert.AreEqual(0L, Call(p, Newfstatat, Cwd, p.Mem.Put(0x100, ""), Base, 0x1000), "AT_EMPTY_PATH mit AT_FDCWD = cwd");
+        Assert.AreEqual("stat /home/u", p.Fs.Calls[^1]);
+        Assert.IsTrue(p.Fs.Follow);
     }
 
     [TestMethod]

@@ -367,6 +367,12 @@ public class LinuxFileSyscallsTests
         Assert.AreEqual(-20L, Call(p, Fchdir, 4));
         Assert.AreEqual(-20L, Call(p, Fchdir, 1));
         Assert.AreEqual(-9L, Call(p, Fchdir, 40));
+        p.Table[5] = new MemFile("/dir/y/", true, []);
+        Assert.AreEqual(0L, Call(p, Fchdir, 5));
+        Assert.AreEqual("/dir/y", p.Cwd, "abschließendes / aus open(\"dir/\") fällt weg");
+        p.Table[6] = new MemFile("/", true, []);
+        Assert.AreEqual(0L, Call(p, Fchdir, 6));
+        Assert.AreEqual("/", p.Cwd);
     }
 
     [TestMethod]
