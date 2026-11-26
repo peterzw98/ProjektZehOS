@@ -153,8 +153,10 @@ Grenzen (Review V2, bewusst offen):
   können die Datei kürzen.
   Volle Platte ist `-ENOSPC`: `IOException` mit HResult 28 (Linux-Host), 0x70/0x27 (Windows) oder unter Cosmos dem PAL-Wert 0x10034 (`PalError.ENOSPC`; Cosmos
   setzt `ConvertErrorPalToPlatform` als Identität ein, `InteropSysFilePlug.cs:336`, Wert aus `Interop.Error.cs:37` im Pin 5790fa74, gemeldet von
-  `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. Der HResult im Gast ist bei senior2 angefragt.
-  Im Gast ist Wachstum nur über `lseek` + `write` erreichbar: `ftruncate` (77) und `pwrite64` (18) liefert der Verteiler noch mit `-ENOSYS`.
+  `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. Im Gast belegt (V7b, KVM smp1): `write` am Ende bei voller Platte `-ENOSPC`.
+  Bekannte Grenze: Wächst eine Datei über eine Lücke (`write` hinter dem Ende, `ftruncate` nach oben) und die Platte wird dabei voll, kommt `-EIO` statt `-ENOSPC`.
+  Cosmos' `Truncate` meldet beim Verlängern jeden Fehler als EIO (`FileDescriptorTable.cs:440-442` im Pin 5790fa74), nicht den PAL-Wert wie `PWrite` (`:248`).
+  Behebung als Cosmos-Patch nach der Vorstellung geplant (Issue); `v7bfull` nimmt dort bis dahin `-EIO` an.
 - Rechte: der Prozess gilt als Eigentümer, geprüft werden die Eigentümerbits (r, w, x); fehlendes x auf einem Zwischenverzeichnis, fehlendes w im Elternverzeichnis
   beim Anlegen, Entfernen und Umbenennen `-EACCES`. Platte: Ordner 0755, Dateien 0644 (schreibgeschützt 0444), also ohne Ausführungsbit (`access(X_OK)` `-EACCES`).
 - Symlinks auf der Platte nur, wo das Laufwerk sie kann: FAT unter Cosmos nicht (`FatInodeOperations.Symlink` liefert immer false), dann `symlink` `-EPERM` wie Linux auf vfat.
@@ -178,7 +180,7 @@ Grenzen (Review V2, bewusst offen):
   - FAT-Sonderzeichen `? * " < >`, reservierte Namen (`CON`) und ein führendes Leerzeichen werden angenommen (Cosmos deutet sie nicht, chkdsk/Windows bemängeln sie).
   - Inodenummern falten Groß-/Kleinschreibung nach Unicode, FAT nur ASCII; `rename("/a", "/A")` ist ein No-op statt eine Änderung der Schreibweise.
   - Kosten je Pfadteil im Kernel (Mounts und Elternordner je Abfrage) sind im Gast zu messen; `.`/`..` aus Linkzielen prüfen kein x-Bit.
-  - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte auf smp4, TCG und VMware nicht. `ftruncate`/`pwrite64` fehlen im Verteiler.
+  - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte (smp1) mit der bekannten Grenze `-EIO` hinter einer Lücke; volle Platte auf smp4, TCG und VMware nicht.
   - Nach `unlink` einer offenen Datei bleibt der Eintrag unter Cosmos bis zum letzten Schließen sichtbar; ein erneutes `open(O_CREAT|O_EXCL)` oder `mkdir`
     desselben Namens liefert dann wahrscheinlich `-EEXIST` (Linux: Erfolg), ein übliches Muster für temporäre Dateien. Im Gast nicht geprüft.
   - 64 MiB reichen für die Testprogramme und js; Ladybird mit Platten-Cache (HTTP-Cache, Profil) kann sie erreichen: beim Anbinden von `run` für Ladybird prüfen.

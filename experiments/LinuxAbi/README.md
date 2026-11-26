@@ -110,7 +110,8 @@ FILLER_MIB=478 python3 -I experiments/LinuxAbi/run-guest-full.py run --iso <iso>
 ```
 
 Grenzen: `v7bquota` setzt voraus, dass vorher im selben Gastlauf höchstens 24 MiB Wachstum stehen geblieben sind (es prüft „zwischen 40 und 64 MiB geschrieben“).
-`v7bfull` mit Fülldatei braucht die Abbildung von Cosmos' „Platte voll“ auf `-ENOSPC` (Folge zu PR #741); bis dahin endet es dort mit `-EIO` und Exitcode 1.
+`v7bfull` mit Fülldatei: `write` am Ende liefert `-ENOSPC` (PR #741, im Gast belegt); `write` hinter einer Lücke liefert bei voller Platte noch `-EIO`
+(bekannte Grenze, `docs/LINUX_ABI.md`), das Programm nimmt dort `-EIO` oder `-ENOSPC` an und meldet `-EIO` mit „bekannte Grenze“.
 `rename` einer Datei auf ihren eigenen Kurznamen ist `-EEXIST` (vfat unter Linux benennt um), bekannte Abweichung aus PR #741.
 
 ## Satz V14 (Schreiben an fester Stelle, Dateilänge)
