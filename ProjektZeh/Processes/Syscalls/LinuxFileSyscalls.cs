@@ -441,7 +441,9 @@ internal static partial class LinuxSyscalls
             return -FileErr.ENOTDIR;
         }
 
-        f.Cwd = file.Path;
+        // Path kann ein abschließendes "/" tragen (open("dir/")); cwd ist wie bei chdir ohne, sonst endet getcwd auf "/".
+        string cwd = file.Path;
+        f.Cwd = cwd.Length > 1 ? cwd.TrimEnd('/') : cwd;
         return 0;
     }
 }

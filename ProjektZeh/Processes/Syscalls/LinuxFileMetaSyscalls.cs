@@ -123,7 +123,14 @@ internal static partial class LinuxSyscalls
 
         if ((flags & MetaAtEmptyPath) != 0 && p.Memory.TryReadCString(pathPtr, 1, out string probe) && probe.Length == 0)
         {
-            return DoFstat(p, dirfd, buf); // leerer Pfad: der Deskriptor selbst
+            if (dirfd != MetaAtFdcwd)
+            {
+                return DoFstat(p, dirfd, buf); // leerer Pfad: der Deskriptor selbst
+            }
+
+            // AT_FDCWD ist kein Deskriptor: Linux liefert dann das Arbeitsverzeichnis.
+            long rc = f.FileSystem.Stat(f.Cwd, true, out LinuxStat cst);
+            return rc < 0 ? rc : WriteStat(p, buf, cst);
         }
 
         long r = LinuxPath.Resolve(p, f, dirfd, pathPtr, out string path);
