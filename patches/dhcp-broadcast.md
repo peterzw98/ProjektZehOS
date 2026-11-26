@@ -1,8 +1,8 @@
 # dhcp-broadcast
 
-- **Commit:** Squash dieses PRs (Refs #719)
+- **Commit:** Squash von #721 (Hash nach Merge einzutragen; Refs #719)
 - **Dateien:** `src/Cosmos.Kernel.System/Network/Protocols/IPv4/Dhcp/DhcpPacket.cs`, `tests/Cosmos.Kernel.Tests.System/Network/Protocols/Dhcp/DhcpPacketTest.cs`
 - **Grund:** ZehOS #719, unter VMware Workstation (e1000e, NAT) liefert `net dhcp` keine Adresse. `DhcpPacket` schrieb das BOOTP-Feld `flags` als 0; ohne BROADCAST-Bit schickt der ISC-basierte `vmnet-dhcpd` das OFFER per Unicast an die angebotene Adresse (RFC 2131 §4.1). `IPv4Handler` nimmt vor der Konfiguration nur Pakete an Adressen aus `NetworkStack.AddressMap` oder Broadcast an und verwirft das OFFER (`[IP] Packet not for us, dropping`). QEMU user-net antwortet immer per Broadcast, deshalb fiel es dort nicht auf. Jetzt setzt der Konstruktor für DISCOVER und REQUEST (`DhcpPacket(MacAddress, ushort)`) das BROADCAST-Bit (`RawData[52] = 0x80`); RELEASE nutzt den anderen Konstruktor und lässt `flags` bei 0, wie RFC 2131 Tabelle 5 verlangt.
 - **Offen, nicht in diesem Patch:** `IPv4Handler` nimmt weiterhin kein Unicast an Port 68 vor der Konfiguration an; nur für Server nötig, die das Bit ignorieren.
 - **Entfernter ZehOS-Umweg:** keiner
-- **Prüfung:** Hosttests `DhcpPacketTest` (neu; DISCOVER und REQUEST ohne Fix rot), `Cosmos.Kernel.Tests.System` gesamt; Cosmos-Bau und ZehOS-Gastläufe siehe ZehOS-PR
+- **Prüfung:** Hosttests `DhcpPacketTest` (neu; DISCOVER und REQUEST ohne Fix rot), `Cosmos.Kernel.Tests.System` gesamt; Cosmos-Bau (`scripts/build-cosmos.sh`, smp.16-Teststand auf a0bf4f8a); ZehOS-Gast unter VMware Workstation 26.0.1 (e1000e, NAT, 4 vCPUs): Boot-DHCP und `net dhcp` liefern `172.16.163.130`, `pkg update` lädt den Katalog; QEMU/KVM (e1000e, user-net, 1 und 4 CPUs): `NET DHCP IPv4: 10.0.2.15`
