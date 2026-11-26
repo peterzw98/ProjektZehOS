@@ -88,7 +88,7 @@ Beantwortet: `nativ` (Peter, 24. November 2026). Die Frage lautete:
 
 ## Ergebnis N1
 
-Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/peterzw98/ProjektZehOS/issues/624)) und die Vorstellung am 4. Dezember. Grundlage: [Plan N1](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), die Berichte [Ring 3 (N1-A7)](superpowers/plans/2026-11-26-ladybird-n1-ring3.md) und [Adressräume (N1-B5)](superpowers/plans/2026-11-26-ladybird-n1-adressraum.md) und die PR-Texte und Kommentare, die unten genannt sind (Stand `story/ladybird` `b52427e5`). Die Berichte liegen als `plans/…-n1-ring3.md` und `plans/…-n1-adressraum.md`, nicht als `specs/…-n1-<thema>.md` wie im Plan vorgesehen; es gibt noch keinen Bericht zu C, D und E. **Dieser Abschnitt misst nichts neu** (außer „Messung L1“, dort mit eigener Quelle): Jede Zahl und jedes Urteil steht mit Quelle da; was nicht belegt ist, steht als `offen`. Die Urteile `trägt` in A und B sind die der Senior-Agenten laut Berichten (nur gelesen, ohne eigenen Gastlauf, siehe Quellen); das Tor N1-Z entscheidet Peter oder Lars.
+Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/peterzw98/ProjektZehOS/issues/624)) und die Vorstellung am 4. Dezember. Grundlage: [Plan N1](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), die Berichte [Ring 3 (N1-A7)](superpowers/plans/2026-11-26-ladybird-n1-ring3.md) und [Adressräume (N1-B5)](superpowers/plans/2026-11-26-ladybird-n1-adressraum.md) und die PR-Texte und Kommentare, die unten genannt sind (Stand `story/ladybird` `b52427e5`). Die Berichte liegen als `plans/…-n1-ring3.md` und `plans/…-n1-adressraum.md`, nicht als `specs/…-n1-<thema>.md` wie im Plan vorgesehen; zu C gibt es den [Bericht N1-C2](superpowers/plans/2026-11-26-ladybird-n1-aufrufe.md), zu D und E noch keinen. **Dieser Abschnitt misst nichts neu** (außer „Messung L1“, dort mit eigener Quelle): Jede Zahl und jedes Urteil steht mit Quelle da; was nicht belegt ist, steht als `offen`. Die Urteile `trägt` in A und B sind die der Senior-Agenten laut Berichten (nur gelesen, ohne eigenen Gastlauf, siehe Quellen); das Tor N1-Z entscheidet Peter oder Lars.
 
 ### Stand N1
 
@@ -96,7 +96,7 @@ Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/p
 | --- | --- | --- | --- |
 | A Ring 3 | Cosmos-Patches A1–A4, Gastfälle A6, Messung A7 | **`trägt`** (Senior, N1-A7-Bericht) | Gastläufe und Messung gelaufen; offen: NMI-Rest unter TCG, VMware, echte Hardware |
 | B Adressräume | AddressSpaceMap B1, Seitentabellen B2/B3, Gastfälle B4, Messung B5 | **`trägt`** (Senior, N1-B5-Bericht) | Gastläufe gelaufen; **Kosten je Adressraumwechsel nicht gemessen** ([#716](https://github.com/peterzw98/ProjektZehOS/issues/716)) |
-| C Aufrufliste | Auswertung C1, Messung C2 | **`offen`** | C1 gemergt (Hosttests); C2 nicht gelaufen ([#635](https://github.com/peterzw98/ProjektZehOS/issues/635), läuft nach #450) |
+| C Aufrufliste | Auswertung C1, Messung C2 | **`trägt`** ([N1-C2-Bericht](superpowers/plans/2026-11-26-ladybird-n1-aufrufe.md)) | C1 gemergt; C2 gelaufen ([#635](https://github.com/peterzw98/ProjektZehOS/issues/635)): 30 S4-Aufrufe, davon 10 Pflicht, kein GPU-Gerät; nur Linux/glibc |
 | D musl | LibJS D1, ganzes Ladybird D2 | **`offen`** | D1: nur Skript auf Branch, Bau steht aus; D2 nicht begonnen |
 | E Vergleichsprogramme | Satz S1, S3, `tools` (E1–E3) | Abnahmeregel des Plans erfüllt, förmliches Urteil noch nicht geschrieben | alle drei gemergt, nur auf Linux gelaufen, kein Gastlauf |
 | Messung L1 | Bau L1-A, Seiten und Messskript L1-B, Messung L1-C ([#450](https://github.com/peterzw98/ProjektZehOS/issues/450)) | PSS ≤ 2 GiB erfüllt (Messung L1) | L1-A, L1-B und L1-C gelaufen; PSS `static.html` 334 MiB (siehe Messung L1) |
@@ -184,15 +184,14 @@ Grenzen: ein Rechner, Linux-Host statt ZehOS, glibc statt musl; drei Läufe je S
 
 ### Tor N1-Z (Lage, keine Entscheidung)
 
-Nach der festen Regel des Plans (Tabelle im [Plan](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), Abschnitt „Tor“): A und B `trägt`, E erfüllt, C und D `offen`, PSS ≤ 2 GiB (334 MiB auf `static.html`), #423 offen. Damit greift heute die Zeile „#423 nicht abgenommen: warten, mit dem fehlenden Punkt“. Wäre #423 abgenommen, griffe wegen C und D `offen` die Zeile „Peter kann GO geben, Ladybird (N6) wartet“. Die Entscheidung trifft Peter oder Lars.
+Nach der festen Regel des Plans (Tabelle im [Plan](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), Abschnitt „Tor“): A, B und C `trägt`, E erfüllt, D `offen`, PSS ≤ 2 GiB (334 MiB auf `static.html`), #423 offen. Damit greift heute die Zeile „#423 nicht abgenommen: warten, mit dem fehlenden Punkt“. Wäre #423 abgenommen, griffe wegen D `offen` die Zeile „Peter kann GO geben, Ladybird (N6) wartet“. Die Entscheidung trifft Peter oder Lars.
 
 ### Offene Punkte
 
-1. **N1-C2 (#635):** Aufrufliste von Ladybird mit `syscalls.py` auswerten.
-2. **N1-D1/D2 (#622, #636):** musl-Bau von `js` und von ganz Ladybird; Patchzeilen.
-3. **#423:** AOT-Abnahme (Voraussetzung des Tors).
-4. **#716:** Kosten je Adressraumwechsel erst nach sofortigem Yield messbar.
-5. **#700-Rest:** verschachteltes NMI unter TCG, Ursache offen.
-6. **Messung ohne Obergrenze** für A (Doom ist an 70 Bildern/s gedeckelt), VMware und echte Hardware für A und B.
-7. **E im Gast:** die drei Programmsätze laufen noch nicht in ZehOS (N2 und N4).
-8. **Reviews:** Das Delta `5802b0abe` von #704 (nur `scripts/`) ist nach dem Bericht noch nicht nachgeprüft; die Berichte N1-A7 und N1-B5 sind Entwurf, die Urteile nur gelesen.
+1. **N1-D1/D2 (#622, #636):** musl-Bau von `js` und von ganz Ladybird; Patchzeilen.
+2. **#423:** AOT-Abnahme (Voraussetzung des Tors).
+3. **#716:** Kosten je Adressraumwechsel erst nach sofortigem Yield messbar.
+4. **#700-Rest:** verschachteltes NMI unter TCG, Ursache offen.
+5. **Messung ohne Obergrenze** für A (Doom ist an 70 Bildern/s gedeckelt), VMware und echte Hardware für A und B.
+6. **E im Gast:** die drei Programmsätze laufen noch nicht in ZehOS (N2 und N4).
+7. **Reviews:** Das Delta `5802b0abe` von #704 (nur `scripts/`) ist nach dem Bericht noch nicht nachgeprüft; die Berichte N1-A7 und N1-B5 sind Entwurf, die Urteile nur gelesen.
