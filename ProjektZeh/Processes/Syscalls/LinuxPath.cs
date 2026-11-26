@@ -63,6 +63,28 @@ internal static class LinuxPath
         return 0;
     }
 
+    /// <summary>
+    /// Pfad eines Kernelpfads im Prozess mit der Wurzel <paramref name="root"/> (V12, /proc/self/exe): "/data/app/bin/js" mit Wurzel
+    /// "/data/app" wird "/bin/js". null, wenn der Pfad nicht unter der Wurzel liegt oder keine Wurzel auf der Platte besteht. Die
+    /// Datenplatte ist FAT, Groß-/Kleinschreibung zählt beim Vergleich deshalb nicht.
+    /// </summary>
+    public static string? InsideRoot(string kernelPath, string? root)
+    {
+        if (root is null || kernelPath.Length == 0)
+        {
+            return null;
+        }
+
+        string r = root.Replace('\\', '/').TrimEnd('/');
+        string k = kernelPath.Replace('\\', '/');
+        if (r.Length == 0 || k.Length <= r.Length + 1 || k[r.Length] != '/' || !k.StartsWith(r, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return Normalize(k.Substring(r.Length));
+    }
+
     /// <summary>Liest eine Pfadzeichenkette; -ENAMETOOLONG, wenn in PATH_MAX Bytes kein NUL steht, sonst -EFAULT.</summary>
     public static long ReadPath(ILinuxProcess p, ulong ptr, out string raw)
     {

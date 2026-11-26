@@ -71,6 +71,9 @@ internal static unsafe class CosmosLinuxRun
         /// <summary>Anfängliches Arbeitsverzeichnis im Prozess (wird angelegt) oder null für "/"; nur die Gastprobe setzt es.</summary>
         public string? StartCwd;
 
+        /// <summary>Programmpfad im Prozess für /proc/self/exe (V12) oder null, wenn das Programm außerhalb der Wurzel liegt.</summary>
+        public string? ExePath;
+
         /// <summary>Gesetzt bei einem Vordergrundprogramm der Shell; dann meldet der Programmthread das Ende selbst.</summary>
         public LinuxTerminalSession? Session;
         public LinuxUserProcess? Process;
@@ -163,14 +166,17 @@ internal static unsafe class CosmosLinuxRun
             }
         }
 
+        // V12: Ladybird sucht seine ICU-Daten relativ zu /proc/self/exe. ReadBytes hat denselben Pfad eben gelesen.
+        string? exe = LinuxPath.InsideRoot(System.IO.Path.GetFullPath(arguments[0], files.CurrentDirectory), root);
         if (shell != null)
         {
-            return StartForeground(file.Value!, arguments, shell, root);
+            return StartForeground(file.Value!, arguments, shell, root, exe);
         }
 
         // Spiegel ins serielle Protokoll für scripts/test-linux-abi.py (V5): rohe Bytes als Hex, Status wie run-linux.py.
         Serial("LINUXRUN BEGIN " + arguments[0]);
-        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)), root);
+        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)), root,
+            exePath: exe);
         Serial("LINUXRUN END " + (outcome.Ran ? outcome.Status : "notrun " + outcome.Detail));
         if (!outcome.Ran)
         {
@@ -213,7 +219,7 @@ internal static unsafe class CosmosLinuxRun
     /// Startet das Programm als Vordergrundprogramm der Shell und kehrt sofort zurück. Das Ende meldet der Programmthread selbst
     /// (Statuszeile in der Sitzung, LINUXRUN END im seriellen Protokoll).
     /// </summary>
-    private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell, string? root)
+    private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell, string? root, string? exePath)
     {
         if (shell.HasForeground)
         {
@@ -240,6 +246,7 @@ internal static unsafe class CosmosLinuxRun
             {
                 Session = session,
                 Root = root,
+                ExePath = exePath,
 
                 // Nur der Programmthread gibt busy frei; die Shell wartet nicht auf ihn.
                 Owners = 1,
@@ -358,7 +365,7 @@ internal static unsafe class CosmosLinuxRun
     /// <param name="root">Prozesswurzel (Kernelpfad, wird bei Bedarf angelegt) oder null für ein leeres Dateisystem im Arbeitsspeicher.</param>
     /// <param name="cwd">Arbeitsverzeichnis im Prozess (absolut, wird angelegt) oder null für "/".</param>
     public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null,
-        string? root = null, string? cwd = null)
+        string? root = null, string? cwd = null, string? exePath = null)
     {
         if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
         {
@@ -373,7 +380,7 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, why);
             }
 
-            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd };
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd, ExePath = exePath };
             var thread = new Thread(() => Body(started, image!, elf));
             thread.Start();
             run = started;
@@ -513,6 +520,7 @@ internal static unsafe class CosmosLinuxRun
         var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host, fileSystem)
         {
             OnFsBase = UserMode.SetFsBase,
+            ExePath = run.ExePath,
         };
 
         // V10: exit_group (oder das Ende des letzten Threads) beendet alle Threads; exit nur den aufrufenden.

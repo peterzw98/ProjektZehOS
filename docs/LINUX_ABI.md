@@ -208,7 +208,7 @@ Sollte vorher geklärt sein (Frage an den V4-Bau):
 4. **libedit und terminfo.** Die Umgebung von `run` setzt weder `TERM` noch `HOME` (`CosmosLinuxRun.Environment`). Ohne `TERM` nimmt libedit ein dummes
    Terminal (keine Zeilenbearbeitung); mit `TERM` braucht ein statisches ncurses eine eingebaute Beschreibung (`--with-fallbacks`) oder eine terminfo-Datei
    im Prozessdateisystem. Die Historie geht nach `$HOME/.js-history`, ohne `HOME` (und ohne `/etc/passwd`) nach `/.js-history` (`js.rs:2017-2030`).
-5. **ICU-Daten.** Liest das js-Binary ICU-Daten aus einer Datei, braucht es Dateiabbildungen (`mmap` mit fd, heute `-ENODEV`). Statisch eingebundene Daten brauchen nichts.
+5. **ICU-Daten.** Liest das js-Binary ICU-Daten aus einer Datei, braucht es Dateiabbildungen (`mmap` mit fd). Erledigt mit V12 (unten).
 6. **Signale.** libedit setzt Handler für SIGINT, SIGWINCH, SIGTSTP u. a.; zugestellt wird nichts. Strg+C beendet das Programm (`signal 2`) statt die Zeile zu verwerfen.
 
 Geprüft, kein Handlungsbedarf: Reservierungen von 64 GiB (GC-Region, 2 × 32 GiB, Kopf und Ende per `munmap`) und 4 TiB + Rand (`PrimitiveStorage`) mit
@@ -248,3 +248,20 @@ Umsetzung und Grenzen:
 - Signalmaske und Alternativstack sind noch je Prozess, nicht je Thread; keine Signalzustellung (auch nicht pthread_cancel, `SIGCANCEL`).
 - Dateien (V11): Deskriptortabelle, Arbeitsverzeichnis, `LinuxFileSystem` und die offenen Dateien schützt eine Sperre je Prozess (`ILinuxFiles.FileGate`). Jeder Datei- und Pfadaufruf läuft ganz unter ihr, auch `pread` (Position sichern, lesen, zurücksetzen) ist dadurch atomar; Dateiaufrufe verschiedener Threads laufen nacheinander, auch während einer langsamen Platte. Schreiben auf das Terminal und Lesen von fd 0 halten sie nicht (Lesen wartet auf Eingabe). Reihenfolge: Dateisperre vor Speichersperre und vor `StorageLock`, nie zusammen mit der futex-Tabelle. Grenze: Ersetzt ein Thread fd 0 per `dup2`, während ein anderer `read` darauf beginnt, kann dieser `-EBADF` sehen (die Art des Deskriptors wird vor der Sperre bestimmt).
 - Ein Thread, der in `read` auf fd 0 wartet, endet beim Prozessende über das Dateiende der Sitzung; ohne Sitzung (Gastprobe) liest fd 0 ohnehin leer.
+
+## /proc/self/exe und Dateiabbildung (V12)
+
+Ladybird sucht seine ICU-Daten (`icudt78l.dat`, 27 MB) über `readlink("/proc/self/exe")` unter `<bindir>/../share/Lagom/icu/` und bildet sie mit
+`mmap(PROT_READ, MAP_SHARED)` ab; die Datei wird danach geschlossen (`LibCore/MappedFile.cpp`).
+
+- `readlink`/`readlinkat` auf `/proc/self/exe` oder `/proc/<eigene PID>/exe` (nach Normalisierung) liefern den Programmpfad im Prozess. `run` setzt ihn
+  aus dem Pfad der Shell relativ zur Prozesswurzel: `cd /data/app`, `run bin/js` ergibt `/bin/js`. Liegt das Programm außerhalb der Wurzel
+  (`run /data/t/js` aus `/data/app`) oder läuft der Prozess ohne Wurzel auf der Platte (Shell in `/` oder direkt auf einem Laufwerk), gibt es den
+  Link nicht (`-ENOENT`). Sonst gibt es kein `/proc`.
+- `mmap` mit Datei-fd ist eine **Kopie**: Der Bereich wird anonym belegt, ab dem Versatz (seitenausgerichtet, sonst `-EINVAL`) wie mit `pread` gefüllt,
+  hinter dem Dateiende mit Nullen, und erst danach auf den gewünschten Schutz gesetzt. Die Dateiposition bleibt. Das ist `MAP_PRIVATE` bis auf einen
+  Punkt: Spätere Änderungen an der Datei sieht die Abbildung nicht. `MAP_SHARED` geht deshalb nur ohne `PROT_WRITE`; beschreibbar geteilt bleibt
+  `-ENODEV` (nichts flösse in die Datei zurück). Weitere Fehler: Terminal und Verzeichnis `-ENODEV`, nur zum Schreiben geöffnet `-EACCES`,
+  unbekannter fd `-EBADF`. Seiten hinter dem Dateiende lesen sich als Nullen statt `SIGBUS`; über 2 GiB hinaus bleibt der Rest Null.
+- Die Kopie belegt sofort Speicher in voller Länge (ICU: 27 MB von 512 MiB je Programm) und läuft unter der Dateisperre (V11), darin die Speichersperre.
+- Geprüft im Gast (KVM, smp1): `js` findet und lädt die ICU-Daten; der nächste fehlende Aufruf ist `pipe2` (Ereignisschleife, `EventLoopImplementationUnix.cpp:165`).
