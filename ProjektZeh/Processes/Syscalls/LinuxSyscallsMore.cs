@@ -68,7 +68,22 @@ internal static partial class LinuxSyscalls
             case Getegid: return (long)p.Gid;
             case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
             case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // ohne Signalzustellung schläft pause bis zum Ende
-            default: return p is ILinuxFiles files ? DispatchFile(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
+            default: return p is ILinuxFiles files ? DispatchFileGated(ref a, p, files) : -ENOSYS; // Dateiaufrufe nur mit Dateifähigkeit (V2)
+        }
+    }
+
+    /// <summary>
+    /// V11: Alle Datei- und Pfadaufrufe eines Prozesses laufen nacheinander unter <see cref="ILinuxFiles.FileGate"/>. Threads (V10)
+    /// teilen Deskriptortabelle, Arbeitsverzeichnis und das <c>LinuxFileSystem</c> (dessen Auflösung Arbeitslisten im Objekt hält);
+    /// ohne Sperre könnte ein Thread eine Datei schließen, die ein anderer gerade liest, oder dieselbe Nummer zweimal vergeben.
+    /// Eine grobe Sperre reicht: Dateiaufrufe warten hier nie auf andere Threads, nur auf die Platte. Das Lesen vom Terminal
+    /// (fd 0) läuft vorher in <c>Dispatch</c> ab und hält die Sperre nicht, sonst stünden alle Dateiaufrufe bis zur nächsten Eingabe.
+    /// </summary>
+    private static long DispatchFileGated(ref SyscallArgs a, ILinuxProcess p, ILinuxFiles files)
+    {
+        lock (files.FileGate)
+        {
+            return DispatchFile(ref a, p, files);
         }
     }
 
