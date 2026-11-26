@@ -413,6 +413,8 @@ Ein moderner Browser ist damit zurückgestellt; die Firefox-Arbeit ruht. Bericht
 
 **Fertig, wenn:** E5 bis E7 abgenommen sind (Plattformmatrix E7-E ohne unbehandelte Zelle „fehlgeschlagen“) und der Integrationsbranch nach `master` gemergt ist (#523, gemergt am 25. November 2026 mit #683). Offen bleibt der Gesamttest #610 (VMware, WHPX, Hardware). **Hinweis zu 12.7:** Die Grundlage für Threads von Paketen (mehrere CPUs, Platzierung der Worker) liegt seit #683 auf `master`; 12.7 bleibt offen.
 
+**Version 0.7 (Multicore-Abnahme):** 0.7 steht für ZehOS mit mehreren CPUs auf dem eigenen Cosmos-Build (Pin `3.0.97-zehos.6-smp.17`). Lars hat den Gesamttest #610 am 26. November 2026 auf `v0.6.150` (`5e3c29c0`) unter VMware mit 4 vCPUs gefahren (Zeilen 2, 3, 4, 7 und 8 bestanden, Kommentare in #610) und das Issue danach als Abnahme geschlossen; auf seine Entscheidung hebt der Versionswechsel auf 0.7 an. Nicht geprüft und weiter offen: VMware mit 1 und 2 vCPUs (Thread-Probe dort sporadisch, #727), `coresPerSocket` 2, QEMU-Handtest (Zeile 1), echte Hardware (Zeile 5), WHPX (Zeile 6).
+
 ## Vorgeschlagene Struktur des eigenen Codes
 
 Die Ordner erst anlegen, wenn die jeweilige Funktion entwickelt wird. `Kernel.cs` verbindet die Bausteine und hält den Bootablauf übersichtlich.
