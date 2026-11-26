@@ -120,12 +120,9 @@ def run_guest(args, sets: dict[str, Path], work: Path) -> str:
     tools = load_guest_tools()
     image = work / "abiprog.img"
     build_image(image, sets)
-    system = work / "system.img"  # leere sata0 (die Textshell braucht kein Konto)
-    with system.open("wb") as f:
-        f.truncate(64 * 1024 * 1024)
+    # sata0 ist die leere qcow2 aus start_qemu (appdisk, die Textshell braucht kein Konto); das Programmimage kommt auf sata1.
     machine = list(tools.MACHINE)
-    for port, disk in enumerate([system, image]):
-        machine += ["-drive", f"file={disk},format=raw,if=none,id=d{port}", "-device", f"ide-hd,drive=d{port},bus=ahci.{port}"]
+    machine += ["-drive", f"file={image},format=raw,if=none,id=abiprog", "-device", "ide-hd,drive=abiprog,bus=ahci.1"]
     tools.MACHINE = machine
     unused = work / "unused.qcow2"
     tool_img, environment = tools.qemu_img()
