@@ -1,0 +1,13 @@
+diff --git a/Libraries/LibGfx/CMakeLists.txt b/Libraries/LibGfx/CMakeLists.txt
+--- a/Libraries/LibGfx/CMakeLists.txt
++++ b/Libraries/LibGfx/CMakeLists.txt
+@@ -83,6 +83,9 @@
+     KEEP_SYMBOLS ladybird_gfx_register_rust_crate_copy
+ )
+ target_link_libraries(LibGfx PRIVATE libgfx_rust)
++if (LINUX AND NOT BUILD_SHARED_LIBS)
++    target_link_libraries(libgfx_rust INTERFACE LibGfx)
++endif()
+
+ if (HAS_FONTCONFIG)
+     target_link_libraries(LibGfx PRIVATE Fontconfig::Fontconfig)

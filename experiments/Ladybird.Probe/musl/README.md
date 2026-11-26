@@ -38,6 +38,8 @@ timeout --kill-after=30s 8h experiments/Ladybird.Probe/musl/build.sh --target al
 
 Der Vollbau wendet die Anpassungen unter [`patches/all/`](patches/all/) auf den festgeschriebenen Quellstand an. Die Unix-Nachrichtenheader der Broker werden vollständig nullinitialisiert und anschließend mit denselben Nutzdatenfeldern befüllt. So kompiliert das Layout mit den zusätzlichen Padding-Feldern von musl auch mit `-Werror=missing-field-initializers`. Der Seccomp-Code liest seine Ioctl-Typkonstanten aus dem Linux-UAPI-Header `linux/ioctl.h`.
 
+Für statische Linux-Bibliotheken kennt CMake die gegenseitige Abhängigkeit zwischen `LibGfx` und `libgfx_rust`. CMake wiederholt beide Archive auf der Linkzeile. So kann der GNU-Linker die Rückverweise aus Rust auf C++ auch beim `ImageDecoder` auflösen.
+
 ## Prüfstand für `js`
 
 Die statische `js`-Probe wurde in Alpine 3.24.4 auf WSL 2 gebaut, mit GCC 15.2.0, CMake 4.2.3, Rust 1.98.0 (`x86_64-unknown-linux-musl`) und drei parallelen Jobs. Das [veröffentlichte ELF](https://github.com/peterzw98/ProjektZehOS/blob/9421ab54/ladybird/bin/js) ist 33.092.712 Bytes groß und hat weder `PT_INTERP` noch `DT_NEEDED`. `1+1` ergab `2`, der Sortiertest prüfte alle 10.000 Ausgabewerte und ergab `10000`. Die Ladybird- und vcpkg-Quellbäume sind sauber (je 0 Patchzeilen). Der [Bericht](bericht-n1-d1.md) enthält den ABI-Abgleich.
