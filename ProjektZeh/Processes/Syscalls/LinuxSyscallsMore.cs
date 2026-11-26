@@ -385,10 +385,14 @@ internal static partial class LinuxSyscalls
             // durchsuchen, damit ein anderer (etwa die Weckpipe neben fd 0) höchstens eine Scheibe zu spät gemeldet wird. Die Frist läuft
             // nach der Stopwatch, nicht nach der Uhr des Prozesses (Ersatzprozesse in den Tests haben eine stehende) und nicht nach der
             // nominalen Scheibe: Eine Pipe kehrt bei jedem fremden Puls früh zurück, gezählte Scheiben verkürzten die Frist (V13-Review P2-1).
+            // Die erste Scheibe bekommt die volle Frist: Die bis hierher verstrichene Zeit (Einlesen, JIT) gehört nicht zum Warten, und
+            // ein abgerundeter Stopwatch-Wert verkürzte bei einem Wartenden die ganze Frist um 1 ms (V13-Delta-Review, Test flackerte).
             long start = Stopwatch.GetTimestamp();
+            bool first = true;
             while (true)
             {
-                long left = timeoutMs < 0 ? -1 : Math.Max(0, timeoutMs - LinuxPipe.ElapsedMs(start));
+                long left = timeoutMs < 0 ? -1 : (first ? timeoutMs : Math.Max(0, timeoutMs - LinuxPipe.ElapsedMs(start)));
+                first = false;
                 long slice = waitables == 1 || left == 0 ? left : (left < 0 ? PollMultiSliceMs : Math.Min(PollMultiSliceMs, left));
                 _ = waitFor is ILinuxPollable pollable ? pollable.WaitPoll(waitEvents, slice) : ((ILinuxInput)waitFor).WaitInput(slice);
                 ready = PollScan(p, b, (int)nfds, out _, out _, out _);
