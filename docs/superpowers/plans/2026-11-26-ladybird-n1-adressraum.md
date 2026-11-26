@@ -1,6 +1,6 @@
-# Ladybird N1-B5: Messung Adressräume (Entwurf, noch ohne Messwerte)
+# Ladybird N1-B5: Messung Adressräume (Messwerte und Urteil `trägt`)
 
-Paket N1-B5 (#634), Plan `2026-11-24-ladybird-n1-nachweise.md`. Messung von `agent-peter-engineer`, Urteil von einem Senior (Abschnitt „Urteil“ am Ende, noch leer). Dieser Branch baut auf #712 (N1-B4, Kopf `d1f3fc7c1`) auf, das auf #710 (user-cr3, Pin `7b4b1018`) beruht. Entwurf, nicht mergen.
+Paket N1-B5 (#634), Plan `2026-11-24-ladybird-n1-nachweise.md`. Messung von `agent-peter-engineer`, Urteil von `agent-peter-senior` (Abschnitt „Urteil“ am Ende: `trägt`, Kopf `804669abf`). Dieser Branch baut auf #712 (N1-B4, Kopf `d1f3fc7c1`) auf, das auf #710 (user-cr3, Pin `7b4b1018`) beruht. Der PR bleibt Entwurf und wird nicht ohne Freigabe gemergt.
 
 ## Stand der Voraussetzungen (aus #712 und #710 gelesen, nicht neu gelaufen)
 
@@ -26,7 +26,7 @@ Die Fälle von #712 (`isolate`, `kernelread`, `nx`, `edge`, `sparse`, `copy`, `c
 
 ## Messwerte
 
-Rechner MSI (KVM), Bau `task/ladybird-n1b5-zeitfaelle` @`12904e126` (aswitch neu gemessen @`c5a7948d0`, siehe dort) (auf #712 `d1f3fc7c1`, Cosmos `3.0.97-zehos.0.g7b4b101`), `-warnaserror` 0 Warnungen/0 Fehler für Probe- und Normalbau. Je ein Gast gleichzeitig, Rohdaten `~/zehos-b4-out/n1b5-*` auf MSI. Einheit: TSC-Ticks (`rdtsc`); Wechsel/Seitenfehler sind Mediane je Lauf.
+Rechner MSI (KVM), Bau `task/ladybird-n1b5-zeitfaelle`: die 3 KVM-Läufe je smp der B4-Fälle (Abschnitt unten) liefen auf `12904e126`; `aswitch` wurde danach umgebaut und auf `c5a7948d0` neu gemessen (siehe dort) (auf #712 `d1f3fc7c1`, Cosmos `3.0.97-zehos.0.g7b4b101`), `-warnaserror` 0 Warnungen/0 Fehler für Probe- und Normalbau. Je ein Gast gleichzeitig, Rohdaten `~/zehos-b4-out/n1b5-*` auf MSI. Einheit: TSC-Ticks (`rdtsc`); Wechsel/Seitenfehler sind Mediane je Lauf.
 
 **B4 (#712-Fälle + Zeitfälle), `test-user-mode-probe.py --accel kvm --runs 3`:** smp1 3/3 PASS, smp4 3/3 PASS (isolate, kernelread, nx, edge, sparse, copy, churn, gc2, device, aswitch, pfault, `failed=0`). TCG smp1 3/3 steht in #712 Kommentar 7182091025 (nicht neu gelaufen).
 
@@ -69,9 +69,8 @@ B1 (#620, gemergt mit #666, Folge #677): auf master 53cba9cd5 `dotnet test Proje
 
 ## Nicht geprüft / Grenzen
 
-- Kein Vergleich gegen `origin/master` (smp.13) im Normalbau gemessen; nur der Pin dieses Stands. Die Matrix von engineer2 (#708, 90/90) lief auf anderem Kopf.
-- ClassiCube nur 1 Lauf je smp (nicht 3); Bildschirmfotos nicht visuell geprüft; Paket nicht mit `--world-seed 1` neu gebaut (Skript lief trotzdem durch).
-- TCG, VMware, echte Hardware nicht gemessen. `gc2` smp4 `overlapped=0` unverändert (aus #712). P3 aus dem Review offen: `rdtsc` ohne `lfence` im Ring-3-Arm.
+- Überholt durch den Nachtrag (Normalbau gegen master 53cba9cd5 smp.13, ClassiCube 3x je 1/4 CPUs, 18/18 PASS, Bericht @`9ae3f80cb`): „kein Vergleich gegen master“ und „ClassiCube nur 1 Lauf“. Bildschirmfotos weiterhin nicht visuell geprüft; Paket nicht mit `--world-seed 1` neu gebaut (Skript lief trotzdem durch).
+- Zeitfälle nur auf KVM gemessen (TCG für B4 siehe Urteil); VMware, echte Hardware nicht gemessen. `gc2` smp4 `overlapped=0` unverändert (aus #712). P3 aus dem Review offen: `rdtsc` ohne `lfence` im Ring-3-Arm.
 - aswitch: Wechselkosten nicht gemessen (siehe oben, Yield wechselt erst am Timertakt); Medianwerte ohne Streuungsangabe über Läufe außer der Tabelle.
 - Ein Fenster in B3 (Warten auf `Changing`) bleibt nur durch Lesereview gestützt.
 
