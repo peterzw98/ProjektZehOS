@@ -514,7 +514,9 @@ internal static class CosmosSmpProbe
         if (b < 0) return "SKIP kein Paar";
         Write($"INFO smtbench a={a} b={b}");
         // #674 V2: Fall M wie S, aber der Rechenthread startet auf a und darf danach auf alle Rechen-CPUs (nicht gepinnt):
-        // Mit V2 zieht er auf einen ganz freien Kern, sofern es einen gibt (bei 4c2t2 nicht: CPU 0 traegt die Hauptschleife).
+        // Mit V2 zieht er auf einen ganz freien Kern. Bei 4c2t2 ist das nur der Kern von CPU 0: Die Hauptschleife blockiert hier
+        // in Join, CPU 0 ist nicht erlaubt, also Fallback auf CPU 1 (ClassPlacement.SelectMoveTarget).
+        // Diagnose: je Thread Umzuege (Zeit ab Start, von>nach) und Antworten des freiwilligen Umzugs (Zeile smtmove).
         // Gross: zehnfacher Auftrag, damit die Umzugsverzoegerung (bis ~140 ms) die Rechenzeit nicht verdeckt.
         foreach (long size in new[] { 100_000_000L, 1_000_000_000L })
         for (int round = 0; round < 5; round++)
@@ -522,10 +524,12 @@ internal static class CosmosSmpProbe
             {
                 bool busy = kind != 'F';
                 int stop = 0;
+                ClassThreadState? spinState = null, sleepState = null, computeState = null;
+                long clockTs = 0;
                 Thread? spinner = null;
                 if (busy)
                 {
-                    spinner = Pinned((uint)b, () => { long x = 1; while (Volatile.Read(ref stop) == 0) x = Wide(x, 1 << 20); if (x == 42) Write("sink"); });
+                    spinner = Pinned((uint)b, () => { spinState = CosmosClassScheduler.ProbeState(FaultIsolation.CurrentSchedulerThread()); long x = 1; while (Volatile.Read(ref stop) == 0) x = Wide(x, 1 << 20); if (x == 42) Write("sink"); });
                     spinner.Start();
                     Thread.Sleep(30);
                 }
@@ -534,6 +538,7 @@ internal static class CosmosSmpProbe
                 int done = 0;
                 var sleeper = Pinned((uint)a, () =>
                 {
+                    sleepState = CosmosClassScheduler.ProbeState(FaultIsolation.CurrentSchedulerThread());
                     while (Volatile.Read(ref done) == 0 && latCount < lat.Length)
                     {
                         long t0 = Stopwatch.GetTimestamp();
@@ -547,12 +552,15 @@ internal static class CosmosSmpProbe
                 uint endCpu = uint.MaxValue;
                 var compute = Pinned((uint)a, () =>
                 {
+                    computeState = CosmosClassScheduler.ProbeState(FaultIsolation.CurrentSchedulerThread());
                     if (kind == 'M') ThreadAffinity.Current = KernelCpus.Compute;
+                    clockTs = Stopwatch.GetTimestamp();
                     var clock = Stopwatch.StartNew();
                     sink = Wide(1, size);
                     ms = clock.ElapsedMilliseconds;
                     endCpu = KernelCpus.Current;
                 });
+                long computeStartTs = Stopwatch.GetTimestamp();
                 compute.Start();
                 compute.Join(120000);
                 Volatile.Write(ref done, 1);
@@ -565,8 +573,26 @@ internal static class CosmosSmpProbe
                 Array.Sort(sorted);
                 long p50 = n > 0 ? sorted[n / 2] : -1, p99 = n > 0 ? sorted[Math.Min(n - 1, n * 99 / 100)] : -1;
                 Write($"INFO smtbench case={kind} size={size} round={round} end_cpu={endCpu} compute_ms={ms} wake_n={n} p50_us={p50} p99_us={p99} sink={sink & 0xFF}");
+                // Zeiten in ms ab compute.Start(); clock = Beginn der Messung im Rechenthread (nach dem Pin).
+                Write($"INFO smtmove case={kind} size={size} round={round} clock_ms={Ms(clockTs, computeStartTs)} compute[{Moves(computeState, computeStartTs)}]");
+                Write($"INFO smtmove case={kind} size={size} round={round} sleeper[{Moves(sleepState, computeStartTs)}] spinner[{Moves(spinState, computeStartTs)}]");
             }
         return null;
+    }
+
+    private static long Ms(long ts, long origin) => ts <= 0 ? -1 : (ts - origin) * 1000 / Stopwatch.Frequency;
+
+    // Diagnose #674: Umzugszaehler eines Threads als eine Zeile; nur im Hauptthread nach Join gelesen (Thread beendet, Werte fest).
+    private static string Moves(ClassThreadState? st, long origin)
+    {
+        if (st == null) return "none";
+        var text = $"mig={st.ProbeMigrations} ask={st.ProbeAsked} first_ask_ms={(st.ProbeFirstAsk < 0 ? -1 : Ms(st.ProbeFirstAsk, origin))} " +
+            $"short={st.ProbeTooShortOnCpu} soon={st.ProbeTooSoonAfterMove} sib_idle={st.ProbeSiblingIdle} nofree={st.ProbeNoFreeCore} " +
+            $"busy_mask=0x{st.ProbeBusyMaskAtNoFree:x} proposed={st.ProbeProposed} moves=";
+        int shown = Math.Min(st.ProbeMigrations, ClassThreadState.ProbeMoveLog);
+        for (int i = 0; i < shown; i++)
+            text += $"{(i > 0 ? "," : "")}{Ms(st.ProbeMoveAt[i], origin)}:{st.ProbeMoveFrom[i]}>{st.ProbeMoveTo[i]}";
+        return shown == 0 ? text + "-" : text;
     }
 
     private static void Sample(int[] cpus)

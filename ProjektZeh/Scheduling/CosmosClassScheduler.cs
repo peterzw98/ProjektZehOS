@@ -154,7 +154,20 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler, I
     public void OnThreadMigrate(SchedulerThread thread, PerCpuState fromState, PerCpuState toState)
     {
         // #674 V2: jeder Umzug (auch Ausgleich und Verdraengung) sperrt den naechsten freiwilligen fuer MinSinceMove.
-        if (thread.SchedulerData is ClassThreadState moved) moved.MovedAt = Stopwatch.GetTimestamp();
+        if (thread.SchedulerData is ClassThreadState moved)
+        {
+            moved.MovedAt = Stopwatch.GetTimestamp();
+#if ZEHOS_SMP_PROBE
+            // Diagnose #674: jeden Umzug zaehlen, die ersten mit Zeit und Weg merken (nur Zuweisungen, Arrays aus OnThreadCreate).
+            int slot = moved.ProbeMigrations++;
+            if (slot < ClassThreadState.ProbeMoveLog)
+            {
+                moved.ProbeMoveAt[slot] = moved.MovedAt;
+                moved.ProbeMoveFrom[slot] = (int)fromState.CpuId;
+                moved.ProbeMoveTo[slot] = (int)toState.CpuId;
+            }
+#endif
+        }
         if (thread.State == SchedulerThreadState.Ready) OnThreadBlocked(fromState, thread);
         OnThreadReady(toState, thread);
     }
@@ -231,8 +244,36 @@ internal sealed class CosmosClassScheduler(CpuTopology topology) : IScheduler, I
         long sinceMove = own.MovedAt == 0 ? long.MaxValue : now - own.MovedAt;
         int target = ClassPlacement.SelectMoveTarget(Topology, (int)self, allowedByCpu, running, queued, onCpu, sinceMove,
             minOnCpuTicks, minSinceMoveTicks);
+#if ZEHOS_SMP_PROBE
+        ProbeCountAnswer(own, (int)self, target, running, queued, onCpu, sinceMove, now);
+#endif
         return target >= 0 ? (uint)target : self;
     }
+
+#if ZEHOS_SMP_PROBE
+    // Diagnose #674: Grund der Antwort in derselben Reihenfolge wie ClassPlacement.SelectMoveTarget (hostgetestete Logik bleibt
+    // unveraendert, hier nur nachgerechnet). Im IRQ: nur Zuweisungen auf dem eigenen Threadzustand.
+    private void ProbeCountAnswer(ClassThreadState own, int self, int target, ReadOnlySpan<ThreadClass?> running, ReadOnlySpan<int> queued,
+        long onCpu, long sinceMove, long now)
+    {
+        own.ProbeAsked++;
+        if (own.ProbeFirstAsk < 0) own.ProbeFirstAsk = now;
+        if (target >= 0) { own.ProbeProposed++; return; }
+        if (onCpu < minOnCpuTicks) { own.ProbeTooShortOnCpu++; return; }
+        if (sinceMove < minSinceMoveTicks) { own.ProbeTooSoonAfterMove++; return; }
+        bool siblingBusy = false;
+        foreach (int sibling in Topology.SiblingsOf(self)) siblingBusy |= running[sibling] != null;
+        if (!siblingBusy) { own.ProbeSiblingIdle++; return; }
+        own.ProbeNoFreeCore++;
+        long mask = 0;
+        for (int i = 0; i < running.Length && i < 64; i++)
+            if (running[i] != null || queued[i] > 0) mask |= 1L << i;
+        own.ProbeBusyMaskAtNoFree = mask;
+    }
+
+    /// <summary>Diagnose #674: Zustand des laufenden Threads fuer die Probe (aus dem Thread selbst gelesen), sonst null.</summary>
+    internal static ClassThreadState? ProbeState(SchedulerThread? thread) => thread?.SchedulerData as ClassThreadState;
+#endif
 
     // Nicht gepinnt (mehr als eine CPU erlaubt), das Ziel erlaubt, bereit und schon einmal gelaufen: Einen Thread im Zustand
     // Created verschiebt Cosmos nicht (wie Stride, LastThreadAllowedOn).
