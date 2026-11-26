@@ -116,6 +116,9 @@ internal sealed class AddressSpaceMap
         return ResultErr.CreateSuccess();
     }
 
+    /// <summary>true, wenn [address, address+length) lückenlos belegt ist (gleich mit welchem Zugriff); ungültige Bereiche sind false.</summary>
+    public bool IsMapped(ulong address, ulong length) => ValidateRange(address, length, true).IsOK() && IsFullyCovered(address, address + length);
+
     public bool TryFind(ulong address, out MapAccess access)
     {
         int index = FirstEndingAfter(address);

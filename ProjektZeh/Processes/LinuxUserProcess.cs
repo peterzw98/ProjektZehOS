@@ -42,7 +42,7 @@ internal interface IUserPages
 /// Start und <see cref="Destroy"/> nach dem Ende aller Threads laufen ohne Nebenläufigkeit.
 /// </para>
 /// </summary>
-internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxThreads
+internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxThreads, ILinuxAddressSpace
 {
     private const ulong Page = AddressSpaceMap.PageSize;
     private const int ProtRead = 1, ProtWrite = 2, ProtExec = 4;
@@ -64,6 +64,7 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     private readonly object _memGate = new();
     private ulong _brkStart;
     private ulong _brk;
+    private ulong _stackSize = 8UL << 20;
 
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
     /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
@@ -100,6 +101,18 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
     public int Pid { get; }
 
     public ulong Brk => _brk;
+
+    /// <summary>Größe der Stackabbildung aus dem geladenen Abbild (RLIMIT_STACK, V9); vor <see cref="Load"/> der Linux-Standard.</summary>
+    public ulong StackSize => _stackSize;
+
+    public bool IsMapped(ulong addr, ulong len)
+    {
+        // V10: Die Karte ändern andere Threads (munmap, mmap) unter derselben Sperre.
+        lock (_memGate)
+        {
+            return _map.IsMapped(addr, len);
+        }
+    }
 
     public ulong ClearChildTid
     {
@@ -373,6 +386,8 @@ internal sealed class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost,
         {
             return reserved;
         }
+
+        _stackSize = image.StackTop - image.StackBottom;
 
         ulong stackContent = image.StackPointer & ~(Page - 1);
         foreach (UserRegion region in image.Regions)
