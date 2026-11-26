@@ -124,6 +124,8 @@ internal static class ElfLoader
             throw new ElfLoadException("Die Datei hat kein ladbares Segment.");
         }
 
+        RejectOverlaps(loads);
+
         // ET_EXEC liegt, wo die Datei sagt; statisch-PIE so, dass die niedrigste Seite auf PieBase kommt.
         ulong bias = 0;
         if (file.Type == ElfFile.TypeShared && lowestPage < PieBase)
@@ -148,7 +150,9 @@ internal static class ElfLoader
         }
 
         UserRegion[] segmentRegions = BuildRegions(segments);
-        ulong entry = file.Entry + bias;
+        // Einsprung und PT_PHDR kommen frei aus der Datei: mit der PIE-Verschiebung kann die Summe überlaufen und auf eine
+        // gültige Adresse zurückfallen. Das wird vorher abgelehnt statt sich auf die Bereichsprüfung danach zu verlassen.
+        ulong entry = AddBias(file.Entry, bias, "Der Einsprung");
         if (!IsExecutable(segmentRegions, entry))
         {
             throw new ElfLoadException("Der Einsprung 0x" + file.Entry.ToString("X", CultureInfo.InvariantCulture) + " liegt in keinem ausführbaren Segment.");
@@ -294,7 +298,7 @@ internal static class ElfLoader
     {
         if (hasPhdr)
         {
-            return phdrVaddr + bias;
+            return AddBias(phdrVaddr, bias, "PT_PHDR");
         }
 
         ulong size = (ulong)file.ProgramHeaderCount * ElfFile.ProgramHeaderSize;
@@ -308,6 +312,37 @@ internal static class ElfLoader
         }
 
         throw new ElfLoadException("Die Programmköpfe liegen in keinem geladenen Segment (AT_PHDR).");
+    }
+
+    private static ulong AddBias(ulong address, ulong bias, string what)
+    {
+        if (address > UserEnd - bias)
+        {
+            throw new ElfLoadException(what + " 0x" + address.ToString("X", CultureInfo.InvariantCulture) + " liegt nach der Verschiebung außerhalb des Benutzerraums.");
+        }
+
+        return address + bias;
+    }
+
+    /// <summary>
+    /// Lehnt PT_LOAD ab, deren Speicherbereiche sich bytegenau überschneiden: sonst überschriebe ein späteres Segment beim Füllen
+    /// das frühere, und die gemeinsame Seite bekäme die Rechte beider (eine nur lesbare Seite würde beschreibbar). Eine gemeinsame
+    /// Seite ohne Überschneidung (Ende von .text, Anfang von .rodata) bleibt erlaubt; ValidateLoad hat Überläufe schon ausgeschlossen.
+    /// </summary>
+    private static void RejectOverlaps(List<ElfProgramHeader> loads)
+    {
+        for (int i = 0; i < loads.Count; i++)
+        {
+            for (int j = i + 1; j < loads.Count; j++)
+            {
+                ElfProgramHeader a = loads[i], b = loads[j];
+                if (a.VirtualAddress < b.VirtualAddress + b.MemorySize && b.VirtualAddress < a.VirtualAddress + a.MemorySize)
+                {
+                    throw new ElfLoadException("Segmente bei 0x" + a.VirtualAddress.ToString("X", CultureInfo.InvariantCulture) + " und 0x"
+                        + b.VirtualAddress.ToString("X", CultureInfo.InvariantCulture) + " überschneiden sich.");
+                }
+            }
+        }
     }
 
     private static bool IsExecutable(UserRegion[] regions, ulong address)

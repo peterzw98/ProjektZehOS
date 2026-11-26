@@ -84,3 +84,10 @@ Annahmen und bekannte Schwächen von S3:
 
 `strace -f -c` zeigt für die 9 Programme zusammen 69 verschiedene Aufrufe. Alle liegen in S1 bis S3 des Entwurfs bis auf 26, die als eigener Commit in die Zeile S3 nachgetragen sind
 (Signale, Sockets, `getppid`, `ppoll`, `pipe`, `pwrite64`, `ftruncate`, `setitimer`; `alarm` in `util.h` läuft in musl über `setitimer`).
+
+## Satz V3 (Ladybird-Vorstellung, Stufe a)
+
+`src/v3`: `hello` (Text ausgeben, Ende mit 0) und die Gegenprobe `segv` (Schreiben auf eine nur lesbare Seite, `signal 11`), Erwartungen wie oben
+mit `--update` auf Linux erzeugt. `src/v3neg/spin` dreht ohne Systemaufruf und hat keine Erwartung: Im Gast muss der Kernel es nach dem Zeitlimit
+beenden (`signal 9`). Gastlauf: `scripts/test-linux-run.py` (Bündel bauen, ISO mit `-p:ZehOSLinuxRunProbe=true -p:ZehOSLinuxRunBundle=<bündel>`,
+dann `run --expected experiments/LinuxAbi/expected/v3 --status "spin=signal 9" --programs hello segv spin`).

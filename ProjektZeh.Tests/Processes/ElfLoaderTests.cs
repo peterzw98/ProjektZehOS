@@ -337,6 +337,40 @@ public sealed class ElfLoaderTests
     }
 
     [TestMethod]
+    public void OverlappingLoadsAreRejected()
+    {
+        // Zweites Segment beginnt innerhalb des ersten: abgelehnt, auch wenn beide nur lesbar sind.
+        var b = new ElfBuilder { Entry = 0x400100 };
+        b.Add(ElfProgramHeader.Load, R | X, 0, 0x400000, 0x800, 0x800);
+        b.Add(ElfProgramHeader.Load, R, 0x800, 0x4007F0, 0x100, 0x100);
+        AssertRejected(b.Build());
+
+        // .bss des ersten reicht in das zweite hinein.
+        var bss = new ElfBuilder { Entry = 0x401100 };
+        bss.Add(ElfProgramHeader.Load, R | W, 0, 0x400000, 0x100, 0x2000);
+        bss.Add(ElfProgramHeader.Load, R | X, Page, 0x401000, Page, Page);
+        AssertRejected(bss.Build());
+
+        // Unmittelbar aneinander (gemeinsame Seite ohne Überschneidung) bleibt erlaubt.
+        var touching = new ElfBuilder { Entry = 0x400100 };
+        touching.Add(ElfProgramHeader.Load, R | X, 0, 0x400000, 0x800, 0x800);
+        touching.Add(ElfProgramHeader.Load, R, 0x800, 0x400800, 0x100, 0x100);
+        Assert.AreEqual(2, Load(touching.Build()).Segments.Count);
+    }
+
+    [TestMethod]
+    public void PieAddressesNearTopAreRejectedBeforeBias()
+    {
+        ElfBuilder entry = Pie();
+        entry.Entry = ulong.MaxValue - 0xFFF;
+        AssertRejected(entry.Build());
+
+        ElfBuilder phdr = Pie();
+        phdr.Headers[0] = (ElfProgramHeader.ProgramHeaders, R, 64, ulong.MaxValue - ElfLoader.PieBase + 0x41, 4 * 56, 4 * 56);
+        AssertRejected(phdr.Build());
+    }
+
+    [TestMethod]
     public void ReserveBelegtAlleBereicheOderKeinen()
     {
         byte[] elf = Static().Build();
