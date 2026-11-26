@@ -1722,9 +1722,6 @@ public static class SchedulerManager
         using (InternalCpu.DisableInterruptsScope())
         {
             PerCpuState state = s_cpuStates[GetCurrentCpuId()];
-            // The switch-out that serves this request tells the policy it
-            // serves a yield (PerCpuState.SwitchIsYield).
-            state._yieldRequestedBy = state.CurrentThread;
             Volatile.Write(ref state._needReschedule, true);
 
             // Interrupts are masked, so the plain form of the queue lock.
@@ -1732,6 +1729,15 @@ public static class SchedulerManager
             state._lock.Acquire();
             othersQueued = s_currentScheduler is not null && s_currentScheduler.GetRunQueueCount(state) > 0;
             state._lock.Release();
+
+            // The switch-out that serves this request tells the policy it
+            // serves a yield (PerCpuState.SwitchIsYield), but only when the
+            // yield switches now. With nothing queued here the thread keeps
+            // the CPU; the next tick or wake that switches is no yield, and
+            // a stale request would cost the thread its front place and the
+            // rest of its slice. Set before the IPI, which lands only once
+            // interrupts are back on.
+            state._yieldRequestedBy = othersQueued ? state.CurrentThread : null;
 
             if (othersQueued)
             {
