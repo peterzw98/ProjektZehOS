@@ -38,6 +38,10 @@
     <ZehOSUserModeProbe Condition="'$(ZehOSUserModeProbeNegative)' == 'true'">true</ZehOSUserModeProbe>
     <DefineConstants Condition="'$(ZehOSUserModeProbe)' == 'true'">$(DefineConstants);ZEHOS_USER_MODE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSUserModeProbeNegative)' == 'true'">$(DefineConstants);ZEHOS_USER_MODE_PROBE_NEGATIVE</DefineConstants>
+    <!-- Ladybird V3: Befehl run fuer statische Linux-Programme, nur Testbau. Die Probe startet beim Boot ein eingebettetes Buendel und haelt an. -->
+    <ZehOSLinuxRun Condition="'$(ZehOSLinuxRunProbe)' == 'true'">true</ZehOSLinuxRun>
+    <DefineConstants Condition="'$(ZehOSLinuxRun)' == 'true'">$(DefineConstants);ZEHOS_LINUX_RUN</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSLinuxRunProbe)' == 'true'">$(DefineConstants);ZEHOS_LINUX_RUN_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageRootProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_ROOT_PROBE</DefineConstants>
@@ -100,6 +104,25 @@
   <ItemGroup Condition="'$(ZehOSUserModeProbe)' == 'true'">
     <AsmFiles Include="$(MSBuildThisFileDirectory)Native/UserProbe/probe.S;$(MSBuildThisFileDirectory)Native/UserProbe/entry.s" />
   </ItemGroup>
+  <!-- Ladybird V3: Das Testbuendel (scripts/test-linux-run.py bundle) kommt per .incbin ins Kernelabbild; die Quelle entsteht im obj-Ordner,
+       damit der Pfad absolut ist. Intel-Syntax, weil % in MSBuild-Items ein Escape ist. -->
+  <Target Name="ZehOSLinuxRunBundle" BeforeTargets="FindAsmSourceFiles" Condition="'$(ZehOSLinuxRunProbe)' == 'true'">
+    <Error Condition="'$(ZehOSLinuxRunBundle)' == '' or !Exists('$(ZehOSLinuxRunBundle)')" Text="ZehOSLinuxRunProbe braucht -p:ZehOSLinuxRunBundle=&lt;datei&gt; (scripts/test-linux-run.py bundle)." />
+    <PropertyGroup>
+      <ZehOSLinuxRunDir>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'linuxrun'))</ZehOSLinuxRunDir>
+      <ZehOSLinuxRunBundleFull>$([System.IO.Path]::GetFullPath('$(ZehOSLinuxRunBundle)'))</ZehOSLinuxRunBundleFull>
+    </PropertyGroup>
+    <ItemGroup>
+      <ZehOSLinuxRunLine Include=".intel_syntax noprefix;.text;.global zehos_linux_run_bundle_address;zehos_linux_run_bundle_address:;lea rax, [rip + zehos_linux_run_begin];ret" />
+      <ZehOSLinuxRunLine Include=".global zehos_linux_run_bundle_size;zehos_linux_run_bundle_size:;lea rax, [rip + zehos_linux_run_end];lea rcx, [rip + zehos_linux_run_begin];sub rax, rcx;ret" />
+      <ZehOSLinuxRunLine Include=".section .rodata;.balign 16;zehos_linux_run_begin:;.incbin &quot;$(ZehOSLinuxRunBundleFull)&quot;;zehos_linux_run_end:" />
+    </ItemGroup>
+    <MakeDir Directories="$(ZehOSLinuxRunDir)" />
+    <WriteLinesToFile File="$(ZehOSLinuxRunDir)/linux_run_bundle.s" Lines="@(ZehOSLinuxRunLine)" Overwrite="true" />
+    <ItemGroup>
+      <AsmFiles Include="$(ZehOSLinuxRunDir)/linux_run_bundle.s" />
+    </ItemGroup>
+  </Target>
   <ItemGroup Condition="'$(ZehOSAotProbe)' == 'true'">
     <GCCProject Include="$(MSBuildThisFileDirectory)Native/AotProbe/" />
   </ItemGroup>
