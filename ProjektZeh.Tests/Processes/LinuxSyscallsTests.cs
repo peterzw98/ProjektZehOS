@@ -63,6 +63,8 @@ public sealed class LinuxSyscallsTests
         public long MonotonicNanos => 5_000_000_007L;
         public int RandomCalls;
         public bool RandomFails;
+        public long SleptNanos;
+        public void SleepNanos(long ns) { SleptNanos += ns; }
         public bool TryFillRandom(Span<byte> d) { RandomCalls++; if (RandomFails) return false; for (int i = 0; i < d.Length; i++) d[i] = (byte)(i * 31 + 7); return true; }
         public int? Exited;
         public void Exit(int code) => Exited = code;
@@ -352,6 +354,11 @@ public sealed class LinuxSyscallsTests
         Assert.AreEqual((short)0x20, BitConverter.ToInt16(p.Mem.Data, 0x10e));
         Assert.AreEqual((short)0, BitConverter.ToInt16(p.Mem.Data, 0x116));
         Assert.AreEqual(0L, Call(p, LinuxSyscalls.Poll, 0, 0, 0));
+        Assert.AreEqual(0L, p.SleptNanos); // Frist 0: kein Schlafen
+        Assert.AreEqual(0L, Call(p, LinuxSyscalls.Poll, 0, 0, 25));
+        Assert.AreEqual(25_000_000L, p.SleptNanos); // keine bereiten Eintraege: Frist abschlafen
+        Assert.AreEqual(0L, Call(p, LinuxSyscalls.Poll, 0, 0, ulong.MaxValue));
+        Assert.AreEqual(25_000_000L, p.SleptNanos); // -1 schlaeft nie
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Poll, Buf, 1025, 0));
         Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.Poll, Base + 0x4000 - 4, 1, 0));
     }
