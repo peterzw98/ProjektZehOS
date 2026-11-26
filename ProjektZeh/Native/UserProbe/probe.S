@@ -37,8 +37,9 @@ probe_base:
 .equ KERNEL_ADDR, 0xFFFF800000000000     /* kanonisch, obere Haelfte: #PF statt #GP */
 
 .equ SYS_CHECK, 0x7A03
-.equ SYS_SAMPLE, 0x7A05                  /* N1-A7 sysmed: rdi = Ticks, rsi = Gruppe (0x7A04 gehoert SYS_DEVICE) */
+.equ SYS_SAMPLE, 0x7A05                  /* N1-A7 sysmed, N1-B5: rdi = Ticks, rsi = Gruppe; der Kernel sammelt, ausgewertet wird nach dem Messfenster */
 .equ MED_CALLS, 100000
+.equ SYS_YIELD, 0x7A06                   /* N1-B5 aswitch: der Kernel gibt die CPU ab (Thread.Yield) */
 .equ SYS_DEVICE, 0x7A04                  /* N1-B4 device: Kernel fasst ein Geraet an; 0 weiter, 1 fertig, sonst Fehlerkennung */
 
 /* Endlosschleife. Kein `jmp .`: den Punkt als Sprungziel kennt der Assembler von clang (Kernelbau) in Intel-Schreibweise nicht. */
@@ -55,7 +56,7 @@ probe_base:
 /* Kopf: "ZUP1", Anzahl, Eintragsgroesse (32), Kapazitaet; je Eintrag Name (24 Byte, mit 0 aufgefuellt), Versatz (u32), 0 (u32). */
         .org TABLE_OFF
         .ascii "ZUP1"
-        .long 22
+        .long 24
         .long 32
         .long CAPACITY
 
@@ -88,7 +89,9 @@ probe_base:
         NAMED execat, 18
         NAMED sparse, 19
         NAMED device, 20
-        NAMED sysmed, 21
+        NAMED aswitch, 21
+        NAMED pfault, 22
+        NAMED sysmed, 23
 
 .macro SLOT index, target
         .org SLOT_OFF + SLOT_SIZE * \index, 0xCC   /* Luecken als int3 */
@@ -116,7 +119,9 @@ probe_base:
         SLOT 18, body_execat
         SLOT 19, body_sparse
         SLOT 20, body_device
-        SLOT 21, body_sysmed
+        SLOT 21, body_aswitch
+        SLOT 22, body_pfault
+        SLOT 23, body_sysmed
 
         .org BODY_OFF, 0xCC
 
@@ -439,6 +444,81 @@ body_device:
         je 2f
         mov rdi, rax
 2:      xor esi, esi
+        mov eax, SYS_EXIT
+        syscall
+        HANG
+
+/* aswitch (N1-B5): Gruppe bei [rsp]: 0 allein, 1 Messer mit Peer, 0xFF Peer. SYS_YIELD (rdi = 1: Peer) liefert in rax den Zaehler, den nur
+ * der Peer erhoeht. Der Messer beendet eine Runde im Paar erst, wenn der Zaehler gestiegen ist (der Peer lief also nachweislich); allein
+ * endet sie nach einem Yield. Ticks (rdtsc-Paar um die ganze Runde) gehen NACH der Runde per SYS_SAMPLE an den Kernel (rsi = Gruppe).
+ * Ende nur durch RequestLeave. */
+body_aswitch:
+        mov rbx, [rsp]
+        cmp rbx, 0xFF
+        jne 1f
+0:      mov edi, 1
+        mov eax, SYS_YIELD
+        syscall
+        jmp 0b
+1:      xor edi, edi
+        mov eax, SYS_YIELD
+        syscall
+        mov r10, rax
+2:      rdtsc
+        shl rdx, 32
+        or rax, rdx
+        mov r8, rax
+3:      xor edi, edi
+        mov eax, SYS_YIELD
+        syscall
+        test rbx, rbx
+        jz 4f
+        cmp rax, r10
+        je 3b
+        mov r10, rax
+4:      rdtsc
+        shl rdx, 32
+        or rax, rdx
+        sub rax, r8
+        mov rdi, rax
+        mov rsi, rbx
+        mov eax, SYS_SAMPLE
+        syscall
+        jmp 2b
+
+/* pfault (N1-B5): Anfang der reservierten Adressen bei [rsp], Seitenzahl bei [rsp + 8]. Durchgang 0 schreibt je Seite (Erstzugriff: der
+ * FaultHandler belegt sie), Durchgang 1 dieselben Seiten noch einmal (schon abgebildet, Eigenkosten von Store und rdtsc). Je Seite ein
+ * rdtsc-Paar um den Store, Ticks per SYS_SAMPLE (rsi = Durchgang). Ende rdi = 0. */
+body_pfault:
+        mov r12, [rsp]
+        mov r13, [rsp + 8]
+        xor ebx, ebx
+1:      xor r14d, r14d
+2:      cmp r14, r13
+        jae 3f
+        mov r15, r14
+        shl r15, 12
+        add r15, r12
+        rdtsc
+        shl rdx, 32
+        or rax, rdx
+        mov r8, rax
+        mov [r15], r15
+        rdtsc
+        shl rdx, 32
+        or rax, rdx
+        sub rax, r8
+        mov rdi, rax
+        mov rsi, rbx
+        mov eax, SYS_SAMPLE
+        syscall
+        inc r14
+        jmp 2b
+3:      inc ebx
+        cmp ebx, 2
+        jb 1b
+        xor edi, edi
+        xor esi, esi
         mov eax, SYS_EXIT
         syscall
         HANG
