@@ -139,9 +139,10 @@ Stand: 26. November 2026, Entwurf für das Tor N1-Z ([#624](https://github.com/p
 
 ### C: Aufrufliste von Ladybird
 
-- **Umgesetzt:** C1, die Auswertung von `strace -ff -f -yy -v` (`experiments/Ladybird.Probe/syscalls.py`, PR #665, Kopf `d7442098e`), 16 Tests OK, ein echter `strace`-Lauf (python3, 3 Prozesse, 115 Pfade). **Nicht auf Ladybird-Spuren angewendet.**
-- **Offen:** C2 (#635), die Messung der drei L1-Seiten und von `js -c '1+1'` unter `strace`: nicht gelaufen. Es gibt keine Zahl zu Aufrufen in S4, `/proc`-Pfaden, Threads je Prozess oder reserviertem Adressraum.
-- **Urteil: `offen`.** Die Regel (höchstens 40 S4-Pflichtaufrufe, keiner aus `io_uring_*`, `bpf`, `userfaultfd`, `ptrace`, kein GPU-Gerät) ist nicht prüfbar.
+- **Umgesetzt:** C1, die Auswertung von `strace -ff -f -yy -v` (`experiments/Ladybird.Probe/syscalls.py`, PR #665, Kopf `d7442098e`), 16 Tests OK. C2 ([#635](https://github.com/peterzw98/ProjektZehOS/issues/635), PR #728, [Bericht N1-C2](superpowers/plans/2026-11-26-ladybird-n1-aufrufe.md)): die drei L1-Seiten und `js -l -c '1+1'` unter `strace` am 26.11. auf demselben Rechner wie L1, alle vier Läufe Exit 0.
+- **Messwerte:** 94 verschiedene Aufrufe (S1 41, S2 4, S3 19, **S4 30**). **S4-Pflicht 10** (`clock_nanosleep`, `landlock_add_rule`, `landlock_restrict_self`, `prctl`, `prlimit64`, `sched_getaffinity`, `seccomp`, `set_robust_list`, `setpgid`, `statx`), höchstens 12 mit den unentschiedenen `fsync` und `restart_syscall`. Kein `io_uring_*`, `bpf`, `userfaultfd`, `ptrace`. GPU-Geräte werden geöffnet, aber mit ganz verborgenen Geräten läuft `static.html` unverändert (2/2, Screenshot bytegleich): kein GPU-Gerät ist Pflicht. Threads je Prozess bis 21 (`WebContent`), größter reservierter Adressraum `WebContent` ≈ 4,06 TiB.
+- **Urteil: `trägt`** (Bericht N1-C2): 10 S4-Pflichtaufrufe bei einer Grenze von 40, keiner der ausgeschlossenen Aufrufe, kein GPU-Gerät.
+- **Grenzen:** nur Linux mit glibc und ein Rechner; „Pflicht“ heißt, ohne den Aufruf entsteht kein Screenshot; ob für Sandbox-Aufrufe (`seccomp`, `landlock_*`) Erfolg ohne Wirkung reicht, entscheidet die Messung nicht.
 
 ### D: Ladybird mit musl
 
