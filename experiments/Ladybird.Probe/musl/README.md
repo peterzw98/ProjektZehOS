@@ -1,6 +1,6 @@
-# Ladybird V4: statische LibJS-Probe mit musl
+# Ladybird-Proben mit musl
 
-Die Probe baut das Kommandozeilenprogramm `js` aus Ladybird `6fba5b78a1043fe93b3451204e04dcc0e3bd983a`. Sie verwendet das Distribution-Preset mit statischen Bibliotheken und baut ohne GUI und JavaScript-JIT. Die Probe gehört zu [Paket N1-D1](../../../docs/superpowers/plans/2026-11-24-ladybird-n1-nachweise.md).
+Die Probe für das Kommandozeilenprogramm `js` aus Ladybird `6fba5b78a1043fe93b3451204e04dcc0e3bd983a` gehört zu N1-D1. Das gleiche Skript unterstützt den Browser und seine Dienste für N1-D2. Beide Varianten verwenden das Distribution-Preset ohne JavaScript-JIT. [N1-Plan](../../../docs/superpowers/plans/2026-11-24-ladybird-n1-nachweise.md)
 
 ## Voraussetzungen
 
@@ -13,9 +13,30 @@ experiments/Ladybird.Probe/musl/build.sh --target js --jobs 3 --check
 timeout --kill-after=30s 8h experiments/Ladybird.Probe/musl/build.sh --target js --jobs 3
 ```
 
-`--workdir` wählt einen anderen Unterordner unter `~/ladybird-probe/`. `--resume` setzt einen dort begonnenen Bau desselben Commits fort. Beim Erfolg prüft das Skript die ELF-Header, den Rechenausdruck `1+1` und die numerische Sortierung von 10.000 Einträgen. Jeder Lauf schreibt die Systemaufrufe von `js -c '1+1'` in einen eigenen Ordner unter `strace/` und gibt dessen Pfad aus.
+`--workdir` wählt einen anderen Unterordner unter `~/ladybird-probe/`. `--resume` setzt einen dort begonnenen Bau desselben Commits fort. Für das Ziel `js` prüft das Skript die ELF-Header, den Rechenausdruck `1+1` und die numerische Sortierung von 10.000 Einträgen. Jeder `js`-Lauf schreibt die Systemaufrufe von `js -c '1+1'` in einen eigenen Ordner unter `strace/` und gibt dessen Pfad aus.
 
-## Prüfstand
+### Vollbau und Headless-Probe (N1-D2)
+
+Für den Vollbau werden zusätzlich Qt ab 6.10 und die GIO- und XCB-Entwicklungsmodule benötigt. DejaVu stellt die Schrift für den Headless-Test bereit.
+
+```bash
+apk add --no-cache qt6-qtbase-dev qt6-qtbase-private-dev qt6-qtpositioning-dev \
+  glib-dev xcb-util-wm-dev font-dejavu
+```
+
+Der Vollbau verwendet das dynamische Qt aus Alpine. Die Ladybird-Bibliotheken bleiben statisch. `WebContent` baut den Dienst, `all` baut `ladybird` mit seinen Diensten und prüft `static.html` über `measure.py` mit `QT_QPA_PLATFORM=offscreen`. Das Prüfergebnis liegt in `logs/headless-static.json`.
+
+```bash
+experiments/Ladybird.Probe/musl/build.sh --target all --check
+timeout --kill-after=30s 8h experiments/Ladybird.Probe/musl/build.sh --target all --jobs 3
+# Alternativ erst WebContent bauen und anschließend den Browser im gleichen Baum ergänzen.
+timeout --kill-after=30s 8h experiments/Ladybird.Probe/musl/build.sh --target WebContent --jobs 3
+timeout --kill-after=30s 8h experiments/Ladybird.Probe/musl/build.sh --target all --jobs 3 --resume
+```
+
+`WebContent` und `all` verwenden standardmäßig `~/ladybird-probe/v5` und sind mit `--resume` im selben Baum nutzbar. Das statische `js` verwendet seinen eigenen Baum `~/ladybird-probe/v4`.
+
+## Prüfstand für `js`
 
 Die statische `js`-Probe wurde in Alpine 3.24.4 auf WSL 2 gebaut, mit GCC 15.2.0, CMake 4.2.3, Rust 1.98.0 (`x86_64-unknown-linux-musl`) und drei parallelen Jobs. Das [veröffentlichte ELF](https://github.com/peterzw98/ProjektZehOS/blob/9421ab54/ladybird/bin/js) ist 33.092.712 Bytes groß und hat weder `PT_INTERP` noch `DT_NEEDED`. `1+1` ergab `2`, der Sortiertest prüfte alle 10.000 Ausgabewerte und ergab `10000`. Die Ladybird- und vcpkg-Quellbäume sind sauber (je 0 Patchzeilen). Der [Bericht](bericht-n1-d1.md) enthält den ABI-Abgleich.
 

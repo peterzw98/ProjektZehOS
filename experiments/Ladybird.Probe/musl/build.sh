@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Baut den statischen LibJS-Nachweis in einer Alpine-Umgebung.
+# Baut LibJS oder Ladybird auf Alpine x86-64.
 set -euo pipefail
 
 readonly commit=6fba5b78a1043fe93b3451204e04dcc0e3bd983a
 readonly rust_channel=1.98.0
 jobs=3
-workdir="$HOME/ladybird-probe/v4"
+target=js
+workdir=
 check_only=0
 resume=0
 
 usage() {
-    echo 'Aufruf: build.sh --target js [--jobs N] [--workdir DIR] [--check] [--resume]'
+    echo 'Aufruf: build.sh --target js|WebContent|all [--jobs N] [--workdir DIR] [--check] [--resume]'
 }
 
 die() {
@@ -21,7 +22,8 @@ die() {
 while (($#)); do
     case "$1" in
         --target)
-            [[ $# -ge 2 && "$2" == js ]] || die 'V4 unterstützt --target js.'
+            [[ $# -ge 2 ]] || die '--target braucht js, WebContent oder all.'
+            target="$2"
             shift 2 ;;
         --jobs)
             [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || die '--jobs braucht eine positive Ganzzahl.'
@@ -35,6 +37,26 @@ while (($#)); do
         *) usage >&2; die "Unbekannte Option: $1" ;;
     esac
 done
+
+# WebContent und all teilen die Konfiguration. Der statische js-Bau behält seinen eigenen Baum.
+marker="$commit"
+gui=ON
+linker_flags=
+case "$target" in
+    js)
+        workdir=${workdir:-"$HOME/ladybird-probe/v4"}
+        gui=OFF
+        linker_flags=-static
+        ninja_target=js ;;
+    WebContent|all)
+        workdir=${workdir:-"$HOME/ladybird-probe/v5"}
+        marker+=$'\nfull'
+        ninja_target=WebContent
+        if [[ "$target" == all ]]; then
+            ninja_target=ladybird
+        fi ;;
+    *) die '--target braucht js, WebContent oder all.' ;;
+esac
 
 [[ "$(uname -m)" == x86_64 && -f /etc/alpine-release ]] || die 'Alpine x86_64 ist erforderlich.'
 (( EUID != 0 )) || die 'Der Bau braucht einen unprivilegierten Benutzer.'
@@ -50,6 +72,16 @@ for tool in git realpath gcc g++ cmake ninja python3 rustup readelf strace timeo
     command -v "$tool" >/dev/null || die "Werkzeug fehlt: $tool"
 done
 [[ "$(gcc -dumpmachine)" == x86_64-*-linux-musl ]] || die 'GCC verwendet kein x86_64-musl-Ziel.'
+if [[ "$gui" == ON ]]; then
+    pkgconf --exists 'Qt6Core >= 6.10' Qt6Gui Qt6Widgets Qt6Positioning gio-unix-2.0 xcb-icccm \
+        || die 'Vollbau braucht Qt ab 6.10 (Base, GuiPrivate, Positioning), glib-dev und xcb-util-wm-dev.'
+    /sbin/apk info -e qt6-qtbase-private-dev >/dev/null || die 'Alpine-Paket qt6-qtbase-private-dev fehlt.'
+fi
+if [[ "$target" == all ]]; then
+    probe_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+    [[ -r "$probe_dir/measure.py" && -r "$probe_dir/pages/static.html" ]] \
+        || die 'measure.py und pages/static.html fehlen neben dem musl-Verzeichnis.'
+fi
 rustup run "$rust_channel" rustc --version
 parent=$(realpath -m "$HOME/ladybird-probe")
 workdir=$(realpath -m -- "$workdir")
@@ -62,11 +94,12 @@ fi
 src="$workdir/src"
 build="$workdir/build"
 if (( resume )); then
-    [[ -f "$workdir/.ladybird-musl-workdir" && -d "$src/.git" && "$(cat "$workdir/.ladybird-musl-workdir")" == "$commit" ]] || die 'Kein fortsetzbarer V4-Arbeitsordner.'
+    [[ -f "$workdir/.ladybird-musl-workdir" && -d "$src/.git" && "$(cat "$workdir/.ladybird-musl-workdir")" == "$marker" ]] \
+        || die 'Kein fortsetzbarer Arbeitsordner für diesen Commit und Baumodus.'
 else
-    [[ ! -e "$workdir" ]] || die 'Arbeitsordner existiert bereits. Für einen begonnenen V4-Bau --resume verwenden.'
+    [[ ! -e "$workdir" ]] || die 'Arbeitsordner existiert bereits. Für einen begonnenen Bau --resume verwenden.'
     mkdir -p "$src" "$build" "$workdir/logs"
-    printf '%s\n' "$commit" > "$workdir/.ladybird-musl-workdir"
+    printf '%s\n' "$marker" > "$workdir/.ladybird-musl-workdir"
     git -C "$src" init -q
     git -C "$src" remote add origin https://github.com/LadybirdBrowser/ladybird.git
 fi
@@ -99,12 +132,24 @@ python3 Meta/ladybird.py deps --preset Distribution --cc gcc --cxx g++ --jobs "$
 cmake --preset Distribution -S "$src" -B "$build" \
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
     -DVCPKG_MANIFEST_INSTALL=OFF "-DVCPKG_TARGET_TRIPLET=$triplet" "-DVCPKG_HOST_TRIPLET=$triplet" \
-    -DENABLE_GUI_TARGETS=OFF -DBUILD_TESTING=OFF -DBUILD_SHARED_LIBS=OFF -DENABLE_JS_JIT=OFF \
+    "-DENABLE_GUI_TARGETS=$gui" -DBUILD_TESTING=OFF -DBUILD_SHARED_LIBS=OFF -DENABLE_JS_JIT=OFF \
     -DLADYBIRD_ENABLE_CCACHE=OFF -DLADYBIRD_ENABLE_LTO=OFF -DLADYBIRD_GENERATE_SYMBOL_FILES=OFF \
-    -DCMAKE_EXE_LINKER_FLAGS=-static "-Dpkgcfg_lib_LIBEDIT_ncurses:FILEPATH=$ncurses_archive" \
+    "-DCMAKE_EXE_LINKER_FLAGS=$linker_flags" "-Dpkgcfg_lib_LIBEDIT_ncurses:FILEPATH=$ncurses_archive" \
     2>&1 | tee "$workdir/logs/configure.log"
 grep -qx 'ENABLE_JS_JIT:BOOL=OFF' "$build/CMakeCache.txt" || die 'JavaScript-JIT bleibt aktiv.'
-/usr/bin/time -v ninja -C "$build" -j "$jobs" js 2>&1 | tee "$workdir/logs/build.log"
+/usr/bin/time -v ninja -C "$build" -j "$jobs" "$ninja_target" 2>&1 | tee "$workdir/logs/build.log"
+case "$target" in
+    WebContent)
+        [[ -x "$build/libexec/WebContent" ]] || die 'Ausführbare Datei build/libexec/WebContent fehlt.'
+        exit 0 ;;
+    all)
+        [[ -x "$build/bin/Ladybird" ]] || die 'Ausführbare Datei build/bin/Ladybird fehlt.'
+        mkdir -p "$workdir/smoke-home"
+        HOME="$workdir/smoke-home" TMPDIR="$workdir/smoke-home" QT_QPA_PLATFORM=offscreen \
+            python3 "$probe_dir/measure.py" --binary "$build/bin/Ladybird" --page "$probe_dir/pages/static.html" \
+                --runs 1 --out "$workdir/logs/headless-static.json"
+        exit 0 ;;
+esac
 binary="$build/bin/js"
 [[ -x "$binary" ]] || die 'Ausführbare Datei build/bin/js fehlt.'
 export LC_ALL=C
