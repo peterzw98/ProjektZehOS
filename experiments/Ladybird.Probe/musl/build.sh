@@ -38,6 +38,13 @@ done
 
 [[ "$(uname -m)" == x86_64 && -f /etc/alpine-release ]] || die 'Alpine x86_64 ist erforderlich.'
 (( EUID != 0 )) || die 'Der Bau braucht einen unprivilegierten Benutzer.'
+readonly ninja_dir=/usr/lib/ninja-build/bin
+readonly ncurses_archive=/usr/lib/libncursesw.a
+[[ -x "$ninja_dir/ninja" ]] || die 'Alpine-Paket ninja-build fehlt.'
+/sbin/apk info -e gcompat >/dev/null || die 'Alpine-Paket gcompat fehlt (für Skias gn).'
+[[ -r "$ncurses_archive" ]] || die 'Alpine-Paket ncurses-static fehlt.'
+# Samurai akzeptiert das von vcpkg verwendete `ninja install -v` nicht.
+export PATH="$ninja_dir:$PATH"
 for tool in git realpath gcc g++ cmake ninja python3 rustup readelf strace timeout; do
     command -v "$tool" >/dev/null || die "Werkzeug fehlt: $tool"
 done
@@ -81,7 +88,7 @@ cd "$src"
 export RUSTUP_TOOLCHAIN="$rust_channel" CCACHE_DISABLE=1
 export LADYBIRD_SOURCE_DIR="$src" LADYBIRD_MAIN_SOURCE_DIR="$src"
 export VCPKG_ROOT="$src/Build/vcpkg-distribution" VCPKG_MAX_CONCURRENCY="$jobs"
-# Heruntergeladene glibc-Werkzeuge starten in Alpine nicht.
+# vcpkg soll die Alpine-Werkzeuge für reguläre Bauschritte verwenden.
 export VCPKG_FORCE_SYSTEM_BINARIES=1
 triplet=$(PYTHONPATH=Meta python3 -c 'from Utils.host_platform import Platform; from Utils.vcpkg_deps import determine_triplet; print(determine_triplet(Platform(), "Distribution"))')
 printf 'Ladybird %s, Triplet %s, Jobs %s\n' "$commit" "$triplet" "$jobs"
@@ -93,7 +100,7 @@ cmake --preset Distribution -S "$src" -B "$build" \
     -DVCPKG_MANIFEST_INSTALL=OFF "-DVCPKG_TARGET_TRIPLET=$triplet" "-DVCPKG_HOST_TRIPLET=$triplet" \
     -DENABLE_GUI_TARGETS=OFF -DBUILD_TESTING=OFF -DBUILD_SHARED_LIBS=OFF -DENABLE_JS_JIT=OFF \
     -DLADYBIRD_ENABLE_CCACHE=OFF -DLADYBIRD_ENABLE_LTO=OFF -DLADYBIRD_GENERATE_SYMBOL_FILES=OFF \
-    -DCMAKE_EXE_LINKER_FLAGS=-static \
+    -DCMAKE_EXE_LINKER_FLAGS=-static "-Dpkgcfg_lib_LIBEDIT_ncurses:FILEPATH=$ncurses_archive" \
     2>&1 | tee "$workdir/logs/configure.log"
 grep -qx 'ENABLE_JS_JIT:BOOL=OFF' "$build/CMakeCache.txt" || die 'JavaScript-JIT bleibt aktiv.'
 /usr/bin/time -v ninja -C "$build" -j "$jobs" js 2>&1 | tee "$workdir/logs/build.log"
@@ -121,7 +128,7 @@ sorted=$("$binary" -i -l -c '
 ')
 [[ "$sorted" == 10000 ]] || die "Array-Sortierprobe ergab '$sorted' statt 10000."
 
-strace -ff -f -yy -v -o "$workdir/strace/js" "$binary" -c '1+1' > "$workdir/logs/strace-stdout.log"
+strace -ff -yy -o "$workdir/strace/js" "$binary" -c '1+1' > "$workdir/logs/strace-stdout.log"
 compgen -G "$workdir/strace/js.*" >/dev/null || die 'strace hat kein Protokoll angelegt.'
 printf 'Statische x86-64-ELF: %s (%s Bytes)\n' "$binary" "$(stat -c %s "$binary")"
 printf 'Rechenprobe und Array-Sortierung bestanden. Systemaufrufe: %s/strace\n' "$workdir"
