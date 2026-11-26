@@ -1293,15 +1293,21 @@ public class Kernel : Sys.Kernel
     // ZehOS patch yield-now, see PATCHES.md
     /// <summary>Rounds of the one-CPU ping-pong that has to finish within <see cref="FastPingPongMaxTicks"/>.</summary>
     private const int FastPingPongRounds = 1000;
-    /// <summary>Ticks the one-CPU ping-pong may take: a yield that waits for the tick needs two per round.</summary>
-    private const uint FastPingPongMaxTicks = 20;
+    /// <summary>
+    /// Ticks the one-CPU ping-pong may take. A yield that waits for the tick
+    /// costs about a tick per round, at least <see cref="FastPingPongRounds"/>
+    /// ticks in all (1004 measured without the interrupt under KVM); a yield
+    /// that switches at once took 1 tick there. A quarter of the rounds keeps
+    /// both apart with room for a slow emulator (TCG), where each switch
+    /// through the reschedule interrupt costs far more than under KVM.
+    /// </summary>
+    private const uint FastPingPongMaxTicks = FastPingPongRounds / 4;
 
-    // ZehOS patch yield-now, see PATCHES.md
     /// <summary>
     /// Main and a worker on one CPU hand a turn back and forth through
     /// Thread.Yield alone. A yield that only switches at the next tick costs
-    /// a tick per turn, 2 * <see cref="FastPingPongRounds"/> ticks in all; a
-    /// yield that switches at once finishes every round within a few ticks.
+    /// about a tick per turn; a yield that switches at once finishes every
+    /// round within a few ticks.
     /// </summary>
     private static void TestThreadYieldSwitchesBeforeTick()
     {

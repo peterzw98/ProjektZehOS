@@ -1687,21 +1687,24 @@ public static class SchedulerManager
 
     // ZehOS patch yield-now, see PATCHES.md
     /// <summary>
-    /// Gives up the CPU now: sets the request <see cref="BlockThread"/>
-    /// makes and, when the caller runs with interrupts enabled, raises the
-    /// reschedule interrupt on this CPU, as <see cref="Park"/> does, so the
-    /// switch happens within a few instructions instead of at the next tick.
-    /// The switch re-queues the thread through
-    /// <see cref="IScheduler.OnThreadYield"/> after the policy picked another,
-    /// as a preemption does; with nothing else to run here the thread keeps
-    /// the CPU and the round costs one interrupt. Returns once the thread runs
-    /// again. Flag and interrupt are set with interrupts masked, on the CPU
-    /// read under the mask (not <paramref name="cpuId"/>: the caller may have
-    /// moved since it read it), so both name the same CPU and no handler
-    /// writes the interrupt command register in between. A caller with
-    /// interrupts masked (a handler, a masked section, an IST handler) only
-    /// sets the request, which the next interrupt exit serves: nothing may
-    /// switch away from such a frame.
+    /// Gives up the CPU: sets the request <see cref="BlockThread"/> makes,
+    /// and when the caller runs with interrupts enabled and another thread
+    /// waits in this CPU's run structure, raises the reschedule interrupt on
+    /// this CPU, as <see cref="Park"/> does, so the switch happens within a
+    /// few instructions instead of at the next tick. The switch re-queues the
+    /// thread through <see cref="IScheduler.OnThreadYield"/> after the policy
+    /// picked another, as a preemption does, and the call returns once the
+    /// thread runs again. With nothing else queued here the call only sets
+    /// the request and returns at once, as before the patch: CoreLib's
+    /// spin-then-block loops call Thread.Yield once per spin (70 times before
+    /// an idle thread pool worker parks on one CPU), and an interrupt per
+    /// spin would switch to nothing. Flag, queue read and interrupt name the
+    /// CPU read under the mask (not <paramref name="cpuId"/>: the caller may
+    /// have moved since it read it); the queue is read under its lock, and a
+    /// wake that queues a thread here after the read sends the reschedule
+    /// interrupt itself. A caller with interrupts masked (a handler, a masked
+    /// section, an IST handler) only sets the request, which the next
+    /// interrupt exit serves: nothing may switch away from such a frame.
     /// </summary>
     /// <param name="cpuId">CPU ID of the calling thread, used when interrupts are masked.</param>
     internal static void YieldThread(uint cpuId)
@@ -1716,8 +1719,19 @@ public static class SchedulerManager
 
         using (InternalCpu.DisableInterruptsScope())
         {
-            Volatile.Write(ref s_cpuStates[GetCurrentCpuId()]._needReschedule, true);
-            InterruptManager.TryRaiseReschedule();
+            PerCpuState state = s_cpuStates[GetCurrentCpuId()];
+            Volatile.Write(ref state._needReschedule, true);
+
+            // Interrupts are masked, so the plain form of the queue lock.
+            bool othersQueued;
+            state._lock.Acquire();
+            othersQueued = s_currentScheduler is not null && s_currentScheduler.GetRunQueueCount(state) > 0;
+            state._lock.Release();
+
+            if (othersQueued)
+            {
+                InterruptManager.TryRaiseReschedule();
+            }
         }
     }
 

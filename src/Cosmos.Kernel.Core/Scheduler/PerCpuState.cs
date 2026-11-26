@@ -65,7 +65,10 @@ public sealed class PerCpuState : SchedulerExtensible
     // interrupt after; this CPU's own request (YieldThread, Park, the swap
     // with the world stopped) is a bare volatile store, since the exit that
     // consumes it runs here, under the lock, and a store that lands after
-    // its read is served by the next exit.
+    // its read is served by the next exit. Park and YieldThread then raise
+    // the reschedule interrupt here so that exit comes at once; YieldThread
+    // stores and raises with interrupts masked, so both name the CPU it runs
+    // on (ZehOS patch yield-now, see PATCHES.md).
     internal bool _needReschedule;
 
     // The thread the last switch-out on this CPU evicted because its set
