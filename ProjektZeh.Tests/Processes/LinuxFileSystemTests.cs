@@ -503,6 +503,152 @@ public sealed class LinuxFileSystemTests
         }
     }
 
+    /// <summary>Plattenwurzel mit kleinem Kontingent für die Tests der aufgeschobenen Gutschrift.</summary>
+    private static (Fs Fs, DirectoryFileStore Store) QuotaDisk(string tmp, long quota)
+    {
+        var store = DirectoryFileStore.Open(Path.Combine(tmp, "root"), new HostLinuxDiskLinks(), StringComparison.Ordinal, quotaBytes: quota).Value!;
+        return (new Fs(store, new Sink()), store);
+    }
+
+    [TestMethod]
+    public void UnlinkOfOpenFilesKeepsQuotaUntilLastClose()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        const int Mib = 1 << 20;
+        string tmp = TempDir();
+        try
+        {
+            var (fs, store) = QuotaDisk(tmp, Mib);
+            byte[] full = new byte[Mib];
+
+            // Gegenfall aus dem Review: voll schreiben, entfernen, Deskriptor behalten, nächste Datei.
+            var kept = new List<ILinuxFile>();
+            for (int i = 0; i < 8; i++)
+            {
+                ILinuxFile f = OpenOk(fs, "/f" + i, Create);
+                long written = f.Write(full);
+                Assert.AreEqual(i == 0 ? Mib : -E.ENOSPC, written, "Datei " + i);
+                Assert.AreEqual(0L, fs.Unlink("/f" + i));
+                kept.Add(f);
+            }
+
+            Assert.AreEqual((long)Mib, store.GrownBytes, "die entfernte, offene Datei belegt weiter");
+            foreach (ILinuxFile f in kept)
+            {
+                Assert.AreEqual(0L, f.Close());
+            }
+
+            Assert.AreEqual(0L, store.GrownBytes, "frei erst nach dem letzten Schließen");
+            Assert.AreEqual(0, store.OpenEntryCount);
+            ILinuxFile again = OpenOk(fs, "/g", Create);
+            Assert.AreEqual((long)Mib, again.Write(full));
+            again.Close();
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
+    public void DeferredCreditHandlesSharedDescriptorsRenameAndReuse()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        const int Kib = 1 << 10;
+        string tmp = TempDir();
+        try
+        {
+            var (fs, store) = QuotaDisk(tmp, 4L << 20);
+
+            // Zwei Deskriptoren auf dieselbe Datei: erst das zweite Schließen gibt frei.
+            ILinuxFile a1 = OpenOk(fs, "/a", Create);
+            Assert.AreEqual(512L * Kib, a1.Write(new byte[512 * Kib]));
+            ILinuxFile a2 = OpenOk(fs, "/a", Fs.ORdOnly);
+            Assert.AreEqual(1, store.OpenEntryCount);
+            Assert.AreEqual(0L, fs.Unlink("/a"));
+            Assert.AreEqual(0L, a1.Close());
+            Assert.AreEqual(512L * Kib, store.GrownBytes);
+            Assert.AreEqual(0L, a2.Close());
+            Assert.AreEqual(0L, store.GrownBytes);
+
+            // rename über eine noch offene Zieldatei: deren Platz bleibt belegt, bis sie geschlossen ist.
+            ILinuxFile t = OpenOk(fs, "/t", Create);
+            Assert.AreEqual(256L * Kib, t.Write(new byte[256 * Kib]));
+            WriteFile(fs, "/s", new string('s', 100));
+            Assert.AreEqual(0L, fs.Rename("/s", "/t"));
+            Assert.AreEqual(256L * Kib + 100, store.GrownBytes);
+            Assert.AreEqual(0L, t.Close());
+            Assert.AreEqual(100L, store.GrownBytes);
+
+            // Neu anlegen unter demselben Namen während des Aufschubs: keine doppelte Gutschrift.
+            ILinuxFile old = OpenOk(fs, "/x", Create);
+            Assert.AreEqual(512L * Kib, old.Write(new byte[512 * Kib]));
+            Assert.AreEqual(0L, fs.Unlink("/x"));
+            ILinuxFile fresh = OpenOk(fs, "/x", Create);
+            Assert.AreEqual(256L * Kib, fresh.Write(new byte[256 * Kib]));
+            Assert.AreEqual(0L, fresh.Close());
+            Assert.AreEqual(100L + 768 * Kib, store.GrownBytes);
+            Assert.AreEqual(0L, old.Close());
+            Assert.AreEqual(100L + 256 * Kib, store.GrownBytes);
+            Assert.AreEqual(0L, fs.Unlink("/x"));
+            Assert.AreEqual(100L, store.GrownBytes);
+
+            // Umbenannte offene Datei, dann unter dem neuen Namen entfernt: Aufschub bleibt am Eintrag.
+            ILinuxFile r = OpenOk(fs, "/r", Create);
+            Assert.AreEqual(128L * Kib, r.Write(new byte[128 * Kib]));
+            Assert.AreEqual(0L, fs.Mkdir("/d", 0x1ED));
+            Assert.AreEqual(0L, fs.Rename("/r", "/d/r"));
+            Assert.AreEqual(0L, fs.Rename("/d", "/e"));
+            Assert.AreEqual(0L, fs.Unlink("/e/r"));
+            Assert.AreEqual(100L + 128 * Kib, store.GrownBytes);
+            Assert.AreEqual(0L, r.Close());
+            Assert.AreEqual(100L, store.GrownBytes);
+            Assert.AreEqual(0, store.OpenEntryCount);
+            Assert.AreEqual(0, fs.OpenFiles);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
+    public void GapThatExactlyFillsQuotaIsNotCreated()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        const int Mib = 1 << 20;
+        string tmp = TempDir();
+        try
+        {
+            var (fs, store) = QuotaDisk(tmp, Mib);
+            ILinuxFile f = OpenOk(fs, "/f", Create);
+            Assert.AreEqual((long)Mib, f.Seek(Mib, 0));
+            Assert.AreEqual(-E.ENOSPC, f.Write("x"u8));
+            Assert.AreEqual(0L, new FileInfo(Path.Combine(tmp, "root", "f")).Length, "nichts angelegt");
+            Assert.AreEqual(0, store.GrowSteps);
+            Assert.AreEqual(Mib - 1L, f.Seek(Mib - 1, 0));
+            Assert.AreEqual(1L, f.Write("x"u8)); // Lücke + 1 Byte passt genau
+            Assert.AreEqual((long)Mib, store.GrownBytes);
+            f.Close();
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
     [TestMethod]
     public void FailedGrowthRollsBackLengthAndQuota()
     {

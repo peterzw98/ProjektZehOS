@@ -138,10 +138,15 @@ Grenzen (Review V2, bewusst offen):
   Datei auf der Platte höchstens 1 GiB (`-EFBIG`, Schreiben bis zur Grenze wird gekürzt); `MemoryFileStore` 16 MiB je Datei, 64 MiB und 65 536 Einträge gesamt (`-ENOSPC`).
 - Wachstum auf der Platte: Cosmos-FAT kennt keine Lücken (Sparse) und nullt beim Verlängern sofort jeden Cluster. Deshalb wächst eine Datei (Lücke vor einem
   `write` nach `lseek`, `ftruncate` nach oben) in Schritten von höchstens `StorageLock.ChunkBytes` (1 MiB), jeder unter einer eigenen Sperre, damit Desktop und
-  Shell dazwischen drankommen. Dazu ein Kontingent je Wurzel: höchstens 64 MiB Nettowachstum (`DirectoryFileStore.DefaultQuotaBytes`; vorhandene Dateien wie
-  Pakete zählen nicht, Löschen und Kürzen geben frei). Ein Wachstum, das nicht mehr hineinpasst, ist `-ENOSPC` (die Lücke wird vorher geprüft, nichts geschrieben),
-  ein Schreiben am Rand wird gekürzt. Scheitert ein Wachstumsschritt (Platte voll), setzt `DirectoryFileStore` die Datei auf die alte Länge zurück und bucht das
-  Kontingent zurück; gelingt auch das nicht, bleibt die erreichte Länge gebucht und der Fehler des Schritts gilt.
+  Shell dazwischen drankommen. Dazu ein Kontingent je `DirectoryFileStore`, also je Start eines Programms (nicht je Wurzel auf der Platte: jeder Start und jeder
+  zweite Prozess auf derselben Wurzel hat wieder 64 MiB, was ein Start hinterlässt, bleibt): höchstens 64 MiB Nettowachstum (`DirectoryFileStore.DefaultQuotaBytes`;
+  vorhandene Dateien wie Pakete zählen nicht, Löschen und Kürzen geben frei). Ein Wachstum, das nicht mehr hineinpasst, ist `-ENOSPC`; vor einem `write` hinter
+  dem Ende wird die Lücke plus ein Byte geprüft, passt das nicht, entsteht nichts. Ein Schreiben am Rand wird gekürzt.
+  Entfernte oder durch `rename` ersetzte Dateien, die noch offen sind, belegen unter Cosmos weiter Platz (das Entfernen kommt erst beim letzten Schließen,
+  `VfsManager.Paths.cs` `MarkPendingIfOpen`); ihre Länge wird deshalb erst beim letzten Schließen gutgeschrieben, die Gutschrift hängt am Eintrag, nicht am Namen. Scheitert ein Wachstumsschritt (Platte voll), setzt `DirectoryFileStore` die Datei auf die alte Länge zurück und bucht das
+  Kontingent zurück; gelingt auch das nicht, bleibt die Datei halb gewachsen (erreichte Länge, im Kontingent gebucht) und der Fehler des Schritts gilt.
+  Grenze: Ändert ein anderer Akteur (Shell, zweiter Prozess) die Länge zwischen der Abfrage und den Schritten, setzen die Schritte auf die alte Länge auf und
+  können die Datei kürzen.
   Volle Platte ist `-ENOSPC`: `IOException` mit HResult 28 (Linux-Host), 0x70/0x27 (Windows) oder unter Cosmos dem PAL-Wert 0x10034 (`PalError.ENOSPC`; Cosmos
   setzt `ConvertErrorPalToPlatform` als Identität ein, `InteropSysFilePlug.cs:336`, Wert aus `Interop.Error.cs:37` im Pin 5790fa74, gemeldet von
   `FileDescriptorTable.cs:248`); `PalError.EFBIG` (0x10016, FAT-Grenze 4 GiB) ist `-EFBIG`, unbekannte Werte `-EIO`. Der HResult im Gast ist bei senior2 angefragt.
@@ -170,6 +175,9 @@ Grenzen (Review V2, bewusst offen):
   - Inodenummern falten Groß-/Kleinschreibung nach Unicode, FAT nur ASCII; `rename("/a", "/A")` ist ein No-op statt eine Änderung der Schreibweise.
   - Kosten je Pfadteil im Kernel (Mounts und Elternordner je Abfrage) sind im Gast zu messen; `.`/`..` aus Linkzielen prüfen kein x-Bit.
   - Gastlauf V7b (senior2, KVM): Kurznamen, Kontingent und Lücke geprüft; volle Platte auf smp4, TCG und VMware nicht. `ftruncate`/`pwrite64` fehlen im Verteiler.
+  - Nach `unlink` einer offenen Datei bleibt der Eintrag unter Cosmos bis zum letzten Schließen sichtbar; ein erneutes `open(O_CREAT|O_EXCL)` oder `mkdir`
+    desselben Namens liefert dann wahrscheinlich `-EEXIST` (Linux: Erfolg), ein übliches Muster für temporäre Dateien. Im Gast nicht geprüft.
+  - 64 MiB reichen für die Testprogramme und js; Ladybird mit Platten-Cache (HTTP-Cache, Profil) kann sie erreichen: beim Anbinden von `run` für Ladybird prüfen.
 
 ## Dateien im Prozess (V8)
 
