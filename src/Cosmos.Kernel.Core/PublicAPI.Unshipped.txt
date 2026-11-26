@@ -70,6 +70,7 @@
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.IScheduler.ShutdownCpu(Cosmos.Kernel.Core.Scheduler.PerCpuState! cpuState) -> void
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.PerCpuState
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.PerCpuState.CpuId.get -> uint
+[COSMOS0001]Cosmos.Kernel.Core.Scheduler.PerCpuState.SwitchIsYield.get -> bool
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.PerCpuState.CurrentThread.get -> Cosmos.Kernel.Core.Scheduler.SchedulerThread?
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.PerCpuState.IdleThread.get -> Cosmos.Kernel.Core.Scheduler.SchedulerThread?
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.PerCpuState.TickCount.get -> uint
