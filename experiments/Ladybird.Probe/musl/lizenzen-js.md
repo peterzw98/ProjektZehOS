@@ -1,6 +1,6 @@
 # Lizenzbestand der statischen `js`-Probe
 
-Diese Liste gilt für das [in N1-D1 geprüfte ELF](bericht-n1-d1.md). Ein separater Linklauf mit dem Ninja-Linkbefehl und einer GNU-Linker-Map erzeugte dasselbe SHA-256. Die Liste erfasst Archive mit übernommenen Objektdateien laut Map. Für die Versions- und Lizenzzuordnung wurden `vcpkg_installed/x64-linux/share/<port>/{copyright,vcpkg.spdx.json}`, die Alpine-Paketdaten und die `Cargo.toml`-Dateien der verlinkten Crates geprüft. Cargo-Objekte lassen sich anhand ihres Hashes mit den `.d`-Dateien unter `build/cargo/build/x86_64-unknown-linux-musl/release/deps/` abgleichen.
+Diese Liste gilt für das [in N1-D1 geprüfte ELF](bericht-n1-d1.md). Ein separater Linklauf mit dem Ninja-Linkbefehl und einer GNU-Linker-Map erzeugte dasselbe SHA-256. Die Liste erfasst eingebundene Objektdateien laut Map und Header-Abhängigkeiten laut `ninja -t deps`. Für die Versions- und Lizenzzuordnung wurden `vcpkg_installed/x64-linux/share/<port>/{copyright,vcpkg.spdx.json}`, die Alpine-Paketdaten und die `Cargo.toml`-Dateien der verlinkten Crates geprüft. Cargo-Objekte lassen sich anhand ihres Hashes mit den `.d`-Dateien unter `build/cargo/build/x86_64-unknown-linux-musl/release/deps/` abgleichen.
 
 ## C und C++
 
@@ -12,8 +12,10 @@ Diese Liste gilt für das [in N1-D1 geprüfte ELF](bericht-n1-d1.md). Ein separa
 | ncursesw | `6.6_p20260516-r0` | X11 gemäß Alpine |
 | ICU (`icui18n`, `icuuc`, `icudata` sowie die separate `icudt78l.dat`) | `78.3#3` | Unicode-3.0 und Drittanbieterhinweise laut `share/icu/copyright` |
 | cpptrace | `1.0.4#2` | MIT |
+| FastFloat (Header) | `8.3.3` | Apache-2.0 OR BSL-1.0 OR MIT |
 | libdwarf | `2.3.3` | LGPL-2.1-only für die entsprechend gekennzeichneten Dateien, zusätzlich BSD-2-Clause für einzelne Dateien |
 | libedit | `2024-08-08#1` | BSD-3-Clause |
+| LLVM libc (Header) | `e54169423e7e` | Apache-2.0 WITH LLVM-exception |
 | mimalloc-secure | `2.2.7#1` | MIT |
 | simdutf | `9.3.3` | Apache-2.0 OR MIT |
 | zlib | `1.4` | Zlib |
