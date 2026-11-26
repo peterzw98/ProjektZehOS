@@ -18,6 +18,7 @@ public sealed class LinuxFileSystemTests
     private const int Create = Fs.OCreat | Fs.ORdWr;
     private static readonly string[] ShortNameDisk = [".zehos-security.db", "langdir", "langername", "langlink", "neu"];
     private static readonly string[] DevOnlyListing = [".", "..", "dev"];
+    private static readonly string[] DotsOnly = [".", ".."];
     private static readonly string[] DevListing = [".", "..", "null", "tty", "zero"];
     private static readonly string[] ShadowListing = [".", "..", "dev", "z"];
     private static readonly string[] DiskListing = [".", "..", "dev", "abs", "e", "lf", "rel", "up"];
@@ -621,6 +622,97 @@ public sealed class LinuxFileSystemTests
     }
 
     [TestMethod]
+    public void PendingNameOfRemovedOpenFileIsGoneAndCreditedOnce()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        const int Mib = 1 << 20;
+        string tmp = TempDir();
+        try
+        {
+            var (fs, store) = QuotaDisk(tmp, 4L * Mib);
+            string root = Path.Combine(tmp, "root");
+            Assert.AreEqual(0L, fs.Mkdir("/d", 0x1ED));
+            ILinuxFile a = OpenOk(fs, "/d/a", Create);
+            Assert.AreEqual((long)Mib, a.Write(new byte[Mib]));
+            Assert.AreEqual(0L, fs.Unlink("/d/a"));
+
+            // Wie Cosmos (MarkPendingIfOpen): der Eintrag steht bis zum letzten Schließen weiter auf dem Laufwerk.
+            string zombie = Path.Combine(root, "d", "a");
+            File.WriteAllBytes(zombie, new byte[16]);
+            Assert.AreEqual(1, store.PendingPathCount);
+            Assert.AreEqual((long)Mib, store.GrownBytes);
+
+            // Wiederholtes Entfernen, erneutes Öffnen und Entfernen: der Name ist weg, nichts wird erneut gutgeschrieben.
+            for (int i = 0; i < 5; i++)
+            {
+                Assert.AreEqual(-E.ENOENT, fs.Unlink("/d/a"));
+                Assert.AreEqual(-E.ENOENT, fs.Open("/d/a", Fs.ORdOnly, 0, out _));
+                Assert.AreEqual(-E.ENOENT, fs.Stat("/d/a", false, out _));
+                Assert.AreEqual(-E.ENOENT, fs.Rename("/d/a", "/d/b"));
+                Assert.AreEqual((long)Mib, store.GrownBytes);
+            }
+
+            // Anlegen und rename auf den stehenden Namen: belegt, solange das Laufwerk ihn führt (kein ".~replace", keine Gutschrift).
+            Assert.AreEqual(-E.EEXIST, fs.Open("/d/a", Fs.OCreat | Fs.OExcl | Fs.OWrOnly, 0x1A4, out _));
+            Assert.AreEqual(-E.EEXIST, fs.Open("/d/a", Fs.OCreat | Fs.OWrOnly, 0x1A4, out _));
+            Assert.AreEqual(-E.EEXIST, fs.Mkdir("/d/a", 0x1ED));
+            Assert.AreEqual(-E.EEXIST, fs.Symlink("x", "/d/a"));
+            WriteFile(fs, "/c", "C");
+            Assert.AreEqual(-E.EEXIST, fs.Rename("/c", "/d/a"));
+            Assert.AreEqual("C", ReadFile(fs, "/c"));
+            Assert.AreEqual(1L + Mib, store.GrownBytes);
+
+            // Nicht sichtbar, und der Ordner ist bis zum Schließen nicht leer.
+            ILinuxFile dir = OpenOk(fs, "/d", Fs.ORdOnly);
+            CollectionAssert.AreEqual(DotsOnly, ListDir(dir));
+            dir.Close();
+            Assert.AreEqual(-E.ENOTEMPTY, fs.Rmdir("/d"));
+
+            // Letztes Schließen (Cosmos entfernt dann den Eintrag): genau eine Gutschrift.
+            File.Delete(zombie);
+            Assert.AreEqual(0L, a.Close());
+            Assert.AreEqual(1L, store.GrownBytes);
+            Assert.AreEqual(0, store.PendingPathCount);
+            Assert.AreEqual(0L, fs.Rmdir("/d"));
+            WriteFile(fs, "/d2", "frei");
+            Assert.AreEqual(0, fs.OpenFiles);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
+    public void ReplaceNamesOfCosmosAreHidden()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        string tmp = TempDir();
+        try
+        {
+            var (fs, _) = QuotaDisk(tmp, 1 << 20);
+            File.WriteAllText(Path.Combine(tmp, "root", "a.~replace"), "alt");
+            Assert.AreEqual(-E.ENOENT, fs.Stat("/a.~replace", false, out _));
+            Assert.AreEqual(-E.EINVAL, fs.Open("/b.~REPLACE", Create, 0x1A4, out _));
+            ILinuxFile root = OpenOk(fs, "/", Fs.ORdOnly);
+            CollectionAssert.AreEqual(DevOnlyListing, ListDir(root));
+            root.Close();
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
     public void GapThatExactlyFillsQuotaIsNotCreated()
     {
         if (OperatingSystem.IsWindows())
@@ -712,14 +804,16 @@ public sealed class LinuxFileSystemTests
     [TestMethod]
     public void DiskFullMapsToEnospc()
     {
-        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 28)));
+        bool windows = OperatingSystem.IsWindows();
+        Assert.AreEqual(windows ? -E.EIO : -E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 28)));
         Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", unchecked((int)0x80070070))));
         Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 0x10034))); // Cosmos: PalError.ENOSPC
-        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 0x70)));
-        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 0x27)));
         Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", unchecked((int)0x80070027))));
+        // Nackte Windows-Codes nur unter Windows; unter Linux ist 39 ENOTEMPTY und kein volles Laufwerk.
+        Assert.AreEqual(windows ? -E.ENOSPC : -E.EIO, DirectoryFileStore.Errno(new IOException("voll", 0x70)));
+        Assert.AreEqual(windows ? -E.ENOSPC : -E.EIO, DirectoryFileStore.Errno(new IOException("nicht leer", 39)));
         Assert.AreEqual(-E.EFBIG, DirectoryFileStore.Errno(new IOException("gross", 0x10016))); // Cosmos: PalError.EFBIG
-        Assert.AreEqual(-E.EFBIG, DirectoryFileStore.Errno(new IOException("gross", 27)));
+        Assert.AreEqual(windows ? -E.EIO : -E.EFBIG, DirectoryFileStore.Errno(new IOException("gross", 27)));
         Assert.AreEqual(-E.EIO, DirectoryFileStore.Errno(new IOException("unbekannt", 0x10099)));
         Assert.AreEqual(-E.EIO, DirectoryFileStore.Errno(new IOException("anders")));
         Assert.AreEqual(-E.ENOENT, DirectoryFileStore.Errno(new FileNotFoundException()));
