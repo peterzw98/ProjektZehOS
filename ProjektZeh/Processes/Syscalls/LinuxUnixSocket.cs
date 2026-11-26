@@ -51,8 +51,8 @@ internal sealed class LinuxSocketFds
 /// socketpair und reicht Dateien (Bildpuffer, weitere Sockets) mit SCM_RIGHTS weiter. Jede Richtung ist ein eigener Kanal mit
 /// Nachrichten bis <see cref="Capacity"/> Bytes; eine Nachricht trägt Bytes und höchstens eine Liste Dateien.
 /// <para>
-/// Stream: Lesen fasst Nachrichten zusammen, hält aber vor einer Nachricht mit Dateien an, wenn schon Bytes gelesen sind (wie Linux: Dateien
-/// kommen mit ihrem ersten Byte). Seqpacket: ein Lesen ist genau eine Nachricht; was nicht in den Puffer passt, ist verloren (MSG_TRUNC).
+/// Stream: Lesen fasst Nachrichten zusammen und hält nach der ersten Nachricht mit Dateien an (wie unix_stream_read_generic in Linux 6.12:
+/// ein Lesen liefert höchstens eine Dateiliste, zusammen mit den Bytes ihrer Nachricht). Seqpacket: ein Lesen ist genau eine Nachricht; was nicht in den Puffer passt, ist verloren (MSG_TRUNC).
 /// </para>
 /// <para>
 /// Nebenläufigkeit: <see cref="Link.Gate"/> ist eine Blattsperre, die beide Enden eines Paars teilen. Darin werden nur Kanäle bewegt;
@@ -74,12 +74,16 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
 
     public const short PollRdHup = 0x2000;
 
-    private const long EAGAIN = 11, EINTR = 4, EPIPE = 32, EMSGSIZE = 90, ENOTCONN = 107;
+    private const long EAGAIN = 11, EINTR = 4, EPIPE = 32, EMSGSIZE = 90, ENOTCONN = 107, ECONNRESET = 104;
 
     private readonly object _idle = new();
     private Link? _link;
     private bool _sideA;
     private int _closed;
+
+    // sk_err wie bei Linux: ECONNRESET, wenn die Gegenseite mit ungelesenen Daten geschlossen hat. Einmal gemeldet (send, recv ohne Daten,
+    // SO_ERROR), danach EPIPE beziehungsweise EOF. Nur unter Link.Gate.
+    private long _pendingError;
 
     public LinuxUnixSocket(int type, bool nonBlocking, int creatorPid = 0)
     {
@@ -109,6 +113,23 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     public LinuxUnixSocket? Peer { get; private set; }
 
     public bool IsConnected => Volatile.Read(ref _link) != null;
+
+    /// <summary>getsockopt SO_ERROR: liefert den anstehenden Fehler (positiv) und löscht ihn wie Linux.</summary>
+    public int TakeError()
+    {
+        Link? l = Volatile.Read(ref _link);
+        if (l == null)
+        {
+            return 0;
+        }
+
+        lock (l.Gate)
+        {
+            int err = (int)_pendingError;
+            _pendingError = 0;
+            return err;
+        }
+    }
 
     private bool IsStream => Type == SockStream;
 
@@ -184,6 +205,13 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             Channel ch = Outgoing(l);
             while (true)
             {
+                if (done == 0 && _pendingError != 0)
+                {
+                    long err = _pendingError;
+                    _pendingError = 0;
+                    return -err;
+                }
+
                 if (ch.WriteClosed || ch.ReadClosed)
                 {
                     return done > 0 ? done : -EPIPE;
@@ -265,6 +293,13 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
                     continue;
                 }
 
+                if (got == 0 && _pendingError != 0)
+                {
+                    long err = _pendingError;
+                    _pendingError = 0;
+                    return -err;
+                }
+
                 if (ch.WriteClosed || ch.ReadClosed)
                 {
                     return got;
@@ -285,39 +320,33 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         }
     }
 
-    /// <summary>Stream: Bytes aus den vorderen Nachrichten; true, wenn vor Dateien angehalten wurde. Nur unter Gate.</summary>
+    /// <summary>Stream: Bytes aus den vorderen Nachrichten; true, wenn nach einer Nachricht mit Dateien angehalten wurde. Nur unter Gate.</summary>
     private static bool TakeStream(Channel ch, Span<byte> dst, ref int got, bool peek, ref LinuxSocketFds? fds)
     {
+        bool stopped = false;
         foreach (Record r in ch.Records)
         {
             if (got == dst.Length)
             {
-                return false;
+                break;
             }
 
-            if (r.Fds != null && (got > 0 || fds != null))
-            {
-                return true; // Dateien gehören zu ihrem ersten Byte; ein späteres Lesen holt sie
-            }
-
-            if (r.Fds != null)
-            {
-                fds = r.Fds;
-            }
-
+            LinuxSocketFds? carried = r.Fds;
             int n = Math.Min(dst.Length - got, r.Data.Length - r.Offset);
             r.Data.AsSpan(r.Offset, n).CopyTo(dst.Slice(got));
             got += n;
-            if (peek)
+            if (!peek)
             {
-                continue;
+                r.Offset += n;
+                ch.Bytes -= n;
+                r.Fds = null; // übergeben; der Rest der Nachricht trägt sie nicht mehr
             }
 
-            r.Offset += n;
-            ch.Bytes -= n;
-            if (r.Fds != null)
+            if (carried != null)
             {
-                r.Fds = null; // übergeben; der Rest der Nachricht trägt sie nicht mehr
+                fds = carried;
+                stopped = true; // Linux: nach Dateien endet das Lesen, die nächste Liste kommt mit dem nächsten Aufruf
+                break;
             }
         }
 
@@ -329,7 +358,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             }
         }
 
-        return false;
+        return stopped;
     }
 
     /// <summary>Seqpacket: genau die vorderste Nachricht. Nur unter Gate.</summary>
@@ -401,6 +430,10 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             Channel incoming = Incoming(l);
             Outgoing(l).WriteClosed = true;
             incoming.ReadClosed = true;
+            if (incoming.Records.Count > 0 && Peer != null)
+            {
+                Peer._pendingError = ECONNRESET; // wie unix_release_sock: Ungelesenes verworfen, die Gegenseite erfährt es einmal
+            }
             foreach (Record r in incoming.Records)
             {
                 if (r.Fds != null)
@@ -456,7 +489,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         Channel outc = Outgoing(l);
         bool rcvShut = inc.WriteClosed || inc.ReadClosed;
         bool sndShut = outc.WriteClosed || outc.ReadClosed;
-        short r = 0;
+        short r = _pendingError != 0 ? LinuxPipe.PollErr : (short)0;
         if (inc.Records.Count > 0 || rcvShut)
         {
             r |= (short)(events & LinuxPipe.PollIn);

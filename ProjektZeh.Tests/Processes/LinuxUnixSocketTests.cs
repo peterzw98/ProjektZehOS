@@ -285,6 +285,7 @@ public sealed class LinuxUnixSocketTests
         Assert.AreEqual(0, Fixture.Call(f.Parent, Close, (ulong)w));
         Assert.AreEqual(0, Fixture.Call(f.Parent, Close, (ulong)b), "Empfänger schließt ungelesen");
         Assert.AreEqual(0, f.ReadBytes(r, 16, out _), "die mitgeschickte Pipe ist zu: EOF");
+        Assert.AreEqual(-104, f.SendMsg(a, B("y")), "Linux: ECONNRESET einmal, weil Ungelesenes verworfen wurde");
         Assert.AreEqual(-EPIPE, f.SendMsg(a, B("y")));
     }
 
@@ -319,19 +320,25 @@ public sealed class LinuxUnixSocketTests
     }
 
     [TestMethod]
-    public void StreamHaeltVorNachrichtMitDateienAn()
+    public void StreamHaeltNachDerNachrichtMitDateienAn()
     {
+        // Linux 6.12 (expected/v16/pair.txt): über eine Nachricht mit Dateien hinweg wird gelesen, danach endet der Aufruf.
         var f = new Fixture();
         var (a, b) = f.SocketPair(Stream);
         var (_, w) = f.MakePipe();
         Assert.AreEqual(2, f.SendMsg(a, B("ab")));
         Assert.AreEqual(2, f.SendMsg(a, B("cd"), [w]));
-        Assert.AreEqual(2, f.RecvMsg(b, 16, 64, out byte[] got, out int[] fds, out _));
-        Assert.AreEqual("ab", S(got));
-        Assert.AreEqual(0, fds.Length, "die Dateien gehören zu 'c'");
-        Assert.AreEqual(2, f.RecvMsg(b, 16, 64, out got, out fds, out _));
-        Assert.AreEqual("cd", S(got));
+        Assert.AreEqual(2, f.SendMsg(a, B("ef"), [w]));
+        Assert.AreEqual(2, f.SendMsg(a, B("gh")));
+        Assert.AreEqual(4, f.RecvMsg(b, 16, 64, out byte[] got, out int[] fds, out _));
+        Assert.AreEqual("abcd", S(got));
         Assert.AreEqual(1, fds.Length);
+        Assert.AreEqual(2, f.RecvMsg(b, 16, 64, out got, out fds, out _));
+        Assert.AreEqual("ef", S(got), "zweite Dateiliste: eigener Aufruf");
+        Assert.AreEqual(1, fds.Length);
+        Assert.AreEqual(2, f.RecvMsg(b, 16, 64, out got, out fds, out _));
+        Assert.AreEqual("gh", S(got));
+        Assert.AreEqual(0, fds.Length);
     }
 
     [TestMethod]

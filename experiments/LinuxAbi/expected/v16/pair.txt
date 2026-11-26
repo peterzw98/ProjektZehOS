@@ -1,0 +1,63 @@
+socketpair_stream=0 errno=0
+write=3 errno=0
+write=2 errno=0
+read=5 text=hallo
+fstat=0 errno=0
+issock=1
+getsockopt=0 errno=0
+so_type=1 len=4
+pipe=0 errno=0
+sendmsg_rights=1 errno=0
+close_sender=0 errno=0
+recvmsg=1 fds=1 flags=0 neu=1
+write_via=3 errno=0
+close_via=0 errno=0
+pipe_read=3 text=via
+pipe_eof=0 errno=0
+pipe=0 errno=0
+send_ab=2 errno=0
+send_cd_rights=2 errno=0
+send_ef_rights=2 errno=0
+send_gh=2 errno=0
+recv1=4 fds=1 text=abcd
+recv2=2 fds=1 text=ef
+recv3=2 fds=0 text=gh
+pipe=0 errno=0
+send_three=1 errno=0
+recv_ctrunc=1 fds=2 ctrunc=1
+q_eof=0 errno=0
+p_eof=0 errno=0
+write_peek=2 errno=0
+recv_peek=2 errno=0
+recv_after_peek=2 errno=0
+write_1=1 errno=0
+shutdown_wr=0 errno=0
+send_after_shut=-1 errno=32
+read_rest=1 errno=0
+read_eof=0 errno=0
+write_back=2 errno=0
+read_back=2 errno=0
+shutdown_bad=-1 errno=22
+close_a=0 errno=0
+poll=1 errno=0
+revents in=1 hup=1 rdhup=1
+read_closed=0 errno=0
+send_closed=-1 errno=32
+socketpair_seq=0 errno=0
+cloexec=1
+send_hallo=5 errno=0
+send_du=2 errno=0
+recv_trunc=3 trunc=1 text=hal
+recv_next=2 errno=0
+send_ok=2 errno=0
+recv_trunc_len=2 errno=0
+pipe=0 errno=0
+send_rights_seq=1 errno=0
+close_receiver=0 errno=0
+dropped_eof=0 errno=0
+send_no_peer=-1 errno=104
+socketpair_nb=0 errno=0
+recv_empty=-1 errno=11
+full errno=11 some=1
+poll_full=0 errno=0
+ende

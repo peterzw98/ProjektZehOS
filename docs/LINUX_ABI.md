@@ -335,3 +335,27 @@ den freien Rest). Schließt ein Thread das Schreibende, während ein anderer noc
 des Aufrufs). `ioctl(FIONREAD)`, `select`, `ppoll` und `epoll` gibt es nicht. Die Pipe-Sperre ist eine Blattsperre: Dateisperre vor Pipe-Sperre, darin weder
 Benutzerspeicher noch eine andere Sperre. `read` auf dem Leseende prüft den Puffer vor dem Entnehmen; gibt ein anderer Thread ihn danach per `munmap` oder
 `mprotect` frei, scheitert das Zurückschreiben mit `-EFAULT`, und die entnommenen Bytes sind verloren (Abweichung: Linux rückt in `pipe_read` erst nach erfolgreichem Kopieren vor und behält sie).
+
+## Unix-Sockets (V16)
+
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `LinuxSyscallsSocket.cs` (Hosttests `LinuxUnixSocketTests`, Gastprogramm
+`experiments/LinuxAbi/src/v16/pair.c`, Erwartung Linux 6.12 in `expected/v16/pair.txt`). Anlass: Ladybird (LibIPC) verbindet Browser und WebContent über
+`socketpair(AF_UNIX)` und reicht Dateien mit `SCM_RIGHTS` weiter. Namen, `socket`/`bind`/`listen`/`connect`/`accept4` stehen in `LinuxUnixNames.cs` (V16, zweiter Teil).
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 53 | `socketpair` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` und andere `-ESOCKTNOSUPPORT`), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
+| 46, 44 | `sendmsg`, `sendto` | Puffer je Richtung 212992 Bytes (`wmem_default`); Stream blockierend ganz, mit `O_NONBLOCK`/`MSG_DONTWAIT` so viel wie passt; Seqpacket ganz oder `-EAGAIN`, über 212992 Bytes `-EMSGSIZE`; Stream mit Zieladresse `-EISCONN`; `MSG_OOB` `-EOPNOTSUPP`; nach Ende oder `shutdown` `-EPIPE` (kein `SIGPIPE`, `MSG_NOSIGNAL` daher ohne Wirkung) |
+| 47, 45 | `recvmsg`, `recvfrom` | Stream fasst Nachrichten zusammen und endet nach der ersten mit Dateien; Seqpacket eine Nachricht, Rest verworfen mit `MSG_TRUNC` (`MSG_TRUNC` im Aufruf liefert die volle Länge); `MSG_PEEK`, `MSG_WAITALL`, `MSG_DONTWAIT`, `MSG_CMSG_CLOEXEC`; `msg_namelen` 0 (unbenannte Gegenseite) |
+| 46/47 | `SCM_RIGHTS` | bis 253 Dateien je Nachricht; die Nachricht hält jede Datei wie eine Nummer (`LinuxOpenFiles` des Laufs), also überlebt sie das `close` des Senders und das Ende eines Kindprozesses; zu kleiner Hilfsdatenpuffer oder volle Tabelle: Rest geschlossen, `MSG_CTRUNC`; `MSG_PEEK` gibt zusätzliche Nummern; `read`/`recvfrom` verwerfen mitgeschickte Dateien; `SCM_CREDENTIALS` angenommen, nicht weitergereicht; andere Typen `-EINVAL` |
+| 48 | `shutdown` | `SHUT_RD`: Gepuffertes bleibt lesbar, dann EOF, Gegenseite `-EPIPE`; `SHUT_WR`: eigenes Senden `-EPIPE`, Gegenseite liest den Rest und EOF; sonst `-EINVAL`, ohne Verbindung `-ENOTCONN` |
+| 3 | `close` | letzter Verweis (Nummern und Nachrichten): Gegenseite EOF/`-EPIPE`; Ungelesenes und mitgeschickte Dateien verfallen; lag Ungelesenes vor, meldet die Gegenseite einmal `-ECONNRESET` (`send`, `recv`, `SO_ERROR`, `POLLERR`) wie Linux |
+| 7 | `poll` | `POLLIN` mit Daten oder nach dem Ende der Gegenseite, `POLLRDHUP` nach deren `SHUT_WR`/`close`, `POLLHUP` wenn beide Richtungen zu sind, `POLLOUT` solange höchstens ein Viertel des Sendepuffers belegt ist |
+| 55, 54 | `getsockopt`, `setsockopt` | `SO_TYPE`, `SO_ERROR`, `SO_SNDBUF`/`SO_RCVBUF` (212992), `SO_PEERCRED` (bei `socketpair` PID des Erzeugers), `SO_DOMAIN`, `SO_PROTOCOL`, `SO_PASSCRED`, `SO_ACCEPTCONN`; `setsockopt` nimmt Puffergrößen, `SO_PASSCRED` und `SO_PASSSEC` still an, alles andere (etwa `SO_RCVTIMEO`) `-ENOPROTOOPT` |
+| 5 | `fstat` | `S_IFSOCK` mit 0777, Größe 0 |
+
+Grenzen: Ein Socket, das sich selbst (oder einen Kreis von Sockets) in einer ungelesenen Nachricht trägt, wird nie geschlossen (Linux räumt solche Kreise mit
+einem Garbage Collector ab). Der Puffer zählt Nutzbytes, nicht den Verwaltungsaufwand je Nachricht wie Linux; wie viele Bytes bis `-EAGAIN` passen, weicht ab.
+Die Socket-Sperre ist eine Blattsperre (Dateisperre vor Socket-Sperre); Senden und Empfangen warten ohne Dateisperre. Pipes und Sockets warten seit V16 mit dem
+Abbruch des aufrufenden Prozesses (`ILinuxPollable.ReadAs`/`WriteAs`/`WaitPoll`): Vorher lieferte eine Pipe, die ein beendetes vfork-Kind angelegt hatte, den
+Eltern nur noch `-EINTR`.

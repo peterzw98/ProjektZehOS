@@ -651,7 +651,7 @@ internal static partial class LinuxSyscalls
         switch (name)
         {
             case SoType: BitConverter.TryWriteBytes(v, s.Type); break;
-            case SoError: BitConverter.TryWriteBytes(v, 0); break;
+            case SoError: BitConverter.TryWriteBytes(v, s.TakeError()); break;
             case SoSndbuf:
             case SoRcvbuf: BitConverter.TryWriteBytes(v, LinuxUnixSocket.Capacity); break;
             case SoPasscred:
