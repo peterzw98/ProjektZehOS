@@ -70,12 +70,13 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
             if (value.KeyCode == (byte)PhysicalKey.Control) { control = down; return; }
             if (value.KeyCode is (byte)PhysicalKey.LeftShift or (byte)PhysicalKey.RightShift) { shift = down; return; }
         }
-        if (control && !shift && value.Type == InputEventType.KeyDown && value.KeyCode == 46 && shell.TryInterrupt(Buffer))
+        if (control && !shift && value.Type == InputEventType.KeyDown && value.KeyCode == 46 && !shell.ForegroundTakesInterruptKey && shell.TryInterrupt(Buffer))
         {
             ScrollOffset = 0;
             return;
         }
         if (HandlePointer(value)) return;
+        if (pager == null && shell.ForegroundRawInput && HandleRawKey(value)) return;
         if (value.Type == InputEventType.KeyDown && value.KeyCode == (byte)PhysicalKey.Escape && pager == null && shell.HasForeground)
         {
             shell.TryInterrupt(Buffer);
@@ -133,6 +134,25 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
         var result = shell.ExecuteLine(command, Buffer);
         if (!result.IsOK()) Buffer.WriteLine(result.Message);
         SyncPager();
+    }
+
+    /// <summary>
+    /// Rohmodus des Vordergrundprogramms (Ladybird V3 raw, etwa die js-REPL mit LibLine): Tasten gehen als Terminalbytes an das
+    /// Programm, Esc eingeschlossen; der Zeileneditor der Shell bleibt still. Bild auf/ab und Strg+Umschalt (Kopieren, Einfuegen)
+    /// behaelt das Fenster. true, wenn das Ereignis verbraucht ist.
+    /// </summary>
+    private bool HandleRawKey(InputEvent value)
+    {
+        if (value.Type is not (InputEventType.KeyDown or InputEventType.Text)) return false;
+        if (value.Type == InputEventType.KeyDown && value.KeyCode is (byte)PhysicalKey.PageUp or (byte)PhysicalKey.PageDown) return false;
+        if (control && shift) return false;
+        byte[]? bytes = TerminalKeys.Encode(value, control);
+        if (bytes != null && shell.SendForegroundInput(bytes))
+        {
+            ScrollOffset = 0;
+            cursorVisible = true;
+        }
+        return true;
     }
 
     public void Update(long milliseconds)
@@ -208,6 +228,13 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
     {
         SyncSession();
         if (IsClosed || shell.IsSecretInput || shell.IsBusy || pager != null) return;
+        if (shell.ForegroundRawInput)
+        {
+            // Rohmodus: wie Tippen, Zeilenenden als Enter (CR); das Programm entscheidet, was es damit macht.
+            shell.SendForegroundInput(Encoding.UTF8.GetBytes(TerminalClipboard.Text.Replace("\r\n", "\r", StringComparison.Ordinal).Replace('\n', '\r')));
+            ScrollOffset = 0;
+            return;
+        }
         string text = TerminalClipboard.Text.Replace("\r\n", " ", StringComparison.Ordinal).Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
         int available = LineEditor.MaximumLength - Editor.Text.Length;
         text = text[..Math.Min(text.Length, available)];
@@ -293,6 +320,21 @@ internal sealed class TerminalApp(ShellService shell, byte[] font, int glyphWidt
         }
         int inputY = y + height - CellHeight - 8;
         if (pager != null) Text(surface, "less: Pfeile, Bild, q", x + 8, inputY, accent);
+        else if (shell.ForegroundRawInput)
+        {
+            // Rohmodus: die Zeile, die das Programm gezeichnet hat, mit seinem Cursor; die Shell zeigt keinen eigenen Prompt.
+            string line = InputPrompt;
+            int cursor = Math.Max(0, shell.ForegroundCursor);
+            int inputColumns = Math.Max(1, (width - 16) / CellWidth - 1);
+            int start = Math.Max(0, cursor - inputColumns + 1);
+            if (start < line.Length) Text(surface, line.AsSpan(start, Math.Min(inputColumns, line.Length - start)), x + 8, inputY, foreground);
+            if (active && cursorVisible)
+            {
+                int cursorLeft = x + 8 + (cursor - start) * CellWidth;
+                surface.FillRectangle(cursorLeft, inputY, CellWidth, CellHeight, accent);
+                if (cursor < line.Length) Text(surface, line.AsSpan(cursor, 1), cursorLeft, inputY, background);
+            }
+        }
         else
         {
             string prompt = InputPrompt;

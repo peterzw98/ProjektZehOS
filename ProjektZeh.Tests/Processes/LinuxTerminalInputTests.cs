@@ -407,10 +407,12 @@ public sealed class LinuxTerminalInputTests
         Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 1, LinuxSyscalls.TCGETS, Base + 0x100));
         Assert.AreEqual(raw, U32(p, 0x100 + 12), "fd 1 sieht, was fd 0 gesetzt hat");
 
-        // Nicht umgesetzt: weiter ganze Zeilen.
-        session.Submit("abc");
-        Assert.AreEqual(4, Call(p, LinuxSyscalls.Read, 0, Base, 100));
-        Assert.AreEqual("abc\n", Text(p, 0, 4));
+        // V3 raw: Rohmodus wirkt, ohne ISIG bricht Strg+C nicht ab.
+        Assert.IsTrue(session.RawInput);
+        Assert.IsFalse(session.SignalKeys);
+        session.SubmitRaw("abc"u8.ToArray());
+        Assert.AreEqual(3, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        Assert.AreEqual("abc", Text(p, 0, 3));
     }
 
     [TestMethod]
@@ -469,5 +471,152 @@ public sealed class LinuxTerminalInputTests
         Assert.AreEqual(((ushort)24, (ushort)80), shell.WindowSize);
         shell.SetWindowSize(0, 100000);
         Assert.AreEqual(((ushort)1, (ushort)0xffff), shell.WindowSize);
+    }
+
+    // ---- Rohmodus (V3 raw): Tasten einzeln, Zeileneditor im Programm, Prozessgruppen ----
+
+    /// <summary>Schaltet wie LibLine ICANON und ECHO aus (ISIG und ICRNL bleiben); mit <paramref name="cfmakeraw"/> auch ISIG und ICRNL.</summary>
+    private static void SetRaw(Proc p, bool cfmakeraw = false)
+    {
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCGETS, Base + 0x800));
+        uint iflag = U32(p, 0x800), lflag = U32(p, 0x800 + 12);
+        lflag &= ~(LinuxSyscalls.ICANON | 0x8u);
+        if (cfmakeraw)
+        {
+            lflag &= ~LinuxSyscalls.ISIG;
+            iflag &= ~LinuxSyscalls.ICRNL;
+        }
+
+        BitConverter.GetBytes(iflag).CopyTo(p.Mem.Data, 0x800);
+        BitConverter.GetBytes(lflag).CopyTo(p.Mem.Data, 0x800 + 12);
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCSETS, Base + 0x800));
+    }
+
+    [TestMethod]
+    public void RohmodusLiefertJedeTasteSofortUndEnterAlsZeilenende()
+    {
+        var (session, _, clock, p) = Program();
+        Assert.IsFalse(session.RawInput);
+        Assert.AreEqual(-1, session.PromptCursor);
+        SetRaw(p);
+        Assert.IsTrue(session.RawInput);
+        Assert.IsTrue(session.SignalKeys, "LibLine laesst ISIG an");
+        clock.OnSleep = n => { if (n == 2) session.SubmitRaw(new byte[] { (byte)'x' }); };
+        Assert.AreEqual(1, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        Assert.AreEqual("x", Text(p, 0, 1));
+        session.SubmitRaw(new byte[] { 0x1b, (byte)'[', (byte)'D', (byte)'\r' });
+        Assert.AreEqual(4, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        Assert.AreEqual("\x1b[D\n", Text(p, 0, 4), "ICRNL: CR wird LF");
+
+        // Zurück in den kanonischen Modus (LibLine beim Beenden): wieder ganze Zeilen.
+        LinuxSyscalls.DefaultTermios().CopyTo(p.Mem.Data, 0x1000);
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCSETS, Base + 0x1000));
+        Assert.IsFalse(session.RawInput);
+        Assert.AreEqual(-1, session.PromptCursor);
+    }
+
+    [TestMethod]
+    public void CfmakerawLaesstCrUndStrgCDurch()
+    {
+        var (session, _, _, p) = Program();
+        SetRaw(p, cfmakeraw: true);
+        Assert.IsFalse(session.SignalKeys);
+        session.SubmitRaw(new byte[] { (byte)'\r', 0x03 });
+        Assert.AreEqual(2, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        Assert.AreEqual((byte)'\r', p.Mem.Data[0]);
+        Assert.AreEqual(0x03, p.Mem.Data[1]);
+
+        var shell = new ShellService();
+        Assert.IsTrue(shell.AttachForeground(session).IsOK());
+        Assert.IsTrue(shell.ForegroundRawInput);
+        Assert.IsTrue(shell.ForegroundTakesInterruptKey, "ohne ISIG geht Strg+C als Byte an das Programm");
+        Assert.IsTrue(shell.SendForegroundInput(new byte[] { (byte)'q' }));
+        Assert.AreEqual(1, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        Assert.AreEqual((byte)'q', p.Mem.Data[0]);
+    }
+
+    [TestMethod]
+    public void FrageNachCursorpositionWirdBeantwortetUndNichtAngezeigt()
+    {
+        var (session, terminal, _, p) = Program();
+        var shell = new ShellService();
+        shell.SetWindowSize(30, 100);
+        session.SizeSource = () => shell.WindowSize;
+        SetRaw(p);
+        // LibLine: Prompt zeichnen, dann über fd 2 nach der Position fragen; die Frage kann über zwei write verteilt sein.
+        terminal.Write("> ab\x1b["u8);
+        terminal.Write("6n"u8);
+        Assert.AreEqual(7, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        Assert.AreEqual("\x1b[30;5R", Text(p, 0, 7), "letzte Zeile, Spalte hinter \"> ab\"");
+        terminal.Write("\n"u8);
+        var shown = new Lines();
+        session.Drain(shown);
+        Assert.AreEqual("> ab", string.Join("|", shown.All));
+    }
+
+    [TestMethod]
+    public void RohmodusZeigtGezeichneteZeileMitCursorUndGibtNurDenStandAus()
+    {
+        var (session, terminal, clock, p) = Program();
+        SetRaw(p);
+        // Neuzeichnen wie LibLine: an den Anfang, Zeile leeren, Prompt und Text, Cursor zwei Zeichen zurück.
+        terminal.Write("\r\x1b[K> 1+2\x1b[2D"u8);
+        clock.OnSleep = n =>
+        {
+            if (n != 1) return;
+            Assert.AreEqual("> 1+2", session.Prompt);
+            Assert.AreEqual(3, session.PromptCursor);
+            session.SubmitRaw(new byte[] { (byte)'0' });
+        };
+        Assert.AreEqual(1, Call(p, LinuxSyscalls.Read, 0, Base, 100));
+        terminal.Write("\r\x1b[K> 10+2\x1b[2D"u8);
+        terminal.Write("\x1b[2C\n"u8);
+        var shown = new Lines();
+        session.Drain(shown);
+        Assert.AreEqual("> 10+2", string.Join("|", shown.All), "Neuzeichnungen erscheinen nicht als eigene Zeilen");
+    }
+
+    [TestMethod]
+    public void RohmodusVerdichtetLangeNeuzeichnungenStattZeilenAuszugeben()
+    {
+        var (session, terminal, _, p) = Program();
+        SetRaw(p);
+        for (int i = 0; i < 2000; i++)
+        {
+            terminal.Write(Encoding.UTF8.GetBytes("\r\x1b[K> äbc" + (i % 10) + "\x1b[1D"));
+        }
+
+        terminal.Write("\n"u8);
+        var shown = new Lines();
+        session.Drain(shown);
+        Assert.AreEqual("> äbc9", string.Join("|", shown.All));
+    }
+
+    [TestMethod]
+    public void KanonischBleibtDieZeilendarstellungUnveraendert()
+    {
+        var (session, terminal, _, _) = Program();
+        terminal.Write("ab\rX\x1b[1Dz\n"u8);
+        var shown = new Lines();
+        session.Drain(shown);
+        Assert.AreEqual("Xz", string.Join("|", shown.All), "Printable wie bisher, nicht der Rohmodus-Interpreter");
+    }
+
+    [TestMethod]
+    public void ProzessgruppeUndSitzungSindDerProzess()
+    {
+        var (_, _, _, p) = Program();
+        Assert.AreEqual(p.Pid, Call(p, LinuxSyscalls.Getpgrp));
+        Assert.AreEqual(p.Pid, Call(p, LinuxSyscalls.Getpgid, 0));
+        Assert.AreEqual(p.Pid, Call(p, LinuxSyscalls.Getpgid, (ulong)p.Pid));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getpgid, 77));
+        Assert.AreEqual(p.Pid, Call(p, LinuxSyscalls.Getsid, 0));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Getsid, 77));
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setpgid, 0, 0), "Sitzungsfuehrer, wie Linux im neuen pty");
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setpgid, (ulong)p.Pid, (ulong)p.Pid));
+        Assert.AreEqual(-LinuxSyscalls.ESRCH, Call(p, LinuxSyscalls.Setpgid, 77, 0));
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setpgid, 0, 77));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Setpgid, 0, unchecked((ulong)-1L)));
+        Assert.AreEqual(-LinuxSyscalls.EPERM, Call(p, LinuxSyscalls.Setsid), "schon Gruppenfuehrer");
     }
 }

@@ -69,6 +69,12 @@ internal static partial class LinuxSyscalls
                 return 0;
             case Ioctl:
                 return DoIoctl(p, (int)a.A0, a.A1, a.A2); // Terminal (V3 termios), sonst -ENOTTY
+            case Getpgrp:
+            case Getpgid:
+            case Getsid:
+            case Setpgid:
+            case Setsid:
+                return DoProcessGroup(p, ref a); // V3 raw
             default:
                 return DispatchMore(ref a, p); // Zeit, Zufall, Signale, poll, madvise, futex; sonst -ENOSYS (auch rseq: musl und glibc fallen zurück)
         }

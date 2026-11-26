@@ -29,6 +29,8 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 218 | `set_tid_address` | merkt die Adresse, liefert die Thread-ID |
 | 39, 186 | `getpid`, `gettid` | Prozess-ID |
 | 273 | `set_robust_list` | `0` (ohne Wirkung) |
+| 111, 121, 124 | `getpgrp`, `getpgid`, `getsid` | Prozess-ID (V3 raw: allein in Gruppe und Sitzung, führt beide wie ein Programm in einem neuen pty); andere PID `-ESRCH`, negative `-EINVAL` |
+| 109, 112 | `setpgid`, `setsid` | `-EPERM` wie bei Linux für Sitzungs- bzw. Gruppenführer (auch ohne Änderung); `setpgid` mit fremder PID `-ESRCH`, negativer Gruppe `-EINVAL` |
 | 16 | `ioctl` | fd 0–2 am Fenster sind ein Terminal (V3 termios): `TCGETS`, `TCSETS`/`TCSETSW`/`TCSETSF`, `TIOCGWINSZ`, `TIOCSWINSZ`, `TIOCGPGRP`, `TIOCSPGRP`; sonst `-ENOTTY` für gültige fd, `-EBADF` für ungültige |
 | 228 | `clock_gettime` | Uhren 0-7; 0 und 5 Wanduhr, übrige monoton (CPU-Zeituhren 2, 3 ebenfalls monoton: Abweichung); Uhren 8, 9, 11 (BOOTTIME-Familie) `-EINVAL` (Abweichung); sonst `-EINVAL`. Quelle `ILinuxHost` (optional), sonst DateTime/Stopwatch |
 | 318 | `getrandom` | Flags nur GRND_NONBLOCK/RANDOM/INSECURE (RANDOM+INSECURE `-EINVAL`); füllt in 4-KiB-Stücken aus `ILinuxHost.TryFillRandom`; ohne Host `-ENOSYS` (nie schwacher Zufall), Quelle nicht bereit `-EAGAIN` |
@@ -87,9 +89,17 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
   Zeile erst beim nächsten sichtbaren Zeichen neu, die Teilung nach 4096 Bytes trennt keine ESC-Folge und kein UTF-8-Zeichen.
 - termios (V3 termios): Mit Sitzung (Fenster) sind fd 0–2 ein Terminal, `isatty` ist wahr und musl puffert stdout zeilenweise (musl prüft `TIOCGWINSZ`).
   `TCGETS` liefert die Kernelstruktur (36 Bytes) eines frischen Linux-Terminals: kanonisch mit Echo (`ICANON ECHO ISIG IEXTEN …`, `OPOST ONLCR`, `^C ^D`, VMIN 1).
-  `TCSETS*` speichert nur (fd 0–2 teilen den Zustand): Das Fenster liest immer ganze Zeilen, ein Rohmodus wird zurückgemeldet, aber nicht umgesetzt;
+  `TCSETS*` setzt den Zustand für fd 0–2; davon wirken `ICANON`, `ISIG` und `ICRNL` (V3 raw), der Rest wird nur gespeichert;
   `TCSETSF` verwirft keine getippten Zeilen. `TIOCGWINSZ` aus dem Fenster (sichtbare Zeilen, Spalten; ohne Meldung 24 × 80, Pixel 0), `TIOCSWINSZ` ohne Wirkung.
-  `TIOCGPGRP` liefert die PID, `TIOCSPGRP` nimmt nur sie an (sonst `-ESRCH`, negativ `-EINVAL`); `getpgrp`/`setpgid` gibt es noch nicht.
+  `TIOCGPGRP` liefert die PID, `TIOCSPGRP` nimmt nur sie an (sonst `-ESRCH`, negativ `-EINVAL`).
+- Rohmodus (V3 raw, für Zeileneditoren wie LibLine der js-REPL): Ohne `ICANON` editiert die Shell nichts, jede Taste geht sofort als Bytes an fd 0 (Zeichen
+  UTF-8, Enter CR, mit `ICRNL` LF, Backspace DEL, Pfeile/Pos1/Ende `ESC [ A–D/H/F`, Entf `ESC [ 3 ~`, Esc `ESC`, Strg+Buchstabe 1–26, Einfügen wie Tippen);
+  `ECHO` wirkt nicht (die Shell zeigt nur, was das Programm zeichnet). Strg+C bricht mit `ISIG` ab, ohne geht 0x03 an das Programm (Fenster schließen beendet es
+  dann). Die angefangene Zeile zeigt das Fenster wie ein VT100 (`TerminalLine`): Überschreiben an der Cursorspalte, `\r`, Backspace, Tab, CSI `K J C D G H f s u`,
+  `ESC 7/8`; Zeilenwechsel (`A`, `B`, Zeile von `H`), Farben und private Folgen fallen weg. Am Zeilenende wird der gezeichnete Stand ausgegeben, nicht die
+  Neuzeichnungen; über 4096 Bytes ohne Zeilenende wird die Zeile auf ihren Stand verdichtet. `ESC [ 6 n` (auch über zwei `write` verteilt) beantwortet das
+  Terminal in die Eingabe mit `ESC [ <letzte Fensterzeile> ; <Spalte> R` und zeigt die Frage nicht. Nicht umgesetzt: VMIN/VTIME (immer wie VMIN 1), mehrzeilige
+  Bearbeitung, Echo im Rohmodus.
   Ohne Sitzung (Gastprobe über die serielle Schnittstelle) bleibt `-ENOTTY`: stdout voll gepuffert wie bei einer Umleitung, die erwarteten Ausgaben bleiben gleich.
 - Brücke im Kernel: `ProjektZeh/Runtime/CosmosLinuxRun.cs`, nur mit `-p:ZehOSLinuxRun=true`; dann gibt es `run <datei> [argumente...]` (ELF bis 128 MiB,
   ein Programm zugleich, eigener Kernelthread mit eigener `UserPageTable`). Aus der Shell läuft es neben der Ereignisschleife (V3 stdin): der Befehl kehrt

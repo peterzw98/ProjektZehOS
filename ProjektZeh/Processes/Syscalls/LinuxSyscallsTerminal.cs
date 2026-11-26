@@ -5,8 +5,9 @@ namespace ProjektZeh.Processes.Syscalls;
 /// <summary>
 /// Ein Deskriptor, der ein Terminal ist (Ladybird V3 termios): <c>isatty</c> ist wahr, musl puffert stdout zeilenweise, REPLs
 /// erkennen ein Terminal. Der Zustand gehört zum Terminal, nicht zum Deskriptor: fd 0 bis 2 teilen ihn.
-/// Die Einstellungen werden nur gespeichert. Das Terminal arbeitet immer kanonisch mit Echo (die Shell zeigt und editiert die
-/// Eingabezeile); ein Programm, das den Rohmodus setzt, liest ihn zurück, bekommt aber weiter ganze Zeilen.
+/// Von den Einstellungen wirken ICANON, ISIG und ICRNL (V3 raw): kanonisch zeigt und editiert die Shell die Eingabezeile und
+/// liefert ganze Zeilen; ohne ICANON (Rohmodus, Zeileneditoren wie LibLine) geht jede Taste sofort als Bytes an das Programm, die
+/// Shell zeigt nur, was das Programm zeichnet. Alles andere (VMIN/VTIME, Echo im Rohmodus, OPOST …) wird nur gespeichert.
 /// </summary>
 internal interface ILinuxTerminal : ILinuxDescriptor
 {
@@ -30,6 +31,11 @@ internal static partial class LinuxSyscalls
         TIOCSPGRP = 0x5410, TIOCGWINSZ = 0x5413, TIOCSWINSZ = 0x5414;
 
     public const long ESRCH = 3;
+
+    // asm-generic/termbits.h: c_iflag ICRNL, c_lflag ISIG und ICANON
+    public const uint ICRNL = 0x100, ISIG = 0x1, ICANON = 0x2;
+
+    public const long Setpgid = 109, Getpgrp = 111, Setsid = 112, Getpgid = 121, Getsid = 124;
 
     /// <summary>Größe von <c>struct termios</c> im Kernel: vier tcflag_t, c_line, 19 c_cc (musl hängt danach noch Geschwindigkeiten an, die der Kernel nicht kennt).</summary>
     public const int TermiosSize = 36;
@@ -80,7 +86,7 @@ internal static partial class LinuxSyscalls
             case TCSETSW:
             case TCSETSF:
             {
-                // Nur speichern (Rohmodus wird nicht umgesetzt, siehe ILinuxTerminal). TCSETSW wartet bei Linux auf die Ausgabe,
+                // ICANON, ISIG, ICRNL wirken (siehe ILinuxTerminal), der Rest wird gespeichert. TCSETSW wartet bei Linux auf die Ausgabe,
                 // TCSETSF verwirft zusätzlich ungelesene Eingabe; hier ist die Ausgabe nach write schon beim Terminal, und
                 // getippte Zeilen bleiben erhalten (Grenze in docs/LINUX_ABI.md).
                 var t = new byte[TermiosSize];
@@ -142,6 +148,38 @@ internal static partial class LinuxSyscalls
             default:
                 // Linux meldet für unbekannte Terminal-ioctls ENOTTY ("passt nicht zu diesem Gerät"), nicht EINVAL.
                 return -ENOTTY;
+        }
+    }
+
+    /// <summary>
+    /// Prozessgruppe und Sitzung (V3 raw): Ein Programm aus <c>run</c> ist allein in seiner Gruppe und Sitzung und führt beide
+    /// (Gruppe und Sitzung tragen seine PID), wie ein Programm, das Linux direkt in einem neuen Pseudoterminal startet. Andere
+    /// Prozesse gibt es nicht (-ESRCH). Wie bei Linux scheitert <c>setsid</c> für einen Gruppenführer und <c>setpgid</c> für einen
+    /// Sitzungsführer mit -EPERM, auch wenn sich nichts ändern würde (Linux prüft den Sitzungsführer vor allem anderen).
+    /// </summary>
+    private static long DoProcessGroup(ILinuxProcess p, ref SyscallArgs a)
+    {
+        int pid = (int)a.A0;
+        switch (a.Number)
+        {
+            case Getpgrp:
+                return p.Pid;
+            case Getpgid:
+            case Getsid:
+                return pid == 0 || pid == p.Pid ? p.Pid : (pid < 0 ? -EINVAL : -ESRCH);
+            case Setpgid:
+            {
+                if ((int)a.A1 < 0)
+                {
+                    return -EINVAL;
+                }
+
+                // Der Prozess ist Sitzungsführer: Linux lehnt jede Änderung seiner Gruppe ab.
+                return pid != 0 && pid != p.Pid ? -ESRCH : -EPERM;
+            }
+
+            default: // Setsid
+                return -EPERM;
         }
     }
 }
