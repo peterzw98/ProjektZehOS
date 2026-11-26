@@ -48,8 +48,17 @@ internal sealed class FatSuperblockOperations : ISuperblockOperations
         if (superblock is FatSuperblock fat)
         {
             // Unmount is a durability point: flush before tearing down.
-            fat.Flush();
-            fat.Drop();
+            // ZehOS patch fat-fsinfo, see PATCHES.md
+            // A failing flush must not leave the inode cache alive after
+            // unmount; the error still reaches the caller.
+            try
+            {
+                fat.Flush();
+            }
+            finally
+            {
+                fat.Drop();
+            }
         }
     }
 }

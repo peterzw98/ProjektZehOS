@@ -118,34 +118,35 @@ internal static class FatFormatter
     /// <summary>FAT32 FAT[0]: media descriptor in the low byte, remaining 28-bit entry all ones (fatgen103 §4).</summary>
     private const uint Fat32Fat0Entry = 0x0FFF_FFF8u;
 
-    // FSInfo sector layout and signatures (fatgen103 §5) — the formatter is its sole producer.
+    // FSInfo sector layout and signatures (fatgen103 §5); FatTable keeps the counts current.
+    // ZehOS patch fat-fsinfo, see PATCHES.md (private -> internal)
 
     /// <summary>FSI_LeadSig: FSInfo lead signature (offset 0, fatgen103 §5).</summary>
-    private const int FsiLeadSigOffset = 0;
+    internal const int FsiLeadSigOffset = 0;
 
     /// <summary>FSI_StrucSig: FSInfo structure signature (offset 484, fatgen103 §5).</summary>
-    private const int FsiStrucSigOffset = 484;
+    internal const int FsiStrucSigOffset = 484;
 
     /// <summary>FSI_Free_Count: last-known free cluster count (offset 488, fatgen103 §5).</summary>
-    private const int FsiFreeCountOffset = 488;
+    internal const int FsiFreeCountOffset = 488;
 
     /// <summary>FSI_Nxt_Free: free-cluster search hint (offset 492, fatgen103 §5).</summary>
-    private const int FsiNextFreeOffset = 492;
+    internal const int FsiNextFreeOffset = 492;
 
     /// <summary>FSI_TrailSig: FSInfo trail signature (offset 508, fatgen103 §5).</summary>
-    private const int FsiTrailSigOffset = 508;
+    internal const int FsiTrailSigOffset = 508;
 
     /// <summary>FSI_LeadSig value "RRaA" (fatgen103 §5).</summary>
-    private const uint FsiLeadSig = 0x4161_5252u;
+    internal const uint FsiLeadSig = 0x4161_5252u;
 
     /// <summary>FSI_StrucSig value "rrAa" (fatgen103 §5).</summary>
-    private const uint FsiStrucSig = 0x6141_7272u;
+    internal const uint FsiStrucSig = 0x6141_7272u;
 
     /// <summary>FSI_TrailSig value closing the FSInfo sector (fatgen103 §5).</summary>
-    private const uint FsiTrailSig = 0xAA55_0000u;
+    internal const uint FsiTrailSig = 0xAA55_0000u;
 
     /// <summary>FSI_Free_Count / FSI_Nxt_Free "unknown" value (fatgen103 §5).</summary>
-    private const uint FsiUnknownValue = 0xFFFF_FFFFu;
+    internal const uint FsiUnknownValue = 0xFFFF_FFFFu;
 
     // I/O batching.
 
