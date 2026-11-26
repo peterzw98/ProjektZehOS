@@ -504,10 +504,77 @@ public sealed class LinuxFileSystemTests
     }
 
     [TestMethod]
+    public void FailedGrowthRollsBackLengthAndQuota()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        const long Mib = 1 << 20;
+        string tmp = TempDir();
+        try
+        {
+            var store = DirectoryFileStore.Open(Path.Combine(tmp, "root"), new HostLinuxDiskLinks(), StringComparison.Ordinal).Value!;
+            Assert.AreEqual(0L, store.CreateFile("f", 0x1A4, out ILinuxStoreFile? f));
+            Assert.AreEqual(0L, f!.SetLength(Mib / 2));
+            long quotaBefore = store.GrownBytes;
+
+            // Wie volle Platte: der dritte Schritt scheitert, der Rückbau gelingt.
+            var lengths = new List<long>();
+            long length = Mib / 2;
+            void FullAtThird(long next)
+            {
+                lengths.Add(next);
+                if (lengths.Count == 3)
+                {
+                    throw new IOException("Platte voll", 0x10034);
+                }
+
+                length = next;
+            }
+
+            Assert.AreEqual(-E.ENOSPC, store.GrowInSteps(FullAtThird, Mib / 2, 5 * Mib));
+            CollectionAssert.AreEqual(new[] { Mib + Mib / 2, 2 * Mib + Mib / 2, 3 * Mib + Mib / 2, Mib / 2 }, lengths);
+            Assert.AreEqual(Mib / 2, length, "zurück auf die alte Länge");
+            Assert.AreEqual(quotaBefore, store.GrownBytes, "Kontingent zurückgebucht");
+
+            // Scheitert auch der Rückbau, gilt der erste Fehler, und das Kontingent bleibt für die erreichte Länge gebucht.
+            lengths.Clear();
+            void FullAndStuck(long next)
+            {
+                lengths.Add(next);
+                if (lengths.Count >= 3)
+                {
+                    throw new IOException(lengths.Count == 3 ? "Platte voll" : "Rückbau gescheitert", lengths.Count == 3 ? 0x10034 : 5);
+                }
+            }
+
+            Assert.AreEqual(-E.ENOSPC, store.GrowInSteps(FullAndStuck, Mib / 2, 5 * Mib));
+            Assert.AreEqual(quotaBefore + 2 * Mib, store.GrownBytes);
+
+            // Echte Datei: Wachstum ohne Fehler bleibt stehen.
+            Assert.AreEqual(Mib / 2, f.Length());
+            Assert.AreEqual(0L, f.Close());
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
     public void DiskFullMapsToEnospc()
     {
         Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 28)));
         Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", unchecked((int)0x80070070))));
+        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 0x10034))); // Cosmos: PalError.ENOSPC
+        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 0x70)));
+        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", 0x27)));
+        Assert.AreEqual(-E.ENOSPC, DirectoryFileStore.Errno(new IOException("voll", unchecked((int)0x80070027))));
+        Assert.AreEqual(-E.EFBIG, DirectoryFileStore.Errno(new IOException("gross", 0x10016))); // Cosmos: PalError.EFBIG
+        Assert.AreEqual(-E.EFBIG, DirectoryFileStore.Errno(new IOException("gross", 27)));
+        Assert.AreEqual(-E.EIO, DirectoryFileStore.Errno(new IOException("unbekannt", 0x10099)));
         Assert.AreEqual(-E.EIO, DirectoryFileStore.Errno(new IOException("anders")));
         Assert.AreEqual(-E.ENOENT, DirectoryFileStore.Errno(new FileNotFoundException()));
     }

@@ -574,9 +574,12 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
 
     internal static long Errno(Exception exception) => exception switch
     {
-        // Platte voll: .NET unter Unix trägt errno 28 als HResult, Windows ERROR_DISK_FULL/ERROR_HANDLE_DISK_FULL; was Cosmos meldet,
-        // ist im Gast nicht geprüft (sonst -EIO).
-        IOException { HResult: 28 or unchecked((int)0x80070070) or unchecked((int)0x80070027) } => -LinuxErrno.ENOSPC,
+        // Platte voll: .NET unter Linux trägt errno 28 als HResult, Windows ERROR_DISK_FULL/ERROR_HANDLE_DISK_FULL (0x70/0x27, auch als
+        // 0x8007xxxx). Cosmos (Pin 5790fa74) setzt ConvertErrorPalToPlatform als Identität ein (Cosmos.Kernel.Plugs/System/IO/
+        // InteropSysFilePlug.cs:336), der HResult ist dort also der PAL-Wert selbst: PalError.ENOSPC = 0x10034 und EFBIG = 0x10016
+        // (Interop.Error.cs:37 und :23), gemeldet von FileDescriptorTable.cs:248. Unbekannte Werte bleiben -EIO.
+        IOException { HResult: 28 or 0x10034 or 0x70 or 0x27 or unchecked((int)0x80070070) or unchecked((int)0x80070027) } => -LinuxErrno.ENOSPC,
+        IOException { HResult: 27 or 0x10016 } => -LinuxErrno.EFBIG,
         FileNotFoundException or DirectoryNotFoundException => -LinuxErrno.ENOENT,
         UnauthorizedAccessException => -LinuxErrno.EACCES,
         PathTooLongException => -LinuxErrno.ENAMETOOLONG,
@@ -800,7 +803,15 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     }
 
     /// <summary>Siehe <see cref="DiskFile"/>: Wachstum in Schritten mit Kontingent.</summary>
-    private long GrowStorage(FileStream stream, long from, long to)
+    private long GrowStorage(FileStream stream, long from, long to) => GrowInSteps(stream.SetLength, from, to);
+
+    /// <summary>
+    /// Verlängert über <paramref name="setLength"/> von <paramref name="from"/> auf <paramref name="to"/>, je Schritt höchstens
+    /// <see cref="StorageLock.ChunkBytes"/> unter einer eigenen Sperre. Vorher Prüfung des Kontingents für das ganze Wachstum (-ENOSPC,
+    /// nichts verändert). Scheitert ein Schritt (etwa Platte voll), wird die Datei auf <paramref name="from"/> zurückgesetzt und das
+    /// Kontingent zurückgebucht; maßgeblich bleibt der Fehler des Schritts.
+    /// </summary>
+    internal long GrowInSteps(Action<long> setLength, long from, long to)
     {
         if (to - from > QuotaBytes - GrownBytes)
         {
@@ -815,19 +826,47 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             {
                 using (StorageLock.Enter())
                 {
-                    stream.SetLength(next);
+                    setLength(next);
                     GrownBytes += next - current;
                     GrowSteps++;
                 }
             }
             catch (Exception exception) when (FileErrors.IsFileError(exception))
             {
-                return Errno(exception);
+                long error = Errno(exception);
+                if (current > from)
+                {
+                    _ = RollBack(setLength, from, current);
+                }
+
+                return error;
             }
 
             current = next;
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Setzt nach einem gescheiterten Wachstumsschritt auf <paramref name="from"/> zurück. Scheitert auch das, bleibt die Datei bei
+    /// <paramref name="reached"/> und das Kontingent dafür gebucht (stimmt mit der Platte); der Aufrufer meldet den Fehler des
+    /// Wachstumsschritts, nicht diesen. false in diesem Fall (Tests).
+    /// </summary>
+    private bool RollBack(Action<long> setLength, long from, long reached)
+    {
+        try
+        {
+            using (StorageLock.Enter())
+            {
+                setLength(from);
+                GrownBytes -= reached - from;
+                return true;
+            }
+        }
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
+        {
+            return false;
+        }
     }
 }
