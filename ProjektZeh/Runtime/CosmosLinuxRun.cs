@@ -35,6 +35,15 @@ internal static unsafe class CosmosLinuxRun
     /// <summary>Rückgabe von Enter nach einem Abbruch durch den Kernel (Zeitlimit, Ausnahme in der Brücke).</summary>
     private const ulong Killed = ulong.MaxValue - 16;
 
+    /// <summary>
+    /// So lange wartet <see cref="Run"/> nach dem Zeitlimit noch auf das Programm. Es verlässt den Ring 3 mit dem nächsten
+    /// Interrupt dort oder bei der Rückkehr aus dem laufenden Aufruf; Schlafen im Kernel prüft den Abbruch je <see cref="SleepSlice"/>.
+    /// </summary>
+    private const int LeaveGraceMs = 5000;
+
+    /// <summary>Längster Schlaf am Stück (poll mit Frist): danach prüft der Thread, ob das Programm abgebrochen wird (V3-Review P2).</summary>
+    private const int SleepSlice = 50;
+
     private const ulong PageFault = 14;
     private const int Pid = 1;
 
@@ -58,6 +67,15 @@ internal static unsafe class CosmosLinuxRun
         public string? Error;
         public ulong FaultVector, FaultError, FaultAddress, FaultRip;
         public bool Fault;
+
+        /// <summary>Gesetzt beim Zeitlimit: Schlafen im Kernel endet, der Aufruf kehrt zurück, die Rückkehr verlässt den Ring 3.</summary>
+        public volatile bool Cancelled;
+
+        /// <summary>
+        /// Wer zuletzt fertig ist (<see cref="Run"/> oder der Programmthread), gibt <see cref="busy"/> frei. Endet das Programm auch
+        /// nach <see cref="LeaveGraceMs"/> nicht, kehrt die Shell zurück, und ein neues run geht erst nach seinem Ende.
+        /// </summary>
+        public int Owners = 2;
 
         public Running(TerminalDescriptor terminal) => Terminal = terminal;
     }
@@ -105,6 +123,7 @@ internal static unsafe class CosmosLinuxRun
             return new Outcome(false, string.Empty, "es läuft schon ein Programm");
         }
 
+        Running? run = null;
         try
         {
             if (!Initialize(out string why))
@@ -133,26 +152,44 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, "kein Hardwarezufall für AT_RANDOM: " + exception.Message);
             }
 
-            var run = new Running(new TerminalDescriptor(output) { Mirror = mirror });
-            var thread = new Thread(() => Body(run, image, elf));
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror });
+            var thread = new Thread(() => Body(started, image, elf));
             thread.Start();
+            run = started;
             bool timedOut = false;
             if (!thread.Join(timeoutSeconds * 1000))
             {
                 timedOut = true;
+                run.Cancelled = true;
+                Interlocked.MemoryBarrier();
                 SchedulerThread? target = Volatile.Read(ref run.Thread);
                 if (target != null)
                 {
                     UserMode.RequestLeave(target, Killed);
                 }
 
-                thread.Join();
+                // Mit Frist (V3-Review P2): hängt das Programm im Kernel an einer Stelle ohne Abbruchprüfung, kehrt wenigstens die
+                // Shell zurück. Das Terminal nimmt danach nichts mehr an, der Thread räumt beim Ende selbst auf.
+                if (!thread.Join(LeaveGraceMs))
+                {
+                    run.Terminal.Close();
+                    return new Outcome(true, "signal 9", "Zeitlimit; das Programm endet nicht, run bleibt bis zu seinem Ende gesperrt");
+                }
             }
 
             run.Terminal.Flush();
             return Describe(run, timedOut);
         }
         finally
+        {
+            Release(run);
+        }
+    }
+
+    /// <summary>Gibt <see cref="busy"/> frei, wenn der andere Beteiligte schon fertig ist (oder es keinen Programmthread gab).</summary>
+    private static void Release(Running? run)
+    {
+        if (run == null || Interlocked.Decrement(ref run.Owners) == 0)
         {
             Volatile.Write(ref busy, 0);
         }
@@ -199,6 +236,19 @@ internal static unsafe class CosmosLinuxRun
 
     private static void Body(Running run, UserImage image, byte[] elf)
     {
+        try
+        {
+            Execute(run, image, elf);
+        }
+        finally
+        {
+            // Zuletzt: danach darf ein neues run beginnen.
+            Release(run);
+        }
+    }
+
+    private static void Execute(Running run, UserImage image, byte[] elf)
+    {
         Volatile.Write(ref run.Thread, FaultIsolation.CurrentSchedulerThread());
         UserPageTable? table = UserPageTable.TryCreate();
         if (table == null)
@@ -226,6 +276,16 @@ internal static unsafe class CosmosLinuxRun
             table.BindToCurrentThread();
             bound = true;
             Volatile.Write(ref current, run);
+
+            // Gegenstück zur Sperre in Run: Thread schreiben, dann Cancelled lesen. Sah Run den Thread noch nicht, sieht dieser
+            // Thread hier das Zeitlimit und betritt den Ring 3 nicht.
+            Interlocked.MemoryBarrier();
+            if (run.Cancelled)
+            {
+                run.Error = "Zeitlimit vor dem Start";
+                return;
+            }
+
             run.Started = true;
             run.Result = UserMode.Enter(image.Entry, image.StackPointer);
         }
@@ -377,7 +437,23 @@ internal static unsafe class CosmosLinuxRun
             }
         }
 
-        public void SleepNanos(long ns) => Thread.Sleep((int)Math.Clamp(ns / 1_000_000, 1, int.MaxValue));
+        /// <summary>In Scheiben von <see cref="SleepSlice"/>: ein Abbruch (Zeitlimit) beendet den Schlaf (V3-Review P2).</summary>
+        public void SleepNanos(long ns)
+        {
+            long ms = Math.Max(1, ns / 1_000_000);
+            while (ms > 0)
+            {
+                Running? run = Current();
+                if (run == null || run.Cancelled)
+                {
+                    return;
+                }
+
+                int step = (int)Math.Min(ms, SleepSlice);
+                Thread.Sleep(step);
+                ms -= step;
+            }
+        }
     }
 
     /// <summary>Seiten über eine <see cref="UserPageTable"/>; Frames liest und schreibt der Kernel über das HHDM.</summary>
