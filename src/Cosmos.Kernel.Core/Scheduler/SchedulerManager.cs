@@ -1717,7 +1717,7 @@ public static class SchedulerManager
         using (InternalCpu.DisableInterruptsScope())
         {
             Volatile.Write(ref s_cpuStates[GetCurrentCpuId()]._needReschedule, true);
-            InterruptManager.TryRaiseReschedule();
+            // Gegenprobe #716: no interrupt, the next exit switches (old behaviour).
         }
     }
 
