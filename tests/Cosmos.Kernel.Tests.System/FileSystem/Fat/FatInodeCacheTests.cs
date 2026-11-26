@@ -267,9 +267,14 @@ public class FatInodeCacheTests
     [Test]
     public void ManyEmptyFiles_SlotEntriesStayBounded()
     {
-        for (int i = 0; i < 3; i++)
+        // Only the objects of the current batch can be alive at a sweep, whether or
+        // not a GC runs inside the batch. With a batch below EmptySweepMin / 2 the
+        // next sweep point stays at EmptySweepMin, so the bound holds without
+        // relying on GC timing (300 per batch failed when no GC ran in between).
+        const int batch = FatInodeCache.EmptySweepMin / 2;
+        for (int i = 0; i < 8; i++)
         {
-            FillUnheldEmpty(i * 300, 300);
+            FillUnheldEmpty(i * batch, batch);
             Collect();
         }
 
