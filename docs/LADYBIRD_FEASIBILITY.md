@@ -100,7 +100,7 @@ Stand: 26. November 2026, Endstand für das Tor N1-Z ([#624](https://github.com/
 | D musl | LibJS D1, ganzes Ladybird D2 | D1 **`trägt`** (PR #739, gemergt); D gesamt **`offen`** | D1: `js` statisch mit musl, 0 Patchzeilen; `js -l -c 1+1` im Gast `2` (Stufe c, Angabe senior); D2 ([#636](https://github.com/peterzw98/ProjektZehOS/issues/636), nicht gemergt, Branch `task/ladybird-n1d2-alles` `99fb75b7`): Bau laut Kommentar grün, 87 Patchzeilen (unter 1000), headless `static.html` **ohne Screenshot** (`no_screenshot`), Ursache offen |
 | E Vergleichsprogramme | Satz S1, S3, `tools` (E1–E3) | Abnahmeregel des Plans erfüllt, förmliches Urteil noch nicht geschrieben | alle drei gemergt und auf Linux gelaufen; im Gast laut Senior-Angabe 23 von 24 Programmen wie unter Linux (KVM, 1 und 4 CPUs), nur `badptr` weicht ab (FAT ohne symbolische Links) |
 | Messung L1 | Bau L1-A, Seiten und Messskript L1-B, Messung L1-C ([#450](https://github.com/peterzw98/ProjektZehOS/issues/450)) | PSS ≤ 2 GiB erfüllt (Messung L1) | L1-A, L1-B und L1-C gelaufen; PSS `static.html` 334 MiB (siehe Messung L1) |
-| #423 (13.5 AOT) | Voraussetzung des Tors | offen | Issue offen |
+| #423 (13.5 AOT) | Voraussetzung des Tors | abgenommen | Entscheidung Peter 27.11. (Option A), Reste in #749 |
 
 ### A: Ring 3 unter Cosmos
 
@@ -202,14 +202,14 @@ Nach der festen Regel des Plans (Tabelle im [Plan](superpowers/plans/2026-11-24-
 | E `trägt` | Abnahmeregel erfüllt (auf Linux; Gast nach Angabe senior2 23/24) | Abschnitt E |
 | D `trägt` oder `glibc` | **offen**: D1 `trägt`, D2 ohne Screenshot | Abschnitt D, #636 |
 | PSS ≤ 2 GiB | ja, 334 MiB | Messung L1 |
-| #423 abgenommen | **nein**, Issue offen (geprüft 26.11.) | #423 |
+| #423 abgenommen | **ja**, Entscheidung Peter 27.11. (Option A): AOT fertig und Standard; Reste (Schlüsselschutz, `.aot`-Pakete, VMware) in #749, betreffen den nativen Weg nicht | #423, #749 |
 
-Damit greift die Zeile „A, B oder E `offen`, oder #423 nicht abgenommen: **warten, mit dem fehlenden Punkt**“ (fehlender Punkt: #423). Wäre #423 abgenommen, griffe wegen D `offen` die Zeile „C oder D `offen`, sonst wie Zeile 1: Peter kann GO geben, Ladybird (N6) wartet“; mit D `trägt` oder `glibc` wäre es GO. Die Regel wurde nur angewandt, nicht entschieden: **Die Entscheidung trifft Peter oder Lars.**
+Mit der Abnahme von #423 (Peter, 27.11.) greift wegen D `offen` die Zeile „C oder D `offen`, sonst wie Zeile 1: **Peter kann GO geben, Ladybird (N6) wartet**“; mit D `trägt` oder `glibc` wäre es GO. Die Regel wurde nur angewandt, nicht entschieden: **Die Entscheidung trifft Peter oder Lars.**
 
 ### Offene Punkte
 
 1. **N1-D2 (#636):** Ursache von `no_screenshot` klären, `static.html` headless mit Screenshot, Branch `task/ladybird-n1d2-alles` mergen, Bericht `…-n1-musl.md`, Urteil D (`trägt` oder `glibc`).
-2. **#423:** AOT-Abnahme (Voraussetzung des Tors).
+2. **#749:** AOT-Reste nach #423 (Schlüsselschutz §5.1, erste `.aot`-Pakete, VMware); keine Voraussetzung des Tors mehr.
 3. **#716:** Kosten je Adressraumwechsel erst nach sofortigem Yield messbar.
 4. **#700-Rest:** verschachteltes NMI unter TCG, Ursache offen.
 5. **Messung ohne Obergrenze** für A (Doom ist an 70 Bildern/s gedeckelt), VMware und echte Hardware für A und B.
