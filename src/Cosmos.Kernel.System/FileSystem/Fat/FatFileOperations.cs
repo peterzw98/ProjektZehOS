@@ -42,18 +42,35 @@ internal sealed class FatFileOperations : IFileOperations
         long intraOffset = position % clusterSize;
         long copied = 0;
 
-        Span<byte> clusterBuffer = new byte[clusterSize];
+        // ZehOS patch fat-read-runs, see PATCHES.md
+        // Whole clusters go straight into the caller's buffer, one device
+        // call per run of physically contiguous clusters (the driver splits
+        // it into its largest commands). Only a partial head or tail cluster
+        // goes through a cluster-sized buffer.
+        byte[]? clusterBuffer = null;
 
         while (copied < toRead && clusterIndex < chain.Count)
         {
+            long want = toRead - copied;
+            if (intraOffset == 0 && want >= clusterSize)
+            {
+                long fullClusters = want / clusterSize;
+                long left = chain.Count - clusterIndex;
+                int count = (int)(fullClusters < left ? fullClusters : left);
+                _superblock.ReadClusters(chain, (int)clusterIndex, count, buffer.Slice((int)copied, (int)(count * (long)clusterSize)));
+                copied += count * (long)clusterSize;
+                clusterIndex += count;
+                continue;
+            }
+
+            clusterBuffer ??= new byte[clusterSize];
             uint cluster = chain[(int)clusterIndex];
             _superblock.ReadCluster(cluster, clusterBuffer);
 
             long available = clusterSize - intraOffset;
-            long want = toRead - copied;
             long chunk = available < want ? available : want;
 
-            clusterBuffer.Slice((int)intraOffset, (int)chunk).CopyTo(buffer.Slice((int)copied, (int)chunk));
+            clusterBuffer.AsSpan((int)intraOffset, (int)chunk).CopyTo(buffer.Slice((int)copied, (int)chunk));
             copied += chunk;
             intraOffset = 0;
             clusterIndex++;

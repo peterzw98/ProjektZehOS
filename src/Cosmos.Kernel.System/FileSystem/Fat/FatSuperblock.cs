@@ -70,6 +70,36 @@ internal sealed class FatSuperblock : IVfsSuperblock
         _device.ReadBlock(lba, Boot.SectorsPerCluster, data);
     }
 
+    // ZehOS patch fat-read-runs, see PATCHES.md
+    /// <summary>
+    /// Reads <paramref name="count"/> whole clusters of <paramref name="chain"/>
+    /// from index <paramref name="start"/> into <paramref name="data"/>, one
+    /// device call per run of physically contiguous clusters instead of one
+    /// per cluster.
+    /// </summary>
+    public void ReadClusters(List<uint> chain, int start, int count, Span<byte> data)
+    {
+        int clusterBytes = (int)Boot.BytesPerCluster;
+        int end = start + count;
+        int index = start;
+        while (index < end)
+        {
+            uint first = chain[index];
+            int run = 1;
+            while (index + run < end && chain[index + run] == first + (uint)run)
+            {
+                run++;
+            }
+
+            // ClusterToLba of the last cluster throws past the volume, so a
+            // run never reads beyond the data region.
+            ulong lba = Boot.ClusterToLba(first);
+            Boot.ClusterToLba(first + (uint)(run - 1));
+            _device.ReadBlock(lba, (ulong)Boot.SectorsPerCluster * (ulong)run, data.Slice((index - start) * clusterBytes, run * clusterBytes));
+            index += run;
+        }
+    }
+
     public void WriteCluster(uint cluster, ReadOnlySpan<byte> data)
     {
         ulong lba = Boot.ClusterToLba(cluster);
@@ -87,11 +117,8 @@ internal sealed class FatSuperblock : IVfsSuperblock
 
         List<uint> chain = dir.ResolveChain();
         byte[] full = new byte[chain.Count * Boot.BytesPerCluster];
-        Span<byte> buffer = full;
-        for (int i = 0; i < chain.Count; i++)
-        {
-            ReadCluster(chain[i], buffer.Slice(i * (int)Boot.BytesPerCluster, (int)Boot.BytesPerCluster));
-        }
+        // ZehOS patch fat-read-runs, see PATCHES.md
+        ReadClusters(chain, 0, chain.Count, full);
         return full;
     }
 
