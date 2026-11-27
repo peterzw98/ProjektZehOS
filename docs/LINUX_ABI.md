@@ -449,7 +449,7 @@ Gastprogramm `experiments/LinuxAbi/src/v17/shm.c`, Erwartung Linux 6.12 in `expe
 | 319 | `memfd_create` | Name bis 249 Bytes (länger `-EINVAL`), `MFD_CLOEXEC`, `MFD_ALLOW_SEALING`, `MFD_NOEXEC_SEAL` (setzt `F_SEAL_EXEC`), `MFD_EXEC`; `MFD_HUGETLB` `-EINVAL`; Datei aus Frames im Arbeitsspeicher, Länge höchstens der Speicher des Erzeugers (`-EFBIG`) |
 | 0, 1, 8, 17, 18, 77 | `read`, `write`, `lseek`, `pread64`, `pwrite64`, `ftruncate` | wie tmpfs: Löcher lesen sich als Nullen, Kürzen nullt den Rest der angeschnittenen Seite; `write` hinter `LONG_MAX` (nach `lseek(LONG_MAX - 1)`) `-EINVAL`, über die Obergrenze `-EFBIG` |
 | 5 | `fstat` | `S_IFREG` mit 0777, `st_nlink` 0, Größe, Blöcke nach belegten Frames |
-| 9 | `mmap` | `MAP_SHARED` einer memfd: alle Abbildungen, auch in anderen Prozessen, bilden dieselben Frames ab; Frames kommen beim ersten Zugriff; ein Zugriff hinter dem Dateiende endet wie ein Seitenfehler ohne Bereich (Linux: `SIGBUS`); `MAP_SHARED|MAP_FIXED` `-EINVAL` wie bei anderen Dateien; Offset plus Länge über `LONG_MAX` `-EOVERFLOW` (2^63 - 8192 mit einer Seite geht noch, der Zugriff scheitert dann am Dateiende); `MAP_PRIVATE` bleibt die Kopie aus V12 |
+| 9 | `mmap` | `MAP_SHARED` einer memfd: alle Abbildungen, auch in anderen Prozessen, bilden dieselben Frames ab; Frames kommen beim ersten Zugriff; ein Zugriff hinter dem Dateiende ist `SIGBUS` (seit V30-P3, vorher Ende wie ein Seitenfehler ohne Bereich); `MAP_SHARED|MAP_FIXED` `-EINVAL` wie bei anderen Dateien; Offset plus Länge über `LONG_MAX` `-EOVERFLOW` (2^63 - 8192 mit einer Seite geht noch, der Zugriff scheitert dann am Dateiende); `MAP_PRIVATE` bleibt die Kopie aus V12 |
 | 11, 28 | `munmap`, `madvise(MADV_DONTNEED)` | gibt nur den Verweis der Seite zurück; der Inhalt bleibt in der Datei. munmap in der Mitte lässt zwei Reststücke mit richtigem Dateiversatz |
 | 72 | `fcntl` `F_ADD_SEALS`, `F_GET_SEALS` | nur memfd (sonst `-EINVAL`); ohne `MFD_ALLOW_SEALING` ist `F_SEAL_SEAL` gesetzt (`-EPERM`); `F_SEAL_WRITE` bei geteilter Abbildung `-EBUSY`, auch mit `PROT_READ` oder `PROT_NONE` (Linux 6.12: `VM_MAYWRITE`); danach `write`, beschreibbares `MAP_SHARED` `-EPERM`, `mprotect` mit `PROT_WRITE` auf eine danach entstandene Abbildung `-EACCES`; `F_SEAL_SHRINK`/`F_SEAL_GROW` sperren `ftruncate` und Wachsen durch `write` (`-EPERM`) |
 
@@ -703,12 +703,12 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxFileLocks.cs` (Tabel
 ## Dateiseiten erst beim Zugriff (V30)
 
 Plattformunabhängig in `ProjektZeh/Processes/LinuxFilePages.cs` und `LinuxUserProcessFilePages.cs` (Hosttests in `LinuxUserProcessTests`, Gastprogramm
-`experiments/LinuxAbi/src/v30/mmap_file.c`, Erwartung Linux 6.12 in `expected/v30`). Anlass: Ladybirds `WebContent` hat 117 MB ladbaren Teil, dazu bildet
+`experiments/LinuxAbi/src/v30/mmap_file.c` und `mmap_bus.c`, Erwartung Linux 6.12 in `expected/v30`). Anlass: Ladybirds `WebContent` hat 117 MB ladbaren Teil, dazu bildet
 `ld-musl` die Bibliotheken mit `mmap` ab; bis V29 wurde all das beim Laden gelesen und kopiert, obwohl der Prozess nur einen Teil berührt.
 
 - **`mmap` einer regulären Datei** (`MAP_PRIVATE`, und `MAP_SHARED` ohne `PROT_WRITE` wie bisher): Der Bereich bekommt sofort seinen Schutz, aber keine
   Frames. Der erste Zugriff (Seitenfehler oder ein Kernelzugriff wie `write` aus dem Bereich) holt einen Frame, liest die Seite ab dem Versatz aus der Datei
-  und füllt hinter dem Dateiende mit Nullen. Schreiben trifft nur den privaten Frame. Die Abbildung hält die Datei offen: `close` und `unlink` danach sind
+  und füllt in der Seite, in der die Datei endet, hinter dem Ende mit Nullen. Schreiben trifft nur den privaten Frame. Die Abbildung hält die Datei offen: `close` und `unlink` danach sind
   erlaubt. Eine noch nicht berührte Seite sieht spätere Änderungen an der Datei, eine schon gelesene nicht (wie Linux, wo die private Seite bis zum
   Schreiben die Seite des Caches ist). `munmap`, `MAP_FIXED` und `madvise(MADV_DONTNEED)` schneiden den Dateiausschnitt mit (nach `DONTNEED` kommt die
   Seite wieder aus der Datei), `fork` gibt dem Kind dieselben Ausschnitte. Andere Dateien (`/proc`, Geräte) werden weiter kopiert.
@@ -718,8 +718,14 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxFilePages.cs` und `LinuxUserP
 - **Sperren:** Der Seitenfehler liest unter der Speichersperre des Prozesses (`_memGate`), ohne die Dateisperre (`FileGate`); die Quelle ist gezählt
   und wird erst mit dem letzten Ausschnitt geschlossen. Der Ring-3-Seitenfehler läuft in Cosmos mit eingeschalteten Interrupts
   (`UserMode.HandleFault`, Cosmos `5790fa7`, `UserMode.cs:214`); Plattenzugriffe sind dort deshalb so zulässig wie in einem Systemaufruf.
-- **Grenzen:** Scheitert das Lesen im Seitenfehler, endet der Prozess wie bei Speichermangel (Linux: `SIGBUS`). Wird die Datei nach `mmap` gekürzt,
-  liest der Zugriff Nullen statt `SIGBUS`. Ein Fehler beim Schließen der Datei nach dem letzten Ausschnitt geht verloren (Linux: `close` schreibt auch
+- **`SIGBUS` (V30-P3):** Scheitert das Lesen im Seitenfehler oder liegt die Dateiseite ganz hinter dem Dateiende (schon bei `mmap` oder nach
+  `ftruncate` kleiner), meldet der Seitenfehler `SIGBUS` mit `BUS_ADRERR` und der Fehleradresse (Linux `filemap_fault`/`mm_fault_error`); ein
+  Handler läuft wie bei V24, ohne Handler endet der Prozess mit Signal 7. Ein Kernelzugriff auf eine solche Seite liefert `-EFAULT` ohne Signal.
+  Dasselbe gilt jetzt für eine `MAP_SHARED`-memfd hinter ihrem Ende (bisher Ende wie `SIGSEGV`).
+- **Grenzen:** Eine schon gelesene Seite behält nach `ftruncate` kleiner ihren Inhalt (Linux nimmt sie beim Kürzen aus allen Abbildungen, der
+  nächste Zugriff ist `SIGBUS`). `ETXTBSY` gibt es nicht: Ein laufendes Programm lässt sich zum Schreiben öffnen, kürzen und überschreiben, und noch
+  nicht gelesene Seiten seines Codes kämen dann aus der geänderten Datei (Linux 6.12 verweigert das Öffnen zum Schreiben mit `ETXTBSY`; dafür bräuchte
+  es eine Zählung der laufenden Programme je Datei über alle Dateisysteme). Ein Fehler beim Schließen der Datei nach dem letzten Ausschnitt geht verloren (Linux: `close` schreibt auch
   nicht zurück). Dateien des Arbeitsspeichers (`MemoryFileStore`, nur ohne Wurzel auf der Platte) werden ohne eigene Sperre gelesen.
 
 Gemessen im Gast (KVM, 3 GiB, `bin/rssw <n> /libexec/WebContent --disable-sandbox --headless` aus Ladybirds D2-Bündel; `WebContent` läuft bis zur
@@ -735,6 +741,6 @@ Gemessen im Gast (KVM, 3 GiB, `bin/rssw <n> /libexec/WebContent --disable-sandbo
 | V30 | 4 | 4 | 15 108 bis 18 204 kB | 176 MB |
 | V30 | 1 | 6 | 17 636 bis 18 168 kB (ein Prozess nicht erfasst) | 279 MB |
 
-Geprüft im Gast (KVM, smp1 und smp4 je ein Lauf): `mmap_file` sowie die bisherigen `proc`, `mmap_anon`, `fork_cow`, `exec`, `memfd_seal`, `start`,
-`spawn`, `shm` (9/9). Der Lauf „vorher“ mit 6 Prozessen kam nicht zustande: In 4 von 13 Gaststarts dieser Reihe (beide Stände) blieb die Anmeldung
+Geprüft im Gast (KVM, smp1 und smp4 je ein Lauf): `mmap_file`, seit V30-P3 auch `mmap_bus`, sowie die bisherigen `proc`, `mmap_anon`, `fork_cow`, `exec`, `memfd_seal`, `start`,
+`spawn`, `shm` (9/9, mit `mmap_bus` auf V30-P3 10/10). Der Lauf „vorher“ mit 6 Prozessen kam nicht zustande: In 4 von 13 Gaststarts dieser Reihe (beide Stände) blieb die Anmeldung
 nach `SATA: command completion timeout` beim Desktop-Start stehen, bevor ein Linux-Programm lief.

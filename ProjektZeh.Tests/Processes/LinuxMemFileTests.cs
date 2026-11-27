@@ -209,7 +209,8 @@ public sealed class LinuxMemFileTests
         Assert.AreEqual(0, Call(p, Ftruncate, (ulong)fd, 100));
         ulong at = MapSharedFd(p, fd, 2 * Page);
         Assert.IsTrue(p.HandlePageFault(at, 2));
-        Assert.IsFalse(p.HandlePageFault(at + Page, 0), "Linux: SIGBUS");
+        Assert.IsFalse(p.HandlePageFault(at + Page, 0, out bool bus), "Linux: SIGBUS");
+        Assert.IsTrue(bus, "V30-P3: SIGBUS statt SIGSEGV");
         Assert.AreEqual(0, Call(p, Ftruncate, (ulong)fd, 2 * Page));
         Assert.IsTrue(p.HandlePageFault(at + Page, 0));
         p.Destroy();
