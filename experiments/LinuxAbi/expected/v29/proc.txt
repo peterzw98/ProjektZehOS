@@ -1,0 +1,25 @@
+TracerPid=0
+Pid = getpid=1
+RssAnon > 0=1
+RssShmem da=1
+Threads 1=1
+proc/stat Felder=5
+lseek 0=0
+proc/stat Felder neu=5
+idle waechst=1
+pid/stat Felder=2
+pid/stat ppid=1
+Kind RssAnon da=1
+Kind PPid=1
+Kind exe = eigenes=1
+Kind Ende 7=1
+abgeholt errno=2
+maps [stack]=1
+maps rw-p=1
+MemTotal > 0=1
+MemFree <= MemTotal=1
+cpuinfo processor 0=1
+stat /proc/self/status: ret=0 errno=0
+Modus=33060
+open O_WRONLY: ret=-1 errno=13
+open /proc/999999/stat: ret=-1 errno=2

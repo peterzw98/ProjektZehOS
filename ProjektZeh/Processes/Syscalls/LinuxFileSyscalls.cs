@@ -75,26 +75,9 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
-        ILinuxFile? file;
-        if (IsProcSelfFd(p, path))
-        {
-            // V19: nur lesen (O_ACCMODE 0). Linux (do_open): O_CREAT|O_EXCL auf Vorhandenes -EEXIST, O_CREAT oder Schreibzugriff auf
-            // ein Verzeichnis -EISDIR.
-            const int OCreat = 0x40, OExcl = 0x80;
-            if ((flags & (OCreat | OExcl)) == (OCreat | OExcl))
-            {
-                return -FileErr.EEXIST;
-            }
-
-            if ((flags & 3) != 0 || (flags & OCreat) != 0)
-            {
-                return -FileErr.EISDIR;
-            }
-
-            file = new LinuxProcFdDirectory(p, path);
-            r = 0;
-        }
-        else
+        // V19/V29: die wenigen /proc-Pfade (LinuxProcFiles.cs); alles andere geht an das Dateisystem.
+        r = LinuxProcFiles.TryOpen(p, path, flags, out ILinuxFile? file);
+        if (r == LinuxProcFiles.NotProc)
         {
             r = f.FileSystem.Open(path, flags, mode & 0xfff, out file);
         }
