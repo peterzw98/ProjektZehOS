@@ -6,12 +6,19 @@ Auf dem MSI den mit der Probe verwendeten ZehOSLinuxRun-ISO-Pfad als `ISO`
 setzen. Einen freien KVM-Slot absprechen. Das Bündel mit `ImageDecoder` und die
 fertigen PNGs bereitlegen.
 
+| Lokales Archiv auf dem MSI | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `ladybird-static-with-images.tar.gz` (Standard für die Demo) | 147158521 | `cd2fb1d7b5d90807791a41b9bf3f64818821ce1512d6169c703c28d6fa69cdd6` |
+| `ladybird-static-absolute.tar.zst` (schlanke Variante für `static.html`) | 118500639 | `a3f867b5ee3d05428eb4194c93e8a1750fe6a6b593ae7638dfcf41f079aa1283` |
+| `ladybird-loopback-demo.tar.gz` (HTTP-Erweiterung zum Bündel mit Bildern) | 2779980 | `94199579d9a7c06f00af47e11c148e222d42fa370894a195d67b125b0e32748a` |
+
 ```bash
 bundle="$HOME/ladybird-bundle/ladybird-static-with-images.tar.gz"
 demos="$HOME/ladybird-bundle/zehos-freitag-demos.zip"
 out=$(mktemp -d "${TMPDIR:-/tmp}/ladybird-demo.XXXXXX")
 static_ref="$HOME/zehos-v3-out/v38/diag2/shot.png"
 test -s "$ISO" && test -s "$bundle" && test -s "$static_ref"
+printf '%s  %s\n' cd2fb1d7b5d90807791a41b9bf3f64818821ce1512d6169c703c28d6fa69cdd6 "$bundle" | sha256sum -c -
 printf '%s  %s\n' 42c8c8db73245555c557c17d5a849209a9e36d6539546d0138c72b53683b0f5d "$demos" | sha256sum -c -
 unzip -q "$demos" -d "$out/png"
 file "$static_ref" "$out/png/zehos-projekt.png" "$out/png/canvas.png"
@@ -37,6 +44,11 @@ Versuch mit demselben `-o` landet in einem neuen Unterordner
 `<ausgabe>/<zeitstempel>`; der erste Lauf bleibt für die Diagnose erhalten.
 
 ## Live im ZehOS-Gast
+
+**Für die Vorführung 2 GiB verwenden** (`--memory 2G`, zugleich Standard).
+Bei nur 512 MiB kann der Kernel seit V43 `WebContent` mit `SIGKILL` beenden.
+Wiederholte Neustarts können bis zum Zeitlimit laufen und ein weißes oder
+fehlendes PNG hinterlassen.
 
 1. **HTML-Seite rendern.** Aus dem Repository-Stamm mit vorbereitetem ISO starten.
 
