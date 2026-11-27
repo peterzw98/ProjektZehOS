@@ -1,0 +1,18 @@
+ud2: Treffer=1
+  rcx erhalten=1
+  r11 erhalten=1
+  rdx erhalten=1
+  cf=0
+ud2, Handler setzt rcx/r11/cf: Treffer=1
+  rcx aus ucontext=1
+  r11 aus ucontext=1
+  rdx erhalten=1
+  cf=1
+100 x ud2: rcx/r11 erhalten=100
+SIGSEGV, mprotect im Handler: Treffer=1
+  geschrieben=42
+  rcx erhalten=1
+  r11 erhalten=1
+syscall: rcx = Adresse danach=1
+  r11 = rflags (ohne RF)=1
+fertig
