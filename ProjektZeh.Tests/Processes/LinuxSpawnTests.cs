@@ -311,6 +311,291 @@ public sealed class LinuxSpawnTests
         Assert.AreEqual(0, f.Parent.Children.Length);
     }
 
+    // ---- V19: execve ohne vfork, PR_SET_PDEATHSIG, close_range, /proc/self/fd, ppoll ----
+
+    private const long Prctl = 157, Openat = 257, Getdents64 = 217, Fstat = 5, Fcntl = 72;
+    private static readonly string[] ProcFdNames = [".", "..", "0", "1", "2", "3"];
+
+    /// <summary>Hooks für execve im Prozess selbst; liefert die Liste der Abbilder, die die Brücke übernimmt.</summary>
+    private static List<LinuxUserProcess> WireReplace(Fixture f, LinuxUserProcess p)
+    {
+        var replaced = new List<LinuxUserProcess>();
+        p.CreatePages = () => { var pg = new Pages(); f.Created.Add(pg); return pg; };
+        p.ReplaceImage = (next, image) => { replaced.Add(next); f.Image = image; return true; };
+        return replaced;
+    }
+
+    private static long OpenFile(Fixture f, LinuxUserProcess p, string path, int flags)
+    {
+        ulong at = f.Strings(f.Mem + (10 * Page), path) + 0x100;
+        return Fixture.Call(p, Openat, unchecked((ulong)-100), at, (ulong)flags, 0x1A4);
+    }
+
+    [TestMethod]
+    public void ExecveOhneVforkErsetztDenProzessMitGleicherPid()
+    {
+        var f = new Fixture();
+        f.WriteFile("/hello", Elf());
+        List<LinuxUserProcess> replaced = WireReplace(f, f.Parent);
+        Assert.AreEqual(3, OpenFile(f, f.Parent, "/hello", 0));
+        Assert.AreEqual(4, OpenFile(f, f.Parent, "/hello", 0x80000)); // O_CLOEXEC
+        f.Parent.Signals.Handler[12] = 0x1234;
+        f.Parent.Signals.Handler[10] = 1;
+        f.Parent.Signals.Blocked = 1UL << 14;
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Prctl, 1, 10));
+
+        // Ein laufendes Kind (vfork + execve) und ein beendetes ziehen mit um.
+        ulong path = f.Strings(f.Mem + (2 * Page), "/hello") + 0x100;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess spawned = f.Child!;
+        Assert.AreEqual(0, Fixture.Call(spawned, LinuxSyscalls.Execve, path, 0, 0));
+        spawned.Release();
+        LinuxUserProcess running = f.Exec!;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess zombie = f.Child!;
+        Fixture.Call(zombie, LinuxSyscalls.ExitGroup, 5);
+        zombie.Release();
+
+        ulong argv = f.Strings(f.Mem + (4 * Page), "/hello", "--kind");
+        Pages oldPages = (Pages)f.Parent.Pages;
+        Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.Execve, path, argv, 0));
+        Assert.AreEqual(1, replaced.Count);
+        LinuxUserProcess next = replaced[0];
+        Assert.AreEqual(Pid, next.Pid);
+        Assert.AreEqual("/hello", next.ExePath);
+        Assert.IsTrue(oldPages.Destroyed, "der alte Adressraum ist frei");
+        Assert.IsNotNull(next.GetDescriptor(3), "ohne CLOEXEC bleibt");
+        Assert.IsNull(next.GetDescriptor(4), "CLOEXEC endet");
+        Assert.IsNull(f.Parent.GetDescriptor(3));
+        Assert.AreEqual(0UL, next.Signals.Handler[12]);
+        Assert.AreEqual(1UL, next.Signals.Handler[10]);
+        Assert.AreEqual(1UL << 14, next.Signals.Blocked);
+        Assert.AreEqual(10, next.ParentDeathSignal, "PDEATHSIG bleibt über execve");
+        Assert.AreEqual(2, next.Children.Length);
+        Assert.AreEqual(0, f.Parent.Children.Length);
+        Assert.AreSame(next, running.Parent);
+        Assert.IsTrue(f.Parent.IdInUse(Pid), "PID gehört dem neuen Abbild");
+
+        // Das Kind las Parent vor dem Umzug: Ende über das alte Objekt landet beim neuen Abbild.
+        Assert.IsTrue(next.Reap(zombie.Pid));
+        running.ReportEnd(7 << 8);
+        Assert.AreEqual(7 << 8, Array.Find(next.Children, c => c.Pid == running.Pid)!.WaitStatus);
+        Assert.IsTrue(next.Reap(running.Pid));
+    }
+
+    [TestMethod]
+    public void ExecveOhneVforkFehlerUndMehrereThreads()
+    {
+        var f = new Fixture();
+        List<LinuxUserProcess> replaced = WireReplace(f, f.Parent);
+        ulong missing = f.Strings(f.Mem + (2 * Page), "/fehlt") + 0x100;
+        ulong dir = f.Strings(f.Mem + (3 * Page), "/") + 0x100;
+        Assert.AreEqual(-LinuxErrno.ENOENT, Fixture.Call(f.Parent, LinuxSyscalls.Execve, missing, 0, 0));
+        Assert.AreEqual(-LinuxSyscalls.EACCES, Fixture.Call(f.Parent, LinuxSyscalls.Execve, dir, 0, 0));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Fixture.Call(f.Parent, LinuxSyscalls.Execve, 1, 0, 0));
+        Assert.AreEqual(0, replaced.Count);
+        Assert.IsNotNull(f.Parent.GetDescriptor(1), "der Prozess läuft unverändert weiter");
+
+        f.WriteFile("/hello", Elf());
+        ulong path = f.Strings(f.Mem + (5 * Page), "/hello") + 0x100;
+        Assert.IsTrue(Fixture.Call(f.Parent, LinuxSyscalls.Clone, LinuxUserProcess.CloneThreadSet, f.Mem + Page) > 0);
+        Assert.AreEqual(-LinuxSyscalls.ENOSYS, Fixture.Call(f.Parent, LinuxSyscalls.Execve, path, 0, 0), "de_thread fehlt");
+        Assert.AreEqual(0, replaced.Count);
+    }
+
+    [TestMethod]
+    public void PdeathsigImVforkKindUeberlebtExecveUndWirdZugestellt()
+    {
+        var f = new Fixture();
+        f.WriteFile("/hello", Elf());
+        ulong path = f.Strings(f.Mem + (2 * Page), "/hello") + 0x100;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess child = f.Child!;
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Fixture.Call(child, Prctl, 1, 65));
+        Assert.AreEqual(0, Fixture.Call(child, Prctl, 1, 15));
+        Assert.AreEqual(0, Fixture.Call(child, Prctl, 2, f.Mem + 64));
+        byte[] got = new byte[4];
+        Assert.IsTrue(child.TryRead(f.Mem + 64, got));
+        Assert.AreEqual(15, BitConverter.ToInt32(got));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Fixture.Call(child, Prctl, 2, 8));
+        Assert.AreEqual(0, f.Parent.ParentDeathSignal, "nur das Kind");
+        Assert.AreEqual(0, Fixture.Call(child, LinuxSyscalls.Execve, path, 0, 0));
+        child.Release();
+        LinuxUserProcess next = f.Exec!;
+        Assert.AreEqual(15, next.ParentDeathSignal);
+        Assert.IsNull(next.TerminatedBySignal);
+
+        f.Parent.ReportEnd(0);
+        Assert.AreEqual(15, next.TerminatedBySignal, "SIGTERM mit Standardaktion beendet das Kind");
+    }
+
+    [TestMethod]
+    public void CloseRangeSchliesstOderSetztCloexec()
+    {
+        var f = new Fixture();
+        f.WriteFile("/a", [1]);
+        for (int i = 3; i <= 6; i++)
+        {
+            Assert.AreEqual(i, OpenFile(f, f.Parent, "/a", 0));
+        }
+
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Fixture.Call(f.Parent, LinuxSyscalls.CloseRange, 5, 4, 0));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Fixture.Call(f.Parent, LinuxSyscalls.CloseRange, 3, 4, 1));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.CloseRange, 4, 5, 0));
+        Assert.IsNotNull(f.Parent.GetDescriptor(3));
+        Assert.IsNull(f.Parent.GetDescriptor(4));
+        Assert.IsNull(f.Parent.GetDescriptor(5));
+        Assert.IsNotNull(f.Parent.GetDescriptor(6));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.CloseRange, 3, uint.MaxValue, 4)); // CLOSE_RANGE_CLOEXEC
+        Assert.AreEqual(1, Fixture.Call(f.Parent, Fcntl, 3, 1));
+        Assert.AreEqual(1, Fixture.Call(f.Parent, Fcntl, 6, 1));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Fcntl, 1, 1), "fd 1 liegt außerhalb");
+        Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.CloseRange, 3, uint.MaxValue, 2)); // UNSHARE: schließt
+        Assert.IsNull(f.Parent.GetDescriptor(3));
+        Assert.IsNull(f.Parent.GetDescriptor(6));
+        Assert.IsNotNull(f.Parent.GetDescriptor(2));
+    }
+
+    [TestMethod]
+    public void ProcSelfFdListetOffeneNummern()
+    {
+        var f = new Fixture();
+        Assert.AreEqual(-21, OpenFile(f, f.Parent, "/proc/self/fd", 2), "O_RDWR auf ein Verzeichnis");
+        Assert.AreEqual(-17, OpenFile(f, f.Parent, "/proc/self/fd", 0xC0), "O_CREAT|O_EXCL auf Vorhandenes");
+        Assert.AreEqual(-21, OpenFile(f, f.Parent, "/proc/self/fd", 0x40), "O_CREAT auf ein Verzeichnis");
+        long fd = OpenFile(f, f.Parent, "/proc/" + Pid + "/fd", 0x10000); // O_DIRECTORY
+        Assert.AreEqual(3, fd);
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Fstat, 3, f.Mem + 256));
+        byte[] st = new byte[144];
+        Assert.IsTrue(f.Parent.TryRead(f.Mem + 256, st));
+        Assert.AreEqual(0x4000u, BitConverter.ToUInt32(st, 24) & 0xF000, "S_IFDIR");
+
+        long n = Fixture.Call(f.Parent, Getdents64, 3, f.Mem + (12 * Page), 4096);
+        Assert.IsTrue(n > 0);
+        byte[] buf = new byte[n];
+        Assert.IsTrue(f.Parent.TryRead(f.Mem + (12 * Page), buf));
+        var names = new List<string>();
+        for (int at = 0; at < n; at += BitConverter.ToUInt16(buf, at + 16))
+        {
+            int end = Array.IndexOf(buf, (byte)0, at + 19);
+            names.Add(Encoding.UTF8.GetString(buf, at + 19, end - at - 19));
+        }
+
+        CollectionAssert.AreEqual(ProcFdNames, names);
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Getdents64, 3, f.Mem + (12 * Page), 4096), "Ende");
+        Assert.AreEqual(-LinuxErrno.ENOENT, OpenFile(f, f.Parent, "/proc/99/fd", 0), "fremder Prozess");
+    }
+
+    [TestMethod]
+    public void PpollTauschtDieMaskeNurWaehrendDesWartens()
+    {
+        var f = new Fixture();
+        const ulong Usr1 = 1UL << 9, Term = 1UL << 14;
+        ulong ts = f.Mem + 128, mask = f.Mem + 160;
+        Assert.IsTrue(f.Parent.TryWrite(ts, new byte[16]));
+        Assert.IsTrue(f.Parent.TryWrite(mask, BitConverter.GetBytes(Term)));
+        f.Parent.Signals.Blocked = Usr1;
+
+        // Ergebnis ohne Signal: die alte Maske gilt sofort wieder.
+        Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 8));
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 4));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, 8, mask, 8));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, 8, 8));
+        Assert.IsTrue(f.Parent.TryWrite(ts + 8, BitConverter.GetBytes(1_000_000_000L)));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 8));
+        Assert.IsTrue(f.Parent.TryWrite(ts + 8, new byte[8]));
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+
+        // SIGUSR1 mit Handler wartet blockiert; ppoll gibt es frei: -EINTR, der Handler läuft unter der Wartemaske, der Rahmen trägt die alte.
+        f.Parent.Signals.Handler[10] = 0x401000;
+        f.Parent.Signals.Restorer[10] = 0x401000;
+        f.Parent.Signals.Flags[10] = LinuxUserProcess.SaRestorer;
+        Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.Tkill, (ulong)Pid, 10));
+        Assert.AreEqual(-LinuxSyscalls.EINTR, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 8));
+        Assert.AreEqual(Term, f.Parent.Signals.Blocked, "Wartemaske bis zum Rücksprung");
+        var r = new LinuxUserRegs { Rsp = f.Mem + (12 * Page), Rip = Code, Rflags = 0x202 };
+        LinuxUserRegs entry = r;
+        entry.Rax = (ulong)LinuxSyscalls.Ppoll;
+        LinuxSignalFrame.AfterSyscall(f.Parent, ref r, new byte[512], entry.ToSyscallArgs(), -LinuxSyscalls.EINTR, f.Parent.SignalsTaken);
+        Assert.AreEqual(0x401000UL, r.Rip, "Handler angesprungen");
+        Assert.AreEqual(Term | Usr1, f.Parent.Signals.Blocked, "Wartemaske und das Signal selbst");
+        byte[] saved = new byte[8];
+        Assert.IsTrue(f.Parent.TryRead(r.Rsp + 304, saved), "uc_sigmask im Rahmen");
+        Assert.AreEqual(Usr1, BitConverter.ToUInt64(saved));
+
+        // -EINTR ohne Handler-Rahmen (das Signal nahm niemand): die alte Maske gilt nach dem Rücksprung.
+        f.Parent.Signals.Blocked = Usr1;
+        f.Parent.BeginWaitMask(f.Parent.CurrentThread, Term);
+        r = new LinuxUserRegs { Rsp = f.Mem + (12 * Page), Rip = Code, Rflags = 0x202 };
+        LinuxSignalFrame.AfterSyscall(f.Parent, ref r, new byte[512], entry.ToSyscallArgs(), -LinuxSyscalls.EINTR, f.Parent.SignalsTaken);
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+        Assert.AreEqual(Code, r.Rip);
+    }
+
+    [TestMethod]
+    public void PpollWartemaskeZweierThreadsStelltDieAlteErstAmEndeHer()
+    {
+        var f = new Fixture();
+        const ulong Usr1 = 1UL << 9, Term = 1UL << 14, Usr2 = 1UL << 11;
+        var a = new LinuxThread(1001);
+        var b = new LinuxThread(1002);
+
+        // A endet zuerst: B wartet noch, seine Maske bleibt; erst B stellt die Maske von vor A her (nicht A's Wartemaske).
+        f.Parent.Signals.Blocked = Usr1;
+        f.Parent.BeginWaitMask(a, Term);
+        f.Parent.BeginWaitMask(b, Usr2);
+        Assert.AreEqual(Usr1, b.SavedBlocked, "B merkt die Maske vor A, nicht A's Wartemaske");
+        f.Parent.EndWaitMask(a);
+        Assert.AreEqual(Usr2, f.Parent.Signals.Blocked, "B wartet noch");
+        f.Parent.EndWaitMask(b);
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+
+        // B endet zuerst.
+        f.Parent.BeginWaitMask(a, Term);
+        f.Parent.BeginWaitMask(b, Usr2);
+        f.Parent.EndWaitMask(b);
+        f.Parent.EndWaitMask(a);
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+
+        // A verlässt die Wartemaske über einen Signalrahmen (zählt nur ab), B stellt am Ende her; ein zweites Ende ist wirkungslos.
+        f.Parent.BeginWaitMask(a, Term);
+        f.Parent.BeginWaitMask(b, Usr2);
+        Assert.IsTrue(f.Parent.LeaveWaitMask(a, restore: false));
+        f.Parent.EndWaitMask(b);
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+        Assert.IsFalse(f.Parent.LeaveWaitMask(b, restore: true));
+        f.Parent.Signals.Blocked = Usr2;
+        f.Parent.EndWaitMask(a);
+        Assert.AreEqual(Usr2, f.Parent.Signals.Blocked, "kein Thread in einer Wartemaske: nichts herzustellen");
+    }
+
+    [TestMethod]
+    public void PpollRestzeitLaeuftBeiRiesigerFristNichtUeber()
+    {
+        var f = new Fixture();
+        const ulong Usr1 = 1UL << 9;
+        const long Sec = 10_000_000_000L; // sec * 10^9 > long.MaxValue
+        ulong ts = f.Mem + 128, mask = f.Mem + 160;
+        Assert.IsTrue(f.Parent.TryWrite(ts, BitConverter.GetBytes(Sec)));
+        Assert.IsTrue(f.Parent.TryWrite(ts + 8, BitConverter.GetBytes(5L)));
+        Assert.IsTrue(f.Parent.TryWrite(mask, new byte[8]));
+        f.Parent.Signals.Blocked = Usr1;
+        f.Parent.Signals.Handler[10] = 0x401000;
+        f.Parent.Signals.Restorer[10] = 0x401000;
+        f.Parent.Signals.Flags[10] = LinuxUserProcess.SaRestorer;
+        Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.Tkill, (ulong)Pid, 10));
+
+        // Das anhängige SIGUSR1 wird frei: sofort -EINTR, die Restzeit steht wieder in tmo_p.
+        Assert.AreEqual(-LinuxSyscalls.EINTR, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 8));
+        byte[] left = new byte[16];
+        Assert.IsTrue(f.Parent.TryRead(ts, left));
+        long leftSec = BitConverter.ToInt64(left), leftNsec = BitConverter.ToInt64(left, 8);
+        Assert.IsTrue(leftSec >= Sec - 2 && leftSec <= Sec, "Restzeit " + leftSec);
+        Assert.IsTrue(leftNsec >= 0 && leftNsec < 1_000_000_000);
+        f.Parent.EndWaitMask(f.Parent.CurrentThread);
+    }
+
     // Statisches Programm wie in LinuxUserProcessTests: Code bei 0x401000 (ret), Daten bei 0x403000.
     internal static byte[] Elf()
     {

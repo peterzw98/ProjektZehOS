@@ -65,6 +65,10 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     private readonly int[] _infoPid = new int[65];
     private readonly int[] _infoStatus = new int[65];
 
+    // V19 ppoll: Threads, deren Wartemaske gerade gilt, und die Maske vor der ersten davon; beide unter _threadGate.
+    private int _waitMaskThreads;
+    private ulong _waitMaskBase;
+
     // Zahl der genommenen Signale (TakeSignal), nur wachsend: die Brücke liest sie vor einem Aufruf, AfterSyscall erkennt daran, ob während
     // des Aufrufs ein anderer Thread ein Signal nahm (dann ist ein -EINTR ohne eigenes Signal einer, den Linux still neu startet).
     private long _signalsTaken;
@@ -141,6 +145,76 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     /// <summary>Nichtkanonischer Stapelzeiger nach rt_sigreturn: Linux lädt ihn, der erste Stapelzugriff ist #SS und endet mit SIGBUS.</summary>
     public void ForceBus() => Terminate(7);
 
+    /// <summary>
+    /// V19 ppoll: <paramref name="mask"/> gilt ab jetzt (SIGKILL und SIGSTOP bleiben frei), die bisherige merkt sich <paramref name="thread"/>.
+    /// Ein schon anhängiges, jetzt freigegebenes Signal mit Standardaktion "beenden" wirkt sofort wie nach sigprocmask; eins mit Handler lässt
+    /// das folgende Warten mit -EINTR enden. Abweichung wie bei der Maske überhaupt: Sie gilt je Prozess, nicht je Thread. Deshalb zählt der
+    /// Prozess die Threads in einer Wartemaske: Der erste merkt sich die Maske davor, jeder weitere übernimmt sie (nicht die Wartemaske des
+    /// ersten, sonst bliebe diese nach dem Ende beider dauerhaft), und erst der letzte stellt sie wieder her (Review V19, P2).
+    /// </summary>
+    public void BeginWaitMask(LinuxThread thread, ulong mask)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        if (thread.RestoreBlocked)
+        {
+            LeaveWaitMask(thread, restore: false); // nicht beendete Wartemaske desselben Threads (darf nicht vorkommen) nicht doppelt zählen
+        }
+
+        // Lesen der alten und Schreiben der neuen Maske unter derselben Sperre wie das Zählen: Sonst merkte sich ein zweiter Thread
+        // zwischen beiden Schritten die Wartemaske des ersten als "alt".
+        lock (_threadGate)
+        {
+            if (_waitMaskThreads++ == 0)
+            {
+                _waitMaskBase = Signals.Blocked;
+            }
+
+            thread.SavedBlocked = _waitMaskBase;
+            thread.RestoreBlocked = true;
+            Volatile.Write(ref Signals.Blocked, mask & ~KillStopBits);
+        }
+
+        SignalStateChanged();
+    }
+
+    /// <summary>V19: Ende der Wartemaske ohne Signalrahmen (ppoll mit Ergebnis oder ohne Handler): die alte Maske gilt wieder.</summary>
+    public void EndWaitMask(LinuxThread thread)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        LeaveWaitMask(thread, restore: true);
+    }
+
+    /// <summary>
+    /// V19: <paramref name="thread"/> verlässt seine Wartemaske. Mit <paramref name="restore"/> gilt die Maske von vorher wieder, sobald
+    /// kein anderer Thread mehr in einer Wartemaske ist; ohne (ein Signalrahmen trägt sie, rt_sigreturn stellt sie her) wird nur gezählt.
+    /// false, wenn der Thread keine Wartemaske hatte.
+    /// </summary>
+    internal bool LeaveWaitMask(LinuxThread thread, bool restore)
+    {
+        if (!thread.RestoreBlocked)
+        {
+            return false;
+        }
+
+        thread.RestoreBlocked = false;
+        bool changed = false;
+        lock (_threadGate)
+        {
+            if (_waitMaskThreads > 0 && --_waitMaskThreads == 0 && restore)
+            {
+                Volatile.Write(ref Signals.Blocked, thread.SavedBlocked & ~KillStopBits);
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            SignalStateChanged();
+        }
+
+        return true;
+    }
+
     /// <summary>rt_sigreturn: Maske aus dem Rahmen; ein jetzt freigegebenes Signal folgt seiner Aktion wie nach sigprocmask.</summary>
     public void RestoreBlocked(ulong blocked)
     {
@@ -202,8 +276,20 @@ internal static class LinuxSignalFrame
         bool interrupted = result == -LinuxSyscalls.EINTR && number >= 0;
         bool restart = interrupted && Restartable(number, call.A1, call.A3);
         bool first = true;
+
+        // V19 ppoll mit -EINTR: Die Handler laufen unter der Wartemaske, der erste Rahmen trägt die Maske von vorher (rt_sigreturn stellt
+        // sie her, Linux restore_saved_sigmask über den Rahmen). Ohne genommenes Signal gilt sie nach der Schleife sofort wieder.
+        LinuxThread thread = p.CurrentThread;
+        bool saved = thread.RestoreBlocked;
         for (int n = 0; n < 64 && p.TakeSignal(out LinuxSignalDelivery d); n++)
         {
+            if (first && saved)
+            {
+                d = d with { OldBlocked = thread.SavedBlocked };
+                _ = p.LeaveWaitMask(thread, restore: false); // der Rahmen trägt die Maske, rt_sigreturn stellt sie her
+                saved = false;
+            }
+
             if (first && interrupted)
             {
                 if (restart && (d.Flags & LinuxUserProcess.SaRestart) != 0)
@@ -220,6 +306,11 @@ internal static class LinuxSignalFrame
                 p.ForceSegv();
                 return;
             }
+        }
+
+        if (saved)
+        {
+            _ = p.LeaveWaitMask(thread, restore: true);
         }
 
         // Ein anderer Thread nahm das Signal, das diesen Aufruf unterbrach: Linux startet ihn dann still neu (ERESTARTSYS ohne Handler).

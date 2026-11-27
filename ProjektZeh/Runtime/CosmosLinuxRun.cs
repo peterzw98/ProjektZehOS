@@ -635,6 +635,9 @@ internal static unsafe class CosmosLinuxRun
         }
         finally
         {
+            // V19: execve ohne vfork hat den Prozess ersetzt (run.Process und der Hauptthread zeigen auf das neue Abbild).
+            process = main.Process;
+
             // Erst wenn kein anderer Thread mehr im Ring 3 oder im Kernel auf dem Adressraum arbeitet, darf er weg.
             WaitForThreads(run, process, main);
             Volatile.Write(ref current, null);
@@ -998,6 +1001,64 @@ internal static unsafe class CosmosLinuxRun
             return created == null ? null : new CosmosUserPages(created);
         };
         process.StartExec = (next, image) => StartExec(run, next, image);
+        process.ReplaceImage = (next, image) => ReplaceImage(run, next, image);
+    }
+
+    /// <summary>
+    /// V19 execve ohne vfork: Der aufrufende Thread (der einzige des Prozesses) läuft ab dem Rücksprung als <paramref name="next"/> weiter, auf
+    /// dessen Seitentabelle am Einsprung des Abbilds: Register null außer RIP, RSP und RFLAGS (IF), FS-Basis 0, FPU im Grundzustand. Ist der
+    /// alte Prozess der erste des Laufs, wird <paramref name="next"/> es (Ende, Status, Abbruch des Laufs). Die alte Tabelle ist danach an
+    /// keinen Thread mehr gebunden, ihr Prozess gibt sie frei.
+    /// </summary>
+    private static bool ReplaceImage(Running run, LinuxUserProcess next, UserImage image)
+    {
+        Bridge? me = CurrentBridge(run);
+        if (me == null || me.Frame == null || me.VforkParent != null)
+        {
+            return false;
+        }
+
+        LinuxUserProcess old = me.Process;
+        var table = ((CosmosUserPages)next.Pages).Table;
+        Wire(run, table, next);
+        if (ReferenceEquals(old, run.Process))
+        {
+            next.OnExit = code =>
+            {
+                UserMode.LeaveCurrent((ulong)code);
+                LeaveAll(run, CurrentBridge(run), (ulong)code);
+            };
+            next.OnKilled = code => LeaveAll(run, CurrentBridge(run), (ulong)code);
+            Volatile.Write(ref run.Process, next);
+        }
+        else
+        {
+            next.OnExit = code =>
+            {
+                UserMode.LeaveCurrent((ulong)code);
+                LeaveProcess(run, next, CurrentBridge(run), (ulong)code);
+            };
+            next.OnKilled = code => LeaveProcess(run, next, CurrentBridge(run), (ulong)code);
+        }
+
+        // Erst die neue Bindung, dann der Wechsel der Brücke: Ein Seitenfehler danach geht an den Prozess, dessen Tabelle geladen ist.
+        UserPageTable.UnbindCurrentThread();
+        table.BindToCurrentThread();
+        me.Process = next;
+        me.Linux = next.MainThread;
+        UserMode.SetFsBase(0);
+
+        // Nur die Register des Programms; CS, SS und die Felder des Einsprungs bleiben (UserMode.Prepare prüft sie beim Rücksprung).
+        UserFrame* f = me.Frame;
+        FromRegs(f, new LinuxUserRegs { Rip = image.Entry, Rsp = image.StackPointer, Rflags = 0x202 });
+
+        // fxsave-Abbild unter dem Frame (UserMode.s): FCW 0x37F, MXCSR 0x1F80 wie nach FNINIT/Linux fpu__clear; MXCSR_MASK bleibt.
+        var fpu = new Span<byte>((byte*)f - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize);
+        fpu[..24].Clear();
+        fpu[32..].Clear();
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(fpu, 0x37F);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(fpu[24..], 0x1F80);
+        return true;
     }
 
     /// <summary>
@@ -1097,7 +1158,7 @@ internal static unsafe class CosmosLinuxRun
                 UserMode.Enter(image.Entry, image.StackPointer);
                 if (b.Fault)
                 {
-                    process.RecordFault(SignalOf(b.FaultVector));
+                    b.Process.RecordFault(SignalOf(b.FaultVector));
                 }
             }
         }
@@ -1107,6 +1168,8 @@ internal static unsafe class CosmosLinuxRun
         }
         finally
         {
+            process = b.Process; // V19: execve ohne vfork ersetzt den Prozess auf diesem Thread
+
             // Wie WaitForThreads, nur für diesen Prozess: erst wenn kein eigener Thread mehr läuft, darf der Adressraum weg.
             while (HasOtherThreads(run, process, b))
             {

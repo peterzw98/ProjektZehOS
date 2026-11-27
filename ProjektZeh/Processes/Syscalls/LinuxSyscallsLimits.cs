@@ -26,7 +26,7 @@ internal static partial class LinuxSyscalls
     private const int RlimitStack = 3, RlimitCore = 4, RlimitNofile = 7, RlimitCount = 16;
     private const ulong DefaultStackSize = 8UL << 20;
     private const ulong MremapMaymove = 1, MremapFixed = 2, MremapDontunmap = 4;
-    private const int PrSetName = 15, PrGetName = 16;
+    private const int PrSetPdeathsig = 1, PrGetPdeathsig = 2, PrSetName = 15, PrGetName = 16;
 
     private static long DispatchLimits(ref SyscallArgs a, ILinuxProcess p)
     {
@@ -174,7 +174,8 @@ internal static partial class LinuxSyscalls
 
     /// <summary>
     /// PR_SET_NAME (musl pthread_setname_np für den eigenen Thread) prüft nur den Zeiger und wirkt nicht; PR_GET_NAME liefert
-    /// einen leeren Namen (Abweichung). Alles andere -EINVAL wie ein Linux ohne die Funktion (mimalloc: PR_SET_VMA).
+    /// einen leeren Namen (Abweichung). V19: PR_SET_PDEATHSIG/PR_GET_PDEATHSIG (LinuxSpawn.cs). Alles andere -EINVAL wie ein Linux ohne die
+    /// Funktion (mimalloc: PR_SET_VMA).
     /// </summary>
     private static long DoPrctl(ILinuxProcess p, int option, ulong arg)
     {
@@ -186,6 +187,17 @@ internal static partial class LinuxSyscalls
             case PrGetName:
                 name.Clear();
                 return p.Memory.TryWrite(arg, name) ? 0 : -EFAULT;
+            case PrSetPdeathsig when p is LinuxUserProcess child:
+                // V19 (Ladybird LibCore, auch im vfork-Kind vor execve): Signal beim Ende des Elternprozesses; 0 schaltet ab.
+                if (arg > 64)
+                {
+                    return -EINVAL;
+                }
+
+                child.ParentDeathSignal = (int)arg;
+                return 0;
+            case PrGetPdeathsig when p is LinuxUserProcess asked:
+                return p.Memory.TryWrite(arg, BitConverter.GetBytes(asked.ParentDeathSignal)) ? 0 : -EFAULT;
             default:
                 return -EINVAL;
         }

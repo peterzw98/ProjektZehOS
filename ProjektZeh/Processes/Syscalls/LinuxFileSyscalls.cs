@@ -19,7 +19,7 @@ internal static partial class LinuxSyscalls
 
     private static class FileErr
     {
-        public const long EBADF = 9, EFAULT = 14, ENOTDIR = 20, EISDIR = 21, EINVAL = 22, ESPIPE = 29, ERANGE = 34, EIO = 5;
+        public const long EBADF = 9, EFAULT = 14, EEXIST = 17, ENOTDIR = 20, EISDIR = 21, EINVAL = 22, ESPIPE = 29, ERANGE = 34, EIO = 5;
     }
 
     // Obergrenze der Deskriptornummern (RLIMIT_NOFILE wie poll); close sucht darin nach weiteren Verweisen auf dieselbe Datei.
@@ -75,7 +75,30 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
-        r = f.FileSystem.Open(path, flags, mode & 0xfff, out ILinuxFile? file);
+        ILinuxFile? file;
+        if (IsProcSelfFd(p, path))
+        {
+            // V19: nur lesen (O_ACCMODE 0). Linux (do_open): O_CREAT|O_EXCL auf Vorhandenes -EEXIST, O_CREAT oder Schreibzugriff auf
+            // ein Verzeichnis -EISDIR.
+            const int OCreat = 0x40, OExcl = 0x80;
+            if ((flags & (OCreat | OExcl)) == (OCreat | OExcl))
+            {
+                return -FileErr.EEXIST;
+            }
+
+            if ((flags & 3) != 0 || (flags & OCreat) != 0)
+            {
+                return -FileErr.EISDIR;
+            }
+
+            file = new LinuxProcFdDirectory(p, path);
+            r = 0;
+        }
+        else
+        {
+            r = f.FileSystem.Open(path, flags, mode & 0xfff, out file);
+        }
+
         if (r < 0)
         {
             return r;

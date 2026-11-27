@@ -332,7 +332,7 @@ Ereignisschleife aus anderen Threads über eine Pipe.
 
 Grenzen: Ein `write` über 4096 Bytes mit `O_NONBLOCK` wird in Stücken zu 4096 Bytes geschrieben; ist weniger als ein Stück frei, kommt `-EAGAIN` (Linux schriebe
 den freien Rest). Schließt ein Thread das Schreibende, während ein anderer noch hineinschreibt, sieht der Leser schon EOF (Linux hält die Datei bis zum Ende
-des Aufrufs). `ioctl(FIONREAD)`, `select`, `ppoll` und `epoll` gibt es nicht. Die Pipe-Sperre ist eine Blattsperre: Dateisperre vor Pipe-Sperre, darin weder
+des Aufrufs). `ioctl(FIONREAD)`, `select` und `epoll` gibt es nicht (`ppoll` seit V19). Die Pipe-Sperre ist eine Blattsperre: Dateisperre vor Pipe-Sperre, darin weder
 Benutzerspeicher noch eine andere Sperre. `read` auf dem Leseende prüft den Puffer vor dem Entnehmen; gibt ein anderer Thread ihn danach per `munmap` oder
 `mprotect` frei, scheitert das Zurückschreiben mit `-EFAULT`, und die entnommenen Bytes sind verloren (Abweichung: Linux rückt in `pipe_read` erst nach erfolgreichem Kopieren vor und behält sie).
 
@@ -346,7 +346,7 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxSpawn.cs`, `LinuxWait.cs`, `L
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
 | 56, 58 | `clone` (vfork-Form), `vfork` | `CLONE_VM|CLONE_VFORK` und Austrittssignal (sonst nichts): das Kind ist ein eigener Prozess (PID aus dem gemeinsamen Namensraum der PIDs und TIDs eines Laufs, Kopie der Deskriptortabelle samt `FD_CLOEXEC`, Handler, Arbeitsverzeichnis) auf dem Speicher und Stack aus `clone` (0: der bisherige) des Elternprozesses; dessen aufrufender Thread wartet, bis das Kind `execve` oder `exit` ruft, und bekommt dann die PID. vfork im vfork-Kind und andere Flags `-ENOSYS`, ohne Mittel `-EAGAIN` |
-| 59 | `execve` | nur im vfork-Kind (sonst `-ENOSYS`: kein Austausch des Adressraums unter laufenden Threads); Pfadfehler wie `open`, keine reguläre Datei `-EACCES`, über 128 MiB `-ENOMEM`; argv/envp: Zeichenkette über 128 KiB, mehr als 32768 Einträge oder zusammen über 2 MiB `-E2BIG`; ELF-Fehler `-ENOEXEC` (auch `PT_INTERP` und Segmente mit Schreib- und Ausführrecht, W^X), kaputte Argumente `-EINVAL`. Danach: neuer Adressraum, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` (SIG_IGN und Signalmaske bleiben, der Alternativstack nicht), während vfork gemerkte Signale zugestellt (siehe `kill`, V10) |
+| 59 | `execve` | im vfork-Kind; außerhalb davon seit V19 Ersatz des eigenen Abbilds (mit weiteren Threads `-ENOSYS`: kein Austausch des Adressraums unter laufenden Threads); Pfadfehler wie `open`, keine reguläre Datei `-EACCES`, über 128 MiB `-ENOMEM`; argv/envp: Zeichenkette über 128 KiB, mehr als 32768 Einträge oder zusammen über 2 MiB `-E2BIG`; ELF-Fehler `-ENOEXEC` (auch `PT_INTERP` und Segmente mit Schreib- und Ausführrecht, W^X), kaputte Argumente `-EINVAL`. Danach: neuer Adressraum, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` (SIG_IGN und Signalmaske bleiben, der Alternativstack nicht), während vfork gemerkte Signale zugestellt (siehe `kill`, V10) |
 | 61 | `wait4` | `pid > 0`, `-1`, `0` (eigene Gruppe), `< -1` (Gruppe); `WNOHANG` (0 ohne fertiges Kind); `WUNTRACED`/`WCONTINUED` angenommen, warten aber nur auf das Ende (keine gestoppten Prozesse); Status wie Linux (`exit n`: n << 8, Signal: Nummer); rusage Nullen (keine Rechenzeit je Prozess); kein passendes Kind `-ECHILD`, unbekannte Optionen `-EINVAL`, `INT_MIN` `-ESRCH`; `-EFAULT` nach dem Abholen wie Linux |
 | 247 | `waitid` | `P_ALL`, `P_PID`, `P_PGID` (`P_PIDFD` `-EINVAL`: es gibt keine pidfds); `WEXITED` nötig, `WNOWAIT` lässt das Kind stehen; mit `WNOHANG` ohne fertiges Kind Nullen in `si_signo`/`si_pid` |
 | 110 | `getppid` | PID des Elternprozesses, 0 beim ersten Prozess des Laufs; Waisen behalten die tote PID |
@@ -445,6 +445,27 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
   Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3) und keine Handler für Ausnahmen (SIGSEGV/SIGFPE aus einem Fehler im
   Ring 3 beenden weiter). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigpending`, `rt_sigtimedwait` und
   `signalfd` fehlen.
+
+## Harte Startlücken: ppoll, prctl, close_range, /proc/self/fd, execve (V19)
+
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxSyscallsStart.cs`, `LinuxSyscallsLimits.cs` (prctl), `LinuxSpawn.cs` und `LinuxSignals.cs`
+(Wartemaske), in der Brücke `CosmosLinuxRun.ReplaceImage` (Hosttests `LinuxSpawnTests`; Gastprogramm `experiments/LinuxAbi/src/v19/start.c`, Erwartung
+Linux 6.12 in `expected/v19`). Anlass: die Lesestudie zum Ladybird-Startweg (`docs/superpowers/specs/2026-11-27-ladybird-636-vorlauf.md`): LibCore wartet mit
+ppoll, setzt im Helferkind `PR_SET_PDEATHSIG` und schließt vor `execve` mit `close_range` oder über `/proc/self/fd`.
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 271 | `ppoll` | wie `poll` mit Frist als `timespec` und Signalmaske; Reihenfolge wie Linux: Frist unlesbar `-EFAULT`, negativ oder `tv_nsec` ≥ 10^9 `-EINVAL`, dann `sigsetsize` ≠ 8 `-EINVAL`, Maske unlesbar `-EFAULT`. Die Maske gilt nur während des Wartens (SIGKILL/SIGSTOP bleiben frei); mit Ergebnis gilt sofort wieder die alte, bei `-EINTR` laufen die Handler unter der Wartemaske und der erste Rahmen trägt die alte (rt_sigreturn stellt sie her). Die Restzeit steht danach in `tmo_p`, auch bei sehr großen Fristen ohne Überlauf; ppoll wird nie neu gestartet |
+| 157 | `prctl` | `PR_SET_PDEATHSIG` (0 bis 64, sonst `-EINVAL`; 0 schaltet ab) und `PR_GET_PDEATHSIG` (int, `-EFAULT`); endet der Elternprozess, bekommt das Kind sein Signal (`SI_USER`, si_pid 0). Bleibt über `execve`, gilt nicht für ein neues vfork-Kind |
+| 436 | `close_range` | schließt alle offenen Nummern von `first` bis `last` (`~0` erlaubt) oder setzt mit `CLOSE_RANGE_CLOEXEC` nur `FD_CLOEXEC`; `CLOSE_RANGE_UNSHARE` ohne Wirkung (es gibt keine geteilten Tabellen); andere Flags oder `first > last` `-EINVAL` |
+| 2, 257 | `open`, `openat` auf `/proc/self/fd` | auch `/proc/<eigene PID>/fd`: Verzeichnis, nur lesen; `O_CREAT|O_EXCL` `-EEXIST`, `O_CREAT` oder Schreibzugriff `-EISDIR`; `fstat` `S_IFDIR`; `getdents64` liefert `.`, `..` und jede offene Nummer (Typ `DT_LNK`). Ein fremder Prozess `-ENOENT`; sonst gibt es kein `/proc` |
+| 59 | `execve` außerhalb eines vfork-Kinds | ersetzt das Abbild des Prozesses unter derselben PID (neue Seitentabelle, FPU im Grundzustand, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` wie V15); Kinder und ihre Waisen gehen an das neue Abbild über, der Elternprozess sieht weiter dieselbe PID. Mit weiteren Threads `-ENOSYS` |
+
+Grenzen: Die Wartemaske gilt wie jede Maske je Prozess, nicht je Thread. Warten mehrere Threads gleichzeitig in ppoll, gilt die zuletzt gesetzte Wartemaske,
+bis der letzte von ihnen zurückkehrt; erst dann gilt wieder die Maske von vor dem ersten (der Prozess zählt die wartenden Threads). `execve` mit weiteren
+Threads fehlt (kein `de_thread`); anhängige Signale gehen beim Ersetzen ohne vfork verloren (Linux behält sie). Ein fehlendes Ausführrecht prüft `execve`
+nicht (Linux `-EACCES`): FAT kennt keine Modi, jede reguläre Datei gilt als ausführbar. Es gibt weiter kein `fork` mit eigenem Speicher, `/proc/self/fd/<n>` als Link
+(`readlink`) fehlt.
 
 ## Weiche Lücken: eventfd, statfs, inotify (V20)
 
