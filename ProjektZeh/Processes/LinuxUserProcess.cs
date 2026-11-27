@@ -33,6 +33,15 @@ internal interface IUserPages
 }
 
 /// <summary>
+/// V38, optional neben <see cref="IUserPages"/>: Ist die Seite schon mit diesem Frame abgebildet? Für den Seitenfehler, den ein anderer
+/// Thread zwischen Ausnahme und <c>_memGate</c> schon erledigt hat (Linux: "spurious fault", der Befehl wird einfach wiederholt).
+/// </summary>
+internal interface IUserPagesQuery
+{
+    bool MapsTo(ulong page, ulong frame);
+}
+
+/// <summary>
 /// Ein Linux-Prozess mit einem Thread (V3 des Plans <c>2026-11-26-ladybird-vorstellung.md</c>): Speicher, brk, anonyme
 /// Abbildungen, Deskriptoren 0 bis 2 auf das Terminal und Dateien über ein <see cref="ILinuxFileSystem"/> (V8: Deskriptortabelle und
 /// Arbeitsverzeichnis, <see cref="ILinuxFiles"/>). Die Bereiche führt <see cref="AddressSpaceMap"/>; Frames kommen erst bei
@@ -953,9 +962,12 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
 
         // Frame da, Seite nicht abgebildet: Protect konnte sie nach dem Aufheben nicht neu abbilden (V3-Review P3 b).
         // Jetzt mit dem Zugriff aus der Karte nachholen; Inhalt und Frame bleiben.
+        // V38: Oder zwei Threads liefen zugleich in dieselbe neue Seite (WebContent: SIGSEGV beim Befehlsabruf, Fehlercode 0x14, RIP =
+        // Adresse im Programmtext): Der erste hat sie geholt und abgebildet, während dieser auf _memGate wartete. Die Tabelle lehnt das
+        // zweite Abbilden ab (Cosmos TryMap: schon vorhanden); ist sie mit demselben Frame da, ist der Fehler erledigt.
         if (_frames.TryGetValue(page, out ulong held))
         {
-            return _pages.Map(page, held, access);
+            return _pages.Map(page, held, access) || (_pages is IUserPagesQuery query && query.MapsTo(page, held));
         }
 
         return Populate(page, access, out busError) != 0;

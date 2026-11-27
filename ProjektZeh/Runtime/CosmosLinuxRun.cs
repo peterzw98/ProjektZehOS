@@ -1600,7 +1600,7 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>Seiten über eine <see cref="UserPageTable"/>; Frames liest und schreibt der Kernel über das HHDM.</summary>
-    private sealed class CosmosUserPages : IUserPages
+    private sealed class CosmosUserPages : IUserPages, IUserPagesQuery
     {
         private readonly UserPageTable _table;
 
@@ -1618,6 +1618,9 @@ internal static unsafe class CosmosLinuxRun
             access != MapAccess.None && _table.TryMap(page, frame, access == MapAccess.ReadWrite, access == MapAccess.ReadExecute);
 
         public bool Unmap(ulong page) => _table.Unmap(page) != 0 || !_table.TryTranslate(page, false, out _);
+
+        public bool MapsTo(ulong page, ulong frame) =>
+            _table.TryTranslate(page, false, out ulong physical) && (physical & ~(AddressSpaceMap.PageSize - 1)) == frame;
 
         public void DestroyTable() => _table.Dispose();
     }

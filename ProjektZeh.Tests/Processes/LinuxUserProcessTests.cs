@@ -21,7 +21,7 @@ public sealed class LinuxUserProcessTests
     private const ulong NotPresentRead = 0x4, NotPresentWrite = 0x6, NotPresentFetch = 0x14, PresentWrite = 0x7;
 
     /// <summary>Seitentabelle als Wörterbuch; zählt, was der Prozess abbildet und freigibt.</summary>
-    private sealed class FakePages : IUserPages
+    private sealed class FakePages : IUserPages, IUserPagesQuery
     {
         public readonly Dictionary<ulong, byte[]> Frames = new();
         public readonly Dictionary<ulong, (ulong Frame, MapAccess Access)> Mapped = new();
@@ -56,6 +56,8 @@ public sealed class LinuxUserProcessTests
             Mapped[page] = (frame, access);
             return true;
         }
+
+        public bool MapsTo(ulong page, ulong frame) => Mapped.TryGetValue(page, out var m) && m.Frame == frame;
 
         public bool Unmap(ulong page)
         {
@@ -159,7 +161,11 @@ public sealed class LinuxUserProcessTests
         Assert.IsFalse(process.HandlePageFault(image.StackBottom - Page, NotPresentRead), "Schutzseite");
         Assert.IsFalse(process.HandlePageFault(0x10_0000_0000, NotPresentRead), "unbelegt");
         Assert.IsFalse(process.HandlePageFault(ElfLoader.UserEnd + 5, NotPresentRead), "über dem Benutzerraum");
-        Assert.IsFalse(process.HandlePageFault(Data + Page, NotPresentWrite), "schon abgebildet");
+        // V38: "nicht vorhanden" auf einer inzwischen abgebildeten Seite: ein anderer Thread war schneller, der Befehl wird wiederholt.
+        Assert.IsTrue(process.HandlePageFault(Data + Page, NotPresentWrite), "schon abgebildet (gleichzeitiger Fehler)");
+        Assert.AreEqual(MapAccess.ReadWrite, pages.Mapped[Data + Page].Access);
+        Assert.IsTrue(process.HandlePageFault(Code, NotPresentFetch), "Codeseite, die ein anderer Thread schon holte (WebContent)");
+        Assert.IsFalse(process.HandlePageFault(Data + Page, PresentWrite), "Fehler auf vorhandener Seite holt nichts nach");
         Assert.IsTrue(process.HandlePageFault(image.StackBottom, NotPresentWrite), "Stack wächst bei Bedarf");
     }
 
