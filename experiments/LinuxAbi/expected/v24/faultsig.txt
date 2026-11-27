@@ -1,0 +1,19 @@
+ud2: signo=4
+  si_code (ILL_ILLOPN=2)=2
+  si_addr = RIP=1
+div 0: signo=8
+  si_code (FPE_INTDIV=1)=1
+  si_addr = RIP=1
+nichtkanonisch (#GP): signo=11
+  si_code (SI_KERNEL=128)=128
+  si_addr 0=1
+mprotect im Handler: Treffer=1
+  si_code (SEGV_ACCERR=2)=2
+  geschrieben=42
+100 x ud2: Treffer=100
+Kind: SIGFPE blockiert -> Signal=8
+Kind: SIGILL ignoriert -> Signal=4
+Kind: Fehler im SIGSEGV-Handler -> Signal=11
+1 GiB MAP_SHARED|MAP_NORESERVE=1
+  Kind schreibt, Eltern sehen es=1
+fertig
