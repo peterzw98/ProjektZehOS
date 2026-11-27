@@ -385,7 +385,7 @@ geteilte Abbildungen nicht (wie alle, V9). Geteilte Frames zählen bei jedem abb
 
 ## V18 Signalzustellung (Ladybird: LibCore setzt Handler für SIGCHLD, SIGINT, SIGPIPE)
 
-Prüfung: `experiments/LinuxAbi/src/v18/sig.c` (Erwartung von Linux 6.12 in `expected/v18`), Hosttests in `LinuxThreadsTests` und `LinuxProcessWaitTests`.
+Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Linux 6.12 in `expected/v18`), Hosttests in `LinuxThreadsTests` und `LinuxProcessWaitTests`.
 
 - **Zustellung** beim Rücksprung aus jedem Aufruf (`CosmosLinuxRun.DeliverSignals`): alle anhängigen, nicht blockierten Signale mit Handler, niedrigste
   Nummer zuerst, jedes mit eigenem Rahmen über dem vorigen. Rahmen wie Linux x86-64 (`struct rt_sigframe`): an RSP `sa_restorer`, dann `ucontext`
@@ -395,12 +395,17 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` (Erwartung von Linux 6.12 in `exp
 - **`rt_sigreturn` (15)**: Register, RFLAGS (nur CF, PF, AF, ZF, SF, DF, OF, AC), Maske, Alternativstack und FPU aus dem Rahmen; MXCSR wird mit
   der MXCSR-Maske der CPU gefiltert (ein ungültiges Bit wäre bei fxrstor im Ring 0 ein #GP). Rückkehr über `sysretq`: rcx und r11 kommen wie nach
   jedem Aufruf als RIP und RFLAGS zurück (ein unterbrochener Aufruf hatte sie ohnehin so).
+  Ein Handler, der RSP im Rahmen verbiegt: nichtkanonisch endet der Prozess mit SIGBUS (Linux: #SS beim ersten Stapelzugriff), ein Wert in der
+  Kernelhälfte mit SIGSEGV, weil `UserMode.Prepare` jede Rückkehr mit RIP oder RSP ab `0x0000_8000_0000_0000` ablehnt (Gastprogramm `v18/badrsp.c`,
+  als `rspnc` und `rspkern`).
 - **Flags**: `SA_SIGINFO` (siginfo: kill `SI_USER` mit si_pid/si_uid, tgkill `SI_TKILL`, SIGCHLD `CLD_EXITED`/`CLD_KILLED`/`CLD_DUMPED` mit si_status),
   `SA_ONSTACK` mit `sigaltstack` (auch `SS_AUTODISARM`), `SA_NODEFER`, `SA_RESETHAND`, sa_mask.
 - **EINTR und `SA_RESTART`**: Wartende Aufrufe (read/write auf Pipes und Sockets, recvmsg/sendmsg, accept, wait4/waitid, poll, futex, pause, nanosleep,
   clock_nanosleep) kehren mit `-EINTR` zurück, sobald ein Signal mit Handler wartet. Mit `SA_RESTART` startet die Brücke read, write, readv, writev,
   pread, pwrite, send*/recv*, accept, connect, wait4, waitid und futex ohne Frist neu (RIP - 2, rax = Nummer); poll, nanosleep, pause und futex mit
   Frist liefern `-EINTR` wie Linux. nanosleep schreibt die Restzeit. Reguläre Dateien unterbricht ein Signal nicht.
+  Ohne Handler startet die Brücke einen unterbrochenen Aufruf nur neu, wenn während des Aufrufs ein anderer Thread ein Signal nahm
+  (`SignalsTaken`); ein `-EINTR` ohne Signal (abgehängtes Terminal) bleibt `-EINTR`, statt endlos neu zu starten.
 - **SIGCHLD** beim Ende eines Kinds an die Eltern; Standard und SIG_IGN verwerfen es (SIG_IGN und `SA_NOCLDWAIT` holen das Kind weiter selbst ab).
 - **SIGPIPE** nach `-EPIPE` aus write, writev, pwrite, sendto, sendmsg (nicht mit `MSG_NOSIGNAL`); Standardaktion beendet den Prozess wie Linux.
 - **Grenzen**: Maske, anhängige Signale und Alternativstack je Prozess, nicht je Thread; ein Handler blockiert sein Signal für alle Threads, bis

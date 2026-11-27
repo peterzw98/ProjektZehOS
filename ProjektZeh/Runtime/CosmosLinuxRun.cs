@@ -866,29 +866,23 @@ internal static unsafe class CosmosLinuxRun
                 return;
             }
 
-            var args = new SyscallArgs
-            {
-                Number = unchecked((long)frame->Rax),
-                A0 = frame->Rdi,
-                A1 = frame->Rsi,
-                A2 = frame->Rdx,
-                A3 = frame->R10,
-                A4 = frame->R8,
-                A5 = frame->R9,
-            };
+            // Dieselbe Registerzuordnung wie in den Hosttests (LinuxUserRegs.ToSyscallArgs); AfterSyscall liest daraus die Flags
+            // für SIGPIPE und den Neustart. Kopie, weil Dispatch die Argumente ändern darf.
+            SyscallArgs call = ToRegs(frame).ToSyscallArgs();
+            var args = call;
+            long takenBefore = me.Process.SignalsTaken;
             long result = LinuxSyscalls.Dispatch(ref args, me.Process);
-            long number = args.Number;
             if (me.Resume)
             {
                 ResumeParent(me, frame);
-                number = -1; // der Aufruf gehörte dem vfork-Kind; der Elternthread hat nichts neu zu starten
+                call.Number = -1; // der Aufruf gehörte dem vfork-Kind; der Elternthread hat nichts neu zu starten
             }
             else
             {
                 frame->Rax = unchecked((ulong)result);
             }
 
-            DeliverSignals(me, frame, number, args.A1, args.A3, result);
+            DeliverSignals(me, frame, call, result, takenBefore);
         }
         catch (Exception exception)
         {
@@ -908,7 +902,7 @@ internal static unsafe class CosmosLinuxRun
     /// fxsave-Abbild des Threads liegt direkt unter dem Rahmen (UserMode.s: <c>sub rsp, FPU_SIZE; fxsave64 [rsp]</c>, frame = rsp davor),
     /// fxrstor64 lädt es beim Rücksprung. Endet der Prozess dabei (SIGSEGV), verlässt der Thread den Ring 3 über OnExit.
     /// </summary>
-    private static void DeliverSignals(Bridge me, UserFrame* frame, long number, ulong a2, ulong a3, long result)
+    private static void DeliverSignals(Bridge me, UserFrame* frame, in SyscallArgs call, long result, long takenBefore)
     {
         LinuxUserProcess process = me.Process;
         if (!process.SignalWaiting && result != -LinuxSignalFrame.EPIPE && result != -LinuxSyscalls.EINTR)
@@ -918,7 +912,7 @@ internal static unsafe class CosmosLinuxRun
 
         LinuxUserRegs regs = ToRegs(frame);
         LinuxSignalFrame.AfterSyscall(process, ref regs, new Span<byte>((byte*)frame - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize),
-            number, a2, a3, result);
+            call, result, takenBefore);
         FromRegs(frame, regs);
     }
 
@@ -932,8 +926,14 @@ internal static unsafe class CosmosLinuxRun
             return;
         }
 
+        if (LinuxSignalFrame.NonCanonicalStack(regs))
+        {
+            me.Process.ForceBus();
+            return;
+        }
+
         FromRegs(frame, regs);
-        DeliverSignals(me, frame, -1, 0, 0, 0);
+        DeliverSignals(me, frame, new SyscallArgs { Number = -1 }, 0, 0);
     }
 
     private static LinuxUserRegs ToRegs(UserFrame* f) => new()

@@ -511,6 +511,18 @@ public sealed class LinuxThreadsTests
         Rdx = 0xd8, Rax = 0, Rcx = 0x400123, Rsp = f.Mem + 12 * Page + 8, Rip = 0x400123, Rflags = 0x646, // mit DF
     };
 
+    // Wie die Brücke: Argumente aus den Registern beim Eintritt (LinuxUserRegs.ToSyscallArgs), Signalzähler davor.
+    private static void After(Fixture f, ref LinuxUserRegs r, byte[] fpu, long number, ulong rsi = 0, ulong rdx = 0, ulong r10 = 0,
+        long result = 0, long? takenBefore = null)
+    {
+        LinuxUserRegs entry = r;
+        entry.Rax = unchecked((ulong)number);
+        entry.Rsi = rsi;
+        entry.Rdx = rdx;
+        entry.R10 = r10;
+        LinuxSignalFrame.AfterSyscall(f.P, ref r, fpu, entry.ToSyscallArgs(), result, takenBefore ?? f.P.SignalsTaken);
+    }
+
     private static byte[] Fpu(uint mxcsr)
     {
         var fpu = new byte[512];
@@ -540,7 +552,7 @@ public sealed class LinuxThreadsTests
         LinuxUserRegs before = r;
         byte[] fpu = Fpu(0x1FA0);
         byte[] fpuBefore = (byte[])fpu.Clone();
-        LinuxSignalFrame.AfterSyscall(f.P, ref r, fpu, LinuxSyscalls.Kill, 0, 0, 0);
+        After(f, ref r, fpu, LinuxSyscalls.Kill, rsi: 0, r10: 0, result: 0);
 
         Assert.AreEqual(HandlerAddr, r.Rip);
         Assert.AreEqual(10UL, r.Rdi);
@@ -581,7 +593,7 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
         LinuxUserRegs r = Regs(f);
         r.Rax = unchecked((ulong)-LinuxSyscalls.EINTR);
-        LinuxSignalFrame.AfterSyscall(f.P, ref r, Fpu(0x1F80), 0, 0, 0, -LinuxSyscalls.EINTR);
+        After(f, ref r, Fpu(0x1F80), 0, rsi: 0, r10: 0, result: -LinuxSyscalls.EINTR);
         ulong uc = r.Rdx;
         Assert.AreEqual(0x400121UL, Read64(f, uc + 40 + 128), "RIP auf syscall zurück");
         Assert.AreEqual(0UL, Read64(f, uc + 40 + 104), "rax = Nummer von read");
@@ -591,7 +603,7 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 12));
         LinuxUserRegs q = Regs(f);
         q.Rax = unchecked((ulong)-LinuxSyscalls.EINTR);
-        LinuxSignalFrame.AfterSyscall(f.P, ref q, Fpu(0x1F80), 0, 0, 0, -LinuxSyscalls.EINTR);
+        After(f, ref q, Fpu(0x1F80), 0, rsi: 0, r10: 0, result: -LinuxSyscalls.EINTR);
         Assert.AreEqual(HandlerAddr + 0x10, q.Rip);
         Assert.AreEqual(0x400123UL, Read64(f, q.Rdx + 40 + 128), "ohne SA_RESTART kein Neustart");
         Assert.AreEqual(unchecked((ulong)-LinuxSyscalls.EINTR), Read64(f, q.Rdx + 40 + 104));
@@ -608,16 +620,50 @@ public sealed class LinuxThreadsTests
         var f = new Fixture();
         SetAction(f, 13, HandlerAddr, 0);
         LinuxUserRegs r = Regs(f);
-        LinuxSignalFrame.AfterSyscall(f.P, ref r, Fpu(0x1F80), 1, 0, 0, -32);
+        After(f, ref r, Fpu(0x1F80), 1, rsi: 0, r10: 0, result: -32);
         Assert.AreEqual(HandlerAddr, r.Rip);
         Assert.AreEqual(13UL, r.Rdi);
 
         var g = new Fixture();
         LinuxUserRegs s = Regs(g);
-        LinuxSignalFrame.AfterSyscall(g.P, ref s, Fpu(0x1F80), 46, 0x4000, 0, -32);
+        // sendmsg(fd, msg, flags): flags in rdx; ein msg-Zeiger mit Bit 0x4000 in rsi zählt nicht (Review V18 P2).
+        After(g, ref s, Fpu(0x1F80), 46, rsi: 0x7FFF_4000, rdx: 0x4000, result: -32);
         Assert.IsNull(g.P.ExitCode, "sendmsg mit MSG_NOSIGNAL");
-        LinuxSignalFrame.AfterSyscall(g.P, ref s, Fpu(0x1F80), 1, 0, 0, -32);
+        // sendto(fd, buf, len, flags): flags in r10; eine Länge mit Bit 0x4000 in rdx zählt nicht.
+        After(g, ref s, Fpu(0x1F80), 44, rsi: 0x7FFF_4000, rdx: 0x4000, r10: 0x4000, result: -32);
+        Assert.IsNull(g.P.ExitCode, "sendto mit MSG_NOSIGNAL");
+        var h = new Fixture();
+        LinuxUserRegs t = Regs(h);
+        After(h, ref t, Fpu(0x1F80), 46, rsi: 0x7FFF_4000, rdx: 0, result: -32);
+        Assert.AreEqual(13, h.P.TerminatedBySignal, "sendmsg ohne MSG_NOSIGNAL, auch wenn rsi das Bit trägt");
+        var k = new Fixture();
+        LinuxUserRegs u = Regs(k);
+        After(k, ref u, Fpu(0x1F80), 44, rsi: 0x7FFF_4000, rdx: 0x4000, r10: 0, result: -32);
+        Assert.AreEqual(13, k.P.TerminatedBySignal, "sendto ohne MSG_NOSIGNAL, auch wenn len das Bit trägt");
+        After(g, ref s, Fpu(0x1F80), 1, rsi: 0, r10: 0, result: -32);
         Assert.AreEqual(13, g.P.TerminatedBySignal, "SIG_DFL beendet");
+    }
+
+    [TestMethod]
+    public void EintrOhneSignalStartetNichtNeuNurNachFremdGenommenemSignal()
+    {
+        // Review V18 P3: -EINTR ohne Signal (abgehängtes Terminal) darf read nicht zurückspulen, sonst dreht der Thread endlos.
+        var f = new Fixture();
+        LinuxUserRegs r = Regs(f);
+        r.Rax = unchecked((ulong)-LinuxSyscalls.EINTR);
+        After(f, ref r, Fpu(0x1F80), 0, result: -LinuxSyscalls.EINTR);
+        Assert.AreEqual(0x400123UL, r.Rip, "kein Neustart ohne Signal");
+        Assert.AreEqual(unchecked((ulong)-LinuxSyscalls.EINTR), r.Rax);
+
+        // Ein anderer Thread nahm während des Aufrufs das Signal: still neu starten wie Linux (ERESTARTSYS ohne Handler hier).
+        SetAction(f, 10, HandlerAddr, LinuxUserProcess.SaRestart);
+        long before = f.P.SignalsTaken;
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        Assert.IsTrue(f.P.TakeSignal(out _));
+        LinuxUserRegs q = Regs(f);
+        After(f, ref q, Fpu(0x1F80), 0, result: -LinuxSyscalls.EINTR, takenBefore: before);
+        Assert.AreEqual(0x400121UL, q.Rip, "RIP auf syscall zurück");
+        Assert.AreEqual(0UL, q.Rax, "rax = Nummer von read");
     }
 
     [TestMethod]
@@ -633,7 +679,7 @@ public sealed class LinuxThreadsTests
         SetAction(f, 12, HandlerAddr, LinuxUserProcess.SaOnstack | LinuxUserProcess.SaResethand);
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 12));
         LinuxUserRegs r = Regs(f);
-        LinuxSignalFrame.AfterSyscall(f.P, ref r, Fpu(0x1F80), LinuxSyscalls.Kill, 0, 0, 0);
+        After(f, ref r, Fpu(0x1F80), LinuxSyscalls.Kill, rsi: 0, r10: 0, result: 0);
         Assert.IsTrue(r.Rsp > f.Mem + 2 * Page && r.Rsp < f.Mem + 6 * Page, "Rahmen auf dem Alternativstack");
         Assert.AreEqual(2, f.P.Signals.AltFlags, "abgeschaltet bis rt_sigreturn");
         Assert.AreEqual(0UL, f.P.Signals.Handler[12], "SA_RESETHAND");
@@ -651,13 +697,19 @@ public sealed class LinuxThreadsTests
         SetAction(f, 10, HandlerAddr, 0, restorer: 0);
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
         LinuxUserRegs r = Regs(f);
-        LinuxSignalFrame.AfterSyscall(f.P, ref r, Fpu(0x1F80), LinuxSyscalls.Kill, 0, 0, 0);
+        After(f, ref r, Fpu(0x1F80), LinuxSyscalls.Kill, rsi: 0, r10: 0, result: 0);
         Assert.AreEqual(11, f.P.TerminatedBySignal);
 
         var g = new Fixture();
         LinuxUserRegs q = Regs(g);
         q.Rsp = 0x10; // kein Rahmen lesbar
         Assert.IsFalse(LinuxSignalFrame.Return(g.P, ref q, Fpu(0x1F80)));
+
+        // Review V18 P3: verbogener RSP im Rahmen. Nichtkanonisch: SIGBUS wie Linux; Kernelhälfte: kanonisch, UserMode.Prepare lehnt ab.
+        Assert.IsTrue(LinuxSignalFrame.NonCanonicalStack(new LinuxUserRegs { Rsp = 0x8000_0000_0000_0000 }));
+        Assert.IsTrue(LinuxSignalFrame.NonCanonicalStack(new LinuxUserRegs { Rsp = 0x0000_8000_0000_0000 }));
+        Assert.IsFalse(LinuxSignalFrame.NonCanonicalStack(new LinuxUserRegs { Rsp = 0xFFFF_8000_0000_1000 }));
+        Assert.IsFalse(LinuxSignalFrame.NonCanonicalStack(new LinuxUserRegs { Rsp = 0x0000_7FFF_FFFF_F000 }));
     }
 
     [TestMethod]

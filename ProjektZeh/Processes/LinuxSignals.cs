@@ -28,6 +28,12 @@ internal struct LinuxUserRegs
     public ulong Rsp { get; set; }
     public ulong Rip { get; set; }
     public ulong Rflags { get; set; }
+
+    /// <summary>Argumente eines syscall wie Linux x86-64 (rax; rdi, rsi, rdx, r10, r8, r9); Brücke und Tests nehmen dieselbe Zuordnung.</summary>
+    public readonly SyscallArgs ToSyscallArgs() => new()
+    {
+        Number = unchecked((long)Rax), A0 = Rdi, A1 = Rsi, A2 = Rdx, A3 = R10, A4 = R8, A5 = R9,
+    };
 }
 
 /// <summary>Ein Signal, das ein Thread jetzt anspringt: Handler und Flags im Augenblick der Zustellung, Maske davor, siginfo.</summary>
@@ -58,6 +64,12 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     private readonly int[] _infoCode = new int[65];
     private readonly int[] _infoPid = new int[65];
     private readonly int[] _infoStatus = new int[65];
+
+    // Zahl der genommenen Signale (TakeSignal), nur wachsend: die Brücke liest sie vor einem Aufruf, AfterSyscall erkennt daran, ob während
+    // des Aufrufs ein anderer Thread ein Signal nahm (dann ist ein -EINTR ohne eigenes Signal einer, den Linux still neu startet).
+    private long _signalsTaken;
+
+    public long SignalsTaken => Interlocked.Read(ref _signalsTaken);
 
     /// <summary>Unter _threadGate: als anhängig eintragen.</summary>
     private void Queue(int signal, int code, int senderPid, int status)
@@ -98,6 +110,7 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
                 }
 
                 Volatile.Write(ref _pendingSignals, _pendingSignals & ~bit);
+                Interlocked.Increment(ref _signalsTaken);
                 ulong flags = Signals.Flags[sig];
                 delivery = new LinuxSignalDelivery(sig, Signals.Handler[sig], flags, Signals.Restorer[sig], Signals.Blocked,
                     _infoCode[sig], _infoPid[sig], _infoStatus[sig]);
@@ -124,6 +137,9 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     /// mit SIGSEGV, auch wenn ein Handler gesetzt ist (der Stack, auf dem er liefe, ist ja kaputt).
     /// </summary>
     public void ForceSegv() => Terminate(11);
+
+    /// <summary>Nichtkanonischer Stapelzeiger nach rt_sigreturn: Linux lädt ihn, der erste Stapelzugriff ist #SS und endet mit SIGBUS.</summary>
+    public void ForceBus() => Terminate(7);
 
     /// <summary>rt_sigreturn: Maske aus dem Rahmen; ein jetzt freigegebenes Signal folgt seiner Aktion wie nach sigprocmask.</summary>
     public void RestoreBlocked(ulong blocked)
@@ -166,22 +182,25 @@ internal static class LinuxSignalFrame
     /// Nach einem Aufruf (rax hält schon das Ergebnis): SIGPIPE nach -EPIPE, dann alle wartenden Signale mit Handler, jedes mit eigenem Rahmen
     /// über dem vorigen (Linux stellt in der Schleife vor dem Rücksprung ebenso alle zu). <paramref name="number"/> -1: kein eigener Aufruf
     /// (Rücksprung nach vfork), dann kein Neustart und kein SIGPIPE. <paramref name="fpu"/> ist das fxsave-Abbild des Threads.
+    /// <paramref name="call"/> sind die Argumente des Aufrufs (<see cref="LinuxUserRegs.ToSyscallArgs"/> vor dem Aufruf),
+    /// <paramref name="takenBefore"/> der Stand von <see cref="LinuxUserProcess.SignalsTaken"/> davor.
     /// </summary>
-    public static void AfterSyscall(LinuxUserProcess p, ref LinuxUserRegs r, Span<byte> fpu, long number, ulong a2, ulong a3, long result)
+    public static void AfterSyscall(LinuxUserProcess p, ref LinuxUserRegs r, Span<byte> fpu, in SyscallArgs call, long result, long takenBefore)
     {
+        long number = call.Number;
         // Der Prozess endet (exit_group, kill, Abbruch): der Thread verlässt den Ring 3, kein Rahmen in einen Speicher, der gerade freigegeben wird.
         if (p.IsAborted)
         {
             return;
         }
 
-        if (result == -LinuxSignalFrame.EPIPE && RaisesSigpipe(number, a2, a3))
+        if (result == -LinuxSignalFrame.EPIPE && RaisesSigpipe(number, call))
         {
             p.RaiseSignal(13);
         }
 
         bool interrupted = result == -LinuxSyscalls.EINTR && number >= 0;
-        bool restart = interrupted && Restartable(number, a2, a3);
+        bool restart = interrupted && Restartable(number, call.A1, call.A3);
         bool first = true;
         for (int n = 0; n < 64 && p.TakeSignal(out LinuxSignalDelivery d); n++)
         {
@@ -204,7 +223,9 @@ internal static class LinuxSignalFrame
         }
 
         // Ein anderer Thread nahm das Signal, das diesen Aufruf unterbrach: Linux startet ihn dann still neu (ERESTARTSYS ohne Handler).
-        if (restart && first)
+        // Nur dann: Ein -EINTR ohne Signal (abgehängtes Terminal, abgebrochener Partner) bliebe sonst bestehen, und jeder Neustart
+        // gäbe sofort wieder -EINTR, eine Endlosschleife zwischen Ring 3 und Brücke.
+        if (restart && first && p.SignalsTaken != takenBefore)
         {
             Rewind(ref r, number);
         }
@@ -272,6 +293,17 @@ internal static class LinuxSignalFrame
         RestoreAltStack(p, f.Slice(UcStack, 24), r.Rsp);
         p.RestoreBlocked(U64(f, SigmaskOffset));
         return true;
+    }
+
+    /// <summary>
+    /// Nach <see cref="Return"/>: true, wenn der Handler einen nichtkanonischen RSP in den Rahmen schrieb (Bits 63 bis 47 nicht gleich).
+    /// Die Brücke beendet den Prozess dann wie Linux mit SIGBUS. Ein kanonischer RSP in der Kernelhälfte geht weiter an UserMode.Prepare,
+    /// das jede Rückkehr mit RSP ab 0x0000_8000_0000_0000 ablehnt (Ergebnis SIGSEGV, wie der Seitenfehler unter Linux).
+    /// </summary>
+    public static bool NonCanonicalStack(in LinuxUserRegs r)
+    {
+        ulong top = r.Rsp >> 47;
+        return top != 0 && top != 0x1FFFF;
     }
 
     /// <summary>Baut den Rahmen für <paramref name="d"/> und lenkt die Register auf den Handler; false, wenn der Stack den Rahmen nicht aufnimmt.</summary>
@@ -399,15 +431,16 @@ internal static class LinuxSignalFrame
         _ => false,
     };
 
-    // futex(uaddr, op, val, timeout): rsi = op, r10 = timeout; die Brücke reicht a.A1 und a.A3 als a2/a3 weiter.
+    // futex(uaddr, op, val, timeout): rsi = op (A1), r10 = timeout (A3).
     private static bool FutexWaitsForever(ulong op, ulong timeout) => ((op & 127) is 0 or 9) && timeout == 0;
 
-    // write, writev, sendto/sendmsg ohne MSG_NOSIGNAL (0x4000): flags stehen bei sendto in r10 (a3), bei sendmsg in rdx (a2).
-    private static bool RaisesSigpipe(long number, ulong a2, ulong a3) => number switch
+    // write, writev, sendto/sendmsg ohne MSG_NOSIGNAL (0x4000): flags stehen bei sendto(fd, buf, len, flags) in r10 (A3),
+    // bei sendmsg(fd, msg, flags) in rdx (A2).
+    private static bool RaisesSigpipe(long number, in SyscallArgs call) => number switch
     {
         1 or 18 or 20 => true,
-        44 => (a3 & 0x4000) == 0,
-        46 => (a2 & 0x4000) == 0,
+        44 => (call.A3 & 0x4000) == 0,
+        46 => (call.A2 & 0x4000) == 0,
         _ => false,
     };
 
