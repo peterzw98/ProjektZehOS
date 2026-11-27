@@ -306,6 +306,9 @@ internal static partial class LinuxSyscalls
     /// Änderungen an der Datei sieht die Abbildung nicht. MAP_SHARED gibt es deshalb nur ohne PROT_WRITE (Ladybird bildet ICU-Daten
     /// so ab); beschreibbar geteilt bleibt -ENODEV, weil nichts in die Datei zurückfließen würde.
     /// Ausnahme seit V17: Eine memfd (<see cref="LinuxMemFile"/>) bildet MAP_SHARED ihre eigenen Frames ab, auch beschreibbar.
+    /// V30: Reguläre Dateien des Speichers (<see cref="ILinuxPageSourceFile"/>) werden nicht mehr kopiert: Der Bereich bekommt gleich seinen
+    /// Schutz, jede Seite liest der Seitenfehler (oder ein Kernelzugriff) aus der Datei. Noch nicht berührte Seiten sehen damit spätere Änderungen
+    /// an der Datei wie bei Linux; die Kopie oben bleibt für andere Dateiarten (/proc, /dev/zero).
     /// V25: MAP_FIXED mit Datei (der dynamische Lader von musl bildet jedes Segment einer Bibliothek so in seine Reservierung ab, auch
     /// mit PROT_EXEC). Der alte Bereich wird ersetzt, bevor feststeht, ob die Kopie gelingt; scheitert sie, bleibt an der Stelle ein Loch.
     /// Das tut Linux ebenso (mmap_region gibt den Altbestand vor dem Neuabbilden frei). Ausnahme: MAP_SHARED|MAP_FIXED einer memfd bleibt -EINVAL.
@@ -371,6 +374,26 @@ internal static partial class LinuxSyscalls
             if (d is not ILinuxFile file || file.IsDirectory)
             {
                 return -ENODEV; // Terminal und Verzeichnisse lassen sich unter Linux auch nicht abbilden
+            }
+
+            // V30: Reguläre Dateien werden nicht mehr kopiert; jede Seite kommt beim ersten Zugriff aus der Datei (die Abbildung hält sie
+            // offen). Ladybird bildet so Bibliotheken und Daten von zusammen weit über 100 MB ab, von denen es nur einen Teil berührt.
+            if (p is ILinuxFileMapping lazy && file is ILinuxPageSourceFile sourceFile)
+            {
+                long readable = ProbeReadable(file, (long)offset);
+                if (readable < 0)
+                {
+                    return readable;
+                }
+
+                ILinuxPageSource? source = sourceFile.OpenPageSource();
+                if (source == null)
+                {
+                    return -EBADF;
+                }
+
+                ulong placed = lazy.MapFilePrivate(addr, fixedAt, flen, prot, source, (long)offset);
+                return placed == 0 ? -ENOMEM : unchecked((long)placed);
             }
 
             // Vor dem Ersetzen prüfen, was Linux vorab prüft (Datei zum Lesen offen): Ein O_WRONLY-Deskriptor lässt den Altbestand stehen.

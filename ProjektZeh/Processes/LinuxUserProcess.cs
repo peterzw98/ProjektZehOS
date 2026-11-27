@@ -64,6 +64,9 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
     private readonly IUserPages _pages;
     private readonly AddressSpaceMap _map = new(ElfLoader.MinAddress, ElfLoader.UserEnd);
     private readonly Dictionary<ulong, ulong> _frames = new();
+
+    // V30: Bereiche, deren Seiten beim ersten Zugriff aus einer Datei kommen (PT_LOAD, mmap MAP_PRIVATE); unter _memGate wie _frames.
+    private readonly LinuxFileExtents _fileExtents = new();
     private readonly ILinuxDescriptor _terminal;
     private readonly ILinuxHost? _host;
     private readonly ILinuxDescriptor?[] _descriptors = new ILinuxDescriptor?[MaxDescriptors];
@@ -752,7 +755,10 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
     /// Belegt die Bereiche des Abbilds und füllt die Seiten mit Dateiinhalt und den vorbereiteten Stack; alle übrigen Seiten
     /// (.bss jenseits der Dateibytes, der Rest des Stacks) kommen genullt beim ersten Zugriff.
     /// </summary>
-    public ResultErr Load(UserImage image, ReadOnlySpan<byte> elf)
+    public ResultErr Load(UserImage image, ReadOnlySpan<byte> elf) => LoadCore(image, elf, lazyProgram: false);
+
+    // V30: Mit lazyProgram füllt Load nur Stack und Interpreter; die Programmsegmente kommen aus _fileExtents (Populate).
+    private ResultErr LoadCore(UserImage image, ReadOnlySpan<byte> elf, bool lazyProgram)
     {
         ArgumentNullException.ThrowIfNull(image);
         if (_vforkOf != null)
@@ -784,7 +790,8 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
                 bool content = page >= stackContent && page < image.StackTop;
                 foreach (UserSegment segment in image.Segments)
                 {
-                    content |= segment.FileSize > 0 && page < segment.Address + segment.FileSize && page + Page > segment.Address;
+                    content |= segment.FileSize > 0 && (!lazyProgram || segment.Interpreter)
+                        && page < segment.Address + segment.FileSize && page + Page > segment.Address;
                 }
 
                 if (!content)
@@ -798,7 +805,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
                     return ResultErr.CreateFailure(ResultCode.Failure, "Kein Speicher für das Programmabbild.");
                 }
 
-                image.FillPage(elf, page, _pages.Frame(frame));
+                image.FillPage(elf, page, _pages.Frame(frame), skipProgram: lazyProgram);
                 if (!_pages.Map(page, frame, region.Access))
                 {
                     _pages.FreeFrame(frame);
@@ -1167,6 +1174,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             }
 
             DropAllRegions();
+            _fileExtents.Clear();
         }
     }
 
@@ -1264,6 +1272,14 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             return 0;
         }
 
+        // V30: Seiten aus einer Datei werden jetzt gelesen, vor dem Abbilden: Kein anderer Thread sieht die Seite halb gefüllt. Gelesen
+        // wird unter _memGate ohne FileGate (ILinuxPageSource); die Platte nimmt darin StorageLock. Ein Lesefehler endet wie ohne Speicher.
+        if (_fileExtents.Covers(page) && !_fileExtents.Fill(page, _pages.Frame(frame)))
+        {
+            _pages.FreeFrame(frame);
+            return 0;
+        }
+
         if (!_pages.Map(page, frame, access))
         {
             _pages.FreeFrame(frame);
@@ -1301,6 +1317,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
 
         // V17: Geteilte Bereiche enden mit der Karte; eine gesperrte Seite (unten) behält ihren Verweis in _shared bis Destroy.
         TrimRegions(start, end);
+        _fileExtents.Cut(start, end); // V30: Ein neuer Bereich an derselben Stelle liest nicht mehr aus der alten Datei
 
         // Eine solche Seite bleibt als gesperrter Bereich (None) belegt (V3-Review P3 a): Sonst legte ein späteres mmap oder brk
         // dort einen neuen Bereich an, und Programm wie Kernel sähen den alten, nicht genullten Frame. Die Sperre gilt nur für die

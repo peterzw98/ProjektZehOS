@@ -134,6 +134,9 @@ internal sealed partial class LinuxUserProcess
                 child._regions.Add(new SharedRegion(r.Mem, r.Start, r.End, r.FirstIndex, r.Writable));
             }
 
+            // V30: Seiten aus Dateien, die die Eltern noch nicht gelesen haben, liest das Kind selbst beim ersten Zugriff.
+            _fileExtents.CopyTo(child._fileExtents);
+
             foreach (System.Collections.Generic.KeyValuePair<ulong, ulong> held in _frames)
             {
                 if (_shared.ContainsKey(held.Key))
