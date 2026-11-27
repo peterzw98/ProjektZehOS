@@ -4,13 +4,20 @@
 #
 # Nutzung: scripts/ladybird-demo-run.sh [-b <buendel.tar.gz>] [-o <ausgabeordner>] [-u <url>] [-s <sekunden-verzoegerung>]
 #                                       [--smp N] [--timeout S] [--skip-cosmos] [--skip-build] [--iso <iso>] [--disk <qcow2>]
-#                                       [--page <name>] [--accel kvm|tcg] [--wait-scale F] [--memory 1G]
+#                                       [--page <name>] [--accel kvm|tcg] [--wait-scale F] [--memory 2G]
 # Ausgabe: <ausgabeordner>/shot.png (Standard ~/ladybird-demo-out/<zeitstempel>), run.log (alles, mit Zeitstempeln), times.txt,
-#          dazu die Dateien des Gastskripts (serial.log, program-out.txt). Exit 0 nur mit PNG und Hub-Status "exit 0".
+#          dazu die Dateien des Gastskripts (serial.log, program-out.txt). Exit 0 nur mit PNG, Hub-Status "exit 0" und nicht weissem
+#          Bild (scripts/png-nonwhite.py: mindestens 0,1 % Pixel mit einem Kanal < 250); weisses Bild: Exit 1.
 #          Kernel-Halt im Gast (KERNEL PANIC, "System halting", [FAILFAST]): sofortiger Abbruch statt --timeout, Exit 3.
+# -o auf einen vorhandenen, nicht leeren Ordner: Lauf geht in einen neuen Unterordner <ausgabeordner>/<zeitstempel>; nichts wird geleert.
 # Voraussetzungen: dotnet (DOTNET_ROOT, Standard ~/.dotnet), KVM, qemu-img, mtools, Netz nur fuer den Cosmos-Quellbau.
-# Ein Gast gleichzeitig: bei laufendem qemu bricht das Skript ab (QEMU_OK=1 erzwingt den Start).
-# --skip-cosmos: vorhandene Werkzeuge unter .tools/cosmos-tools/<VERSION> nutzen; --skip-build: --iso verwenden; --disk: fertige Platte.
+# Ein Gast gleichzeitig: laeuft schon ein qemu-system-* (auch in einem anderen Slot), bricht das Skript mit dessen PID ab.
+#   QEMU_OK=1 startet trotzdem (nur, wenn der andere Gast abgesprochen ist; Messungen sind dann nicht gueltig).
+# --timeout: Sekunden vom Programmstart bis LINUXRUN END (Standard 600; Vorfuehrung: 180). Dazu kommen Boot/Anmeldung und Herunterfahren.
+# Strg+C beendet den Lauf: das Gastskript beendet qemu im finally, das Skript endet mit Exit 130.
+# --skip-cosmos: vorhandene Werkzeuge unter .tools/cosmos-tools/<VERSION> nutzen; --skip-build: --iso verwenden.
+# --disk: fertige Platte; der Gast schreibt nur in eine Kopie (<ausgabeordner>/guest/disk.qcow2), die Vorlage bleibt unveraendert. Eine
+#   schon benutzte Kopie (.../guest/disk.qcow2) wird abgelehnt: /tmp, Caches und Socketdateien vom Vorlauf (EADDRINUSE, 4096-Eintraege-Grenze).
 # --page: Demoseite aus experiments/Ladybird.Probe/pages (beim Plattenbau samt PNG-Bildern und fonts/ nach /share/zehos-probe gelegt).
 # --memory: Gastspeicher (QEMU -m, Standard 2G; mit 512M haelt der Kernel bei Ladybird aus Speichermangel).
 # --accel tcg: ohne KVM (feste Wartezeiten x10, --wait-scale aendert den Faktor); --timeout dann entsprechend hoeher setzen.
@@ -22,7 +29,7 @@ URL=file:///share/zehos-probe/static.html; DELAY=30; SMP=1; TIMEOUT=600; SKIPC=0
 while [ $# -gt 0 ]; do case $1 in
   -b) BUNDLE=$2; shift 2;; -o) OUT=$2; shift 2;; -u) URL=$2; shift 2;; -s) DELAY=$2; shift 2;;
   --smp) SMP=$2; shift 2;; --timeout) TIMEOUT=$2; shift 2;; --skip-cosmos) SKIPC=1; shift;; --skip-build) SKIPB=1; shift;;
-  --iso) ISO=$2; shift 2;; --disk) DISK=$2; shift 2;; -h|--help) sed -n 2,16p "$0"; exit 0;;
+  --iso) ISO=$2; shift 2;; --disk) DISK=$2; shift 2;; -h|--help) sed -n '2,/^set -u$/p' "$0" | sed '$d'; exit 0;;
   --page)
     case ${2-} in
       ""|[!a-z0-9]*|*[!a-z0-9-]*)
@@ -33,6 +40,12 @@ while [ $# -gt 0 ]; do case $1 in
   --accel) ACCEL=$2; shift 2;; --wait-scale) WSCALE=$2; shift 2;; --memory) MEM=$2; shift 2;;
   *) echo "unbekannte Option $1" >&2; exit 2;; esac; done
 [ -n "$ISO" ] && SKIPB=1
+case $DISK in */guest/disk.qcow2) echo "--disk $DISK ist die Kopie eines frueheren Laufs; die Vorlage (lb.qcow2) angeben" >&2; exit 2;; esac
+# Wiederholung mit gleichem -o: den ersten Lauf (run.log, lb.qcow2, guest/) nie leeren oder ueberschreiben, sondern daneben ablegen.
+if [ -d "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
+  SUB=$OUT/$(date +%Y%m%d-%H%M%S); [ -e "$SUB" ] && SUB=$SUB-$$
+  echo "Ausgabeordner $OUT nicht leer, neuer Unterordner $SUB"; OUT=$SUB
+fi
 mkdir -p "$OUT" || exit 2; LOG=$OUT/run.log; : > "$LOG"; : > "$OUT/times.txt"
 T0=$(date +%s)
 step() { echo "[$(date +%H:%M:%S) +$(( $(date +%s)-T0 ))s] $*" | tee -a "$LOG"; }
@@ -40,7 +53,14 @@ timed() { local n=$1; shift; local s=$(date +%s); step "BEGIN $n"; "$@" >> "$LOG
   echo "$n $(( $(date +%s)-s )) s rc=$rc" | tee -a "$OUT/times.txt"; step "END $n rc=$rc"; return $rc; }
 die() { step "FEHLER: $*"; echo "Log: $LOG"; exit 1; }
 [ -z "$DISK" ] && { [ -f "$BUNDLE" ] || die "Buendel fehlt (-b)"; }
-if pgrep qemu >/dev/null 2>&1; then [ "${QEMU_OK:-0}" = 1 ] || die "ein qemu laeuft (ein Gast gleichzeitig); QEMU_OK=1 erzwingt"; fi
+# Strg+C: Python und qemu (gleiche Prozessgruppe) bekommen SIGINT, das Gastskript beendet qemu im finally; hier nur den Abbruch vermerken.
+trap 'step "ABGEBROCHEN (Strg+C)"; exit 130' INT TERM
+# Nur echte Gaeste zaehlen (qemu-img, Shells mit "qemu" im Befehl nicht); pgrep sieht alle Benutzer, also auch Gaeste anderer Slots.
+QPIDS=$(pgrep -d ' ' '^qemu-system-' 2>/dev/null)
+if [ -n "$QPIDS" ]; then
+  [ "${QEMU_OK:-0}" = 1 ] || die "qemu laeuft schon (PID $QPIDS; ein Gast gleichzeitig). Gast beenden oder, wenn abgesprochen, QEMU_OK=1 setzen"
+  step "QEMU_OK=1: starte neben qemu PID $QPIDS"
+fi
 export DOTNET_ROOT=${DOTNET_ROOT:-$HOME/.dotnet} DOTNET_CLI_USE_MSBUILD_SERVER=0 MSBUILDDISABLENODEREUSE=1
 export PATH=$DOTNET_ROOT:$PATH
 cd "$R" || exit 2
@@ -90,8 +110,14 @@ if [ "$RC" = 3 ]; then
   echo "gesamt $(( $(date +%s)-T0 )) s (Kernel-Halt)" >> "$OUT/times.txt"
   echo "KERNEL-HALT (Gast $OUT/guest/serial.log, Log $LOG)"; exit 3
 fi
-[ -s "$OUT/shot.png" ] && file "$OUT/shot.png" | tee -a "$LOG" | sed 's/.*: //' || step "kein Screenshot"
+PIX=1
+if [ -s "$OUT/shot.png" ]; then
+  file "$OUT/shot.png" | tee -a "$LOG" | sed 's/.*: //'
+  # Ladybird liefert bei fehlendem Decoder oder zu kurzer Wartezeit ein weisses Bild mit Exit 0: das ist kein Erfolg.
+  python3 -I "$R/scripts/png-nonwhite.py" "$OUT/shot.png" 2>&1 | tee -a "$LOG" "$OUT/times.txt"; PIX=${PIPESTATUS[0]}
+  [ "$PIX" = 0 ] || step "BILD WEISS oder unlesbar (png-nonwhite rc=$PIX)"
+else step "kein Screenshot"; fi
 step "gesamt $(( $(date +%s)-T0 )) s, Gastlauf rc=$RC"
 echo "gesamt $(( $(date +%s)-T0 )) s" >> "$OUT/times.txt"
-if [ "$RC" = 0 ] && [ -s "$OUT/shot.png" ]; then echo "OK: $OUT/shot.png"; exit 0; fi
+if [ "$RC" = 0 ] && [ "$PIX" = 0 ]; then echo "OK: $OUT/shot.png"; exit 0; fi
 echo "NICHT OK (Log $LOG, Gast $OUT/guest/serial.log, program-out.txt)"; exit 1
