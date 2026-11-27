@@ -1,0 +1,28 @@
+FIONBIO Pipe an: ret=0 errno=0
+Pipe nonblock lesen=1 schreiben=0
+read leere Pipe: ret=-1 errno=11
+FIONREAD leer: ret=0 errno=0 n=0
+FIONREAD Lesende: ret=0 errno=0 n=7
+FIONREAD Schreibende: ret=0 errno=0 n=7
+TIOCINQ Pipe: ret=0 errno=0
+TIOCINQ n=4
+FIONBIO Pipe aus: ret=0 errno=0
+Pipe nonblock lesen=0
+FIONREAD Zeiger ungueltig: ret=-1 errno=14
+FIONBIO Socket an: ret=0 errno=0
+Socket nonblock=1 gegenseite=0
+recv ohne Daten: ret=-1 errno=11
+FIONREAD Stream: ret=0 errno=0 n=5
+FIONREAD Stream Gegenseite: ret=0 errno=0 n=0
+FIONREAD Stream Rest: ret=0 errno=0 n=3
+FIONREAD Seqpacket: ret=0 errno=0 n=7
+FIONREAD Dgram: ret=0 errno=0 n=3
+FIONREAD unverbunden: ret=0 errno=0 n=0
+FIONREAD lauschend: ret=-1 errno=22 n=-1
+FIONBIO eventfd: ret=0 errno=0
+read eventfd leer: ret=-1 errno=11
+FIONREAD eventfd: ret=-1 errno=25 n=-1
+FIONREAD inotify: ret=0 errno=0 n=16
+FIONBIO fd ungueltig: ret=-1 errno=9
+FIONBIO Zeiger ungueltig: ret=-1 errno=14
+fertig

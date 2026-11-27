@@ -31,7 +31,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 273 | `set_robust_list` | `0` (ohne Wirkung) |
 | 111, 121, 124 | `getpgrp`, `getpgid`, `getsid` | Prozess-ID (V3 raw: allein in Gruppe und Sitzung, führt beide wie ein Programm in einem neuen pty); andere und negative PID `-ESRCH` |
 | 109, 112 | `setpgid`, `setsid` | `-EPERM` wie bei Linux für Sitzungs- bzw. Gruppenführer (auch ohne Änderung); `setpgid` mit fremder PID `-ESRCH`, negativer Gruppe `-EINVAL` |
-| 16 | `ioctl` | fd 0–2 am Fenster sind ein Terminal (V3 termios): `TCGETS`, `TCSETS`/`TCSETSW`/`TCSETSF`, `TIOCGWINSZ`, `TIOCSWINSZ`, `TIOCGPGRP`, `TIOCSPGRP`; sonst `-ENOTTY` für gültige fd, `-EBADF` für ungültige |
+| 16 | `ioctl` | fd 0–2 am Fenster sind ein Terminal (V3 termios): `TCGETS`, `TCSETS`/`TCSETSW`/`TCSETSF`, `TIOCGWINSZ`, `TIOCSWINSZ`, `TIOCGPGRP`, `TIOCSPGRP`; V33: `FIONBIO` auf jedem fd setzt oder löscht `O_NONBLOCK` wie `F_SETFL` (Wirkung bei Pipe, Socket, eventfd, timerfd, inotify; Datei und Terminal ohne Wirkung), `FIONREAD`/`TIOCINQ` liefert ungelesene Bytes für Pipe-Enden (beide), Unix- und Inet-Sockets (Stream und Seqpacket alle, Datagramm das vorderste, lauschend `-EINVAL`) und inotify; eventfd und timerfd `-ENOTTY` wie Linux, Terminal und Datei `-ENOTTY` (Abweichung); sonst `-ENOTTY` für gültige fd, `-EBADF` für ungültige |
 | 228 | `clock_gettime` | Uhren 0-7; 0 und 5 Wanduhr, übrige monoton (CPU-Zeituhren 2, 3 liefern die CPU-Zeit des Prozesses/Threads aus den Scheduler-Ticks (V29c): Auflösung ein Tick (10 ms), ein Thread, der zwischen zwei Ticks nur kurz läuft, liest 0; Kernel- und Benutzerzeit werden nicht getrennt (`getrusage` und `/proc/<pid>/stat`: utime, stime 0)); Uhren 8, 9, 11 (BOOTTIME-Familie) `-EINVAL` (Abweichung); sonst `-EINVAL`. Quelle `ILinuxHost` (optional), sonst DateTime/Stopwatch |
 | 318 | `getrandom` | Flags nur GRND_NONBLOCK/RANDOM/INSECURE (RANDOM+INSECURE `-EINVAL`); füllt in 4-KiB-Stücken aus `ILinuxHost.TryFillRandom`; ohne Host `-ENOSYS` (nie schwacher Zufall), Quelle nicht bereit `-EAGAIN`; Abbruch je Stück wie `write` (#735) |
 | 63 | `uname` | Linux / zehos / 6.1.0-zehos / x86_64 |
@@ -348,7 +348,7 @@ Ereignisschleife aus anderen Threads über eine Pipe.
 
 Grenzen: Ein `write` über 4096 Bytes mit `O_NONBLOCK` wird in Stücken zu 4096 Bytes geschrieben; ist weniger als ein Stück frei, kommt `-EAGAIN` (Linux schriebe
 den freien Rest). Schließt ein Thread das Schreibende, während ein anderer noch hineinschreibt, sieht der Leser schon EOF (Linux hält die Datei bis zum Ende
-des Aufrufs). `ioctl(FIONREAD)` und `select` gibt es nicht (`ppoll` seit V19, `epoll` seit V22). Die Pipe-Sperre ist eine Blattsperre: Dateisperre vor Pipe-Sperre, darin weder
+des Aufrufs). `ioctl(FIONREAD)` seit V33; `select` gibt es nicht (`ppoll` seit V19, `epoll` seit V22). Die Pipe-Sperre ist eine Blattsperre: Dateisperre vor Pipe-Sperre, darin weder
 Benutzerspeicher noch eine andere Sperre. `read` auf dem Leseende prüft den Puffer vor dem Entnehmen; gibt ein anderer Thread ihn danach per `munmap` oder
 `mprotect` frei, scheitert das Zurückschreiben mit `-EFAULT`, und die entnommenen Bytes sind verloren (Abweichung: Linux rückt in `pipe_read` erst nach erfolgreichem Kopieren vor und behält sie).
 
@@ -532,7 +532,7 @@ fontconfig fragt statfs, Ladybird beobachtet die Zeitzone mit inotify.
 | 5 | `fstat` | eventfd und inotify: Modus 0600 ohne Dateityp (anon_inode), Größe 0 |
 
 Grenzen: ZehOS meldet **keine Dateiänderungen**; inotify erzeugt außer `IN_IGNORED` nach `inotify_rm_watch` nie ein Ereignis (Ladybird merkt eine geänderte
-Zeitzone also erst beim Neustart). `IN_ONESHOT` und `IN_EXCL_UNLINK` werden angenommen und ohne Wirkung gespeichert; `ioctl(FIONREAD)` fehlt. statfs meldet
+Zeitzone also erst beim Neustart). `IN_ONESHOT` und `IN_EXCL_UNLINK` werden angenommen und ohne Wirkung gespeichert; `ioctl(FIONREAD)` seit V33. statfs meldet
 für den ganzen Baum dieselben Werte, auch für das virtuelle `/dev`; der freie Platz der Platte selbst fließt nicht ein. `select` und `signalfd` fehlen
 weiter (`epoll` seit V22). Die Sperren von eventfd und inotify sind Blattsperren wie die Pipe-Sperre (Dateisperre davor möglich); Lesen und Warten laufen ohne Dateisperre.
 

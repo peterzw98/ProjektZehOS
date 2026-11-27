@@ -30,6 +30,9 @@ internal static partial class LinuxSyscalls
     public const ulong TCGETS = 0x5401, TCSETS = 0x5402, TCSETSW = 0x5403, TCSETSF = 0x5404, TIOCGPGRP = 0x540F,
         TIOCSPGRP = 0x5410, TIOCGWINSZ = 0x5413, TIOCSWINSZ = 0x5414;
 
+    // V33: FIONREAD ist dieselbe Nummer wie TIOCINQ und SIOCINQ; FIONBIO setzt oder löscht O_NONBLOCK.
+    public const ulong FIONREAD = 0x541B, FIONBIO = 0x5421;
+
     public const long ESRCH = 3;
 
     // asm-generic/termbits.h: c_iflag ICRNL, c_lflag ISIG und ICANON
@@ -71,6 +74,21 @@ internal static partial class LinuxSyscalls
         if (d is null)
         {
             return -EBADF;
+        }
+
+        if (request == FIONBIO)
+        {
+            return DoIoctlNonBlocking(p, d, arg);
+        }
+
+        if (request == FIONREAD && ReadableBytes(d) is long readable)
+        {
+            if (readable < 0)
+            {
+                return readable;
+            }
+
+            return p.Memory.TryWrite(arg, BitConverter.GetBytes((int)readable)) ? 0 : -EFAULT;
         }
 
         if (d is not ILinuxTerminal tty || !tty.IsTerminal)
@@ -150,6 +168,39 @@ internal static partial class LinuxSyscalls
                 return -ENOTTY;
         }
     }
+
+    /// <summary>
+    /// ioctl FIONBIO (V33): Linux behandelt es für jede Datei vor dem Treiber (do_vfs_ioctl) und setzt O_NONBLOCK der offenen Datei wie
+    /// F_SETFL, gesteuert vom int an <paramref name="arg"/> (ungleich 0 setzt). LibCore schaltet so seine IPC-Sockets um. Wirkung haben nur
+    /// Deskriptoren mit Statusflags (Pipe, Socket, eventfd, timerfd, inotify); auf den übrigen wird es wie F_SETFL still angenommen.
+    /// </summary>
+    private static long DoIoctlNonBlocking(ILinuxProcess p, ILinuxDescriptor d, ulong arg)
+    {
+        var v = new byte[4];
+        if (!p.Memory.TryRead(arg, v))
+        {
+            return -EFAULT;
+        }
+
+        if (d is ILinuxStatusFlags flagged)
+        {
+            flagged.NonBlocking = BitConverter.ToInt32(v, 0) != 0;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// ioctl FIONREAD (V33): ungelesene Bytes für Pipe-Enden (beide, wie Linux' pipe_ioctl), Sockets und inotify; null, wenn der
+    /// Deskriptor es nicht kennt. eventfd und timerfd kennen es bei Linux nicht (-ENOTTY), Terminals und Dateien hier noch nicht.
+    /// </summary>
+    private static long? ReadableBytes(ILinuxDescriptor d) => d switch
+    {
+        LinuxPipeEnd pipe => pipe.Pipe.Buffered,
+        LinuxUnixSocket socket => socket.ReadableBytes(),
+        LinuxInotify inotify => inotify.PendingBytes,
+        _ => null,
+    };
 
     /// <summary>
     /// Prozessgruppe und Sitzung (V3 raw): Ein Programm aus <c>run</c> ist allein in seiner Gruppe und Sitzung und führt beide
