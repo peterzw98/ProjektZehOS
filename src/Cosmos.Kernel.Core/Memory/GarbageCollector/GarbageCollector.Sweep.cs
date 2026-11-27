@@ -171,6 +171,38 @@ internal static unsafe partial class GarbageCollector
     }
 
     /// <summary>
+    /// Test probe: finds the regular or pinned segment that holds <paramref name="address"/>
+    /// and returns its start and bump pointer (ZehOS patch gc-header-clear, see PATCHES.md).
+    /// </summary>
+    /// <param name="address">Any address inside the segment's object area.</param>
+    /// <param name="start">The segment's first object address.</param>
+    /// <param name="bump">The segment's bump pointer.</param>
+    /// <returns><c>true</c> if a segment holds the address.</returns>
+    internal static bool TryGetSegmentOf(nint address, out nint start, out nint bump)
+    {
+        using (s_heapLock.AcquireCollectorLock())
+        {
+            for (int heap = 0; heap < 2; heap++)
+            {
+                GCSegment* seg = heap == 0 ? s_segmentManager.Segments : s_pinnedSegmentManager.Segments;
+                for (; seg != null; seg = seg->Next)
+                {
+                    if (address >= (nint)seg->Start && address < (nint)seg->End)
+                    {
+                        start = (nint)seg->Start;
+                        bump = (nint)seg->Bump;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        start = 0;
+        bump = 0;
+        return false;
+    }
+
+    /// <summary>
     /// Converts a contiguous free run into a <see cref="FreeBlock"/> and adds it to the free list.
     /// The last <see cref="ReservedHeaderSlotSize"/> bytes of the run are excluded from the block:
     /// they may hold the runtime object header (objRef-4) of the object that follows the run,

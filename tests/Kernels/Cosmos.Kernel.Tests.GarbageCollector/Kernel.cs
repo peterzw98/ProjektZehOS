@@ -29,7 +29,7 @@ public class Kernel : Sys.Kernel
         Serial.WriteString("[GarbageCollector] BeforeRun() reached!\n");
         Serial.WriteString("[GarbageCollector] Starting tests...\n");
 
-        TR.Start("GarbageCollector Tests", expectedTests: 61 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
+        TR.Start("GarbageCollector Tests", expectedTests: 64 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
 
         // First: Kernel.Start turned the finalizer thread on, CosmosEnableFinalizerThread being on
         // in this kernel. The cells below check the collector with the finalizers run inline, on
@@ -99,6 +99,9 @@ public class Kernel : Sys.Kernel
         // A dead object's runtime header (hash or sync-table index at objRef-4) does not pass to
         // the next object at its address (ZehOS patch gc-header-clear).
         TR.Run("GC_Sweep_DeadHeaderNotInherited", TestGCSweepDeadHeaderNotInherited);
+        TR.Run("GC_Sweep_DeadHeaderClearedPinnedSegmentStart", TestGCSweepDeadHeaderClearedPinnedSegmentStart);
+        TR.Run("GC_Sweep_DeadHeaderClearedPinnedBumpReset", TestGCSweepDeadHeaderClearedPinnedBumpReset);
+        TR.Run("GC_Sweep_LiveNeighbourHeaderIntact", TestGCSweepLiveNeighbourHeaderIntact);
 
         // A failed allocation throws instead of returning null (ZehOS patch gc-oom-throw). The
         // suite's guest has 512 MB, so 1 GiB never fits; the heap must stay usable afterwards.
@@ -2103,6 +2106,7 @@ public class Kernel : Sys.Kernel
                 lock (dead)
                 {
                     dead.A = i;
+                    dead.C = i;
                 }
 
                 if (*(uint*)(Unsafe.As<HeaderProbe, nint>(ref dead) - sizeof(uint)) != 0)
@@ -2175,6 +2179,240 @@ public class Kernel : Sys.Kernel
             Assert.Equal(HeaderProbeGroups, keep.Length, "GC: kept probes stay reachable");
             GC.KeepAlive(keep);
         }
+    }
+
+    // The cells below keep dead objects only as their bitwise inverted address: the conservative
+    // stack scan (interior pointers included) would take a real address as a root.
+
+    private static unsafe nint AddressOf(object obj) => Unsafe.As<object, nint>(ref obj);
+
+    private static unsafe uint HeaderAt(long encoded) => *(uint*)((nint)~encoded - sizeof(uint));
+
+    /// <summary>Gives the object a sync-table entry (hash code, then a lock).</summary>
+    private static void TakeSyncEntry(object obj)
+    {
+        RuntimeHelpers.GetHashCode(obj);
+        lock (obj)
+        {
+        }
+    }
+
+    private static bool AllBytes(byte[] data, byte value)
+    {
+        for (int i = 0; i < data.Length; i++)
+        {
+            if (data[i] != value)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Size of a pinned array that fills most of a 16-page segment: two never share one.</summary>
+    private const int SegmentStartPinnedLength = 60000;
+
+    /// <summary>
+    /// Allocates a pinned array that cannot share the segment of the one before it, so it starts a
+    /// new segment, and a small live pinned array behind it that keeps the segment from being freed.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static unsafe long AllocDeadPinnedAtSegmentStart(out byte[] before, out byte[] after, out bool atStart, out uint headerBefore)
+    {
+        before = GC.AllocateArray<byte>(SegmentStartPinnedLength, pinned: true);
+        byte[] dead = GC.AllocateArray<byte>(SegmentStartPinnedLength, pinned: true);
+        after = GC.AllocateArray<byte>(64, pinned: true);
+        nint address = AddressOf(dead);
+        atStart = CoreGC.TryGetSegmentOf(address, out nint start, out _) && start == address;
+        TakeSyncEntry(dead);
+        headerBefore = *(uint*)(address - sizeof(uint));
+        return ~(long)address;
+    }
+
+    /// <summary>
+    /// The header of a dead object at <see cref="GCSegment.Start"/> lies in the padding in front of
+    /// the segment's first object; the sweep clears it there without touching the segment itself.
+    /// </summary>
+    private static void TestGCSweepDeadHeaderClearedPinnedSegmentStart()
+    {
+        CoreGC.Collect();
+        long dead = AllocDeadPinnedAtSegmentStart(out byte[] before, out byte[] after, out bool atStart, out uint headerBefore);
+        Assert.True(atStart, "GC: the dead pinned array starts a segment");
+        Assert.True(headerBefore != 0, "GC: the dead pinned array carries a header before the collection");
+        after.AsSpan().Fill(0x5A);
+        int afterHash = RuntimeHelpers.GetHashCode(after);
+
+        CoreGC.Collect();
+        CoreGC.Collect();
+
+        Assert.Equal(0u, HeaderAt(dead), "GC: the sweep cleared the header in front of the segment start");
+        bool found = CoreGC.TryGetSegmentOf((nint)~dead, out nint start, out _);
+        Assert.True(found && start == (nint)~dead, "GC: the segment keeps its start after the clear");
+        Assert.True(AllBytes(after, 0x5A), "GC: the live pinned array behind it keeps its data");
+        Assert.Equal(afterHash, RuntimeHelpers.GetHashCode(after), "GC: the live pinned array behind it keeps its hash");
+        lock (after)
+        {
+            after[0] = 1;
+        }
+
+        GC.KeepAlive(before);
+        GC.KeepAlive(after);
+    }
+
+    /// <summary>Length of the live pinned array in front of the dead run: a multiple of 8, no padding.</summary>
+    private const int BumpResetLeadLength = 4096;
+    private const int BumpResetDeadCount = 16;
+
+    /// <summary>
+    /// Allocates a live pinned array and directly behind it a run of dead pinned arrays with a
+    /// sync-table entry each, the last allocations in their segment. Reports whether the first
+    /// dead one follows the live one without a gap.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static unsafe long AllocPinnedDeadRunBehind(out byte[] lead, out bool adjacent)
+    {
+        lead = GC.AllocateArray<byte>(BumpResetLeadLength, pinned: true);
+        lead.AsSpan().Fill(0xA5);
+        nint leadAddress = AddressOf(lead);
+        long first = 0;
+        for (int i = 0; i < BumpResetDeadCount; i++)
+        {
+            byte[] dead = GC.AllocateArray<byte>(56, pinned: true);
+            TakeSyncEntry(dead);
+            if (i == 0)
+            {
+                first = ~(long)AddressOf(dead);
+            }
+        }
+
+        // Array: MethodTable, Length, data, then the header slot of the next object.
+        adjacent = (nint)~first == leadAddress + 2 * sizeof(nint) + BumpResetLeadLength + sizeof(nint);
+        return first;
+    }
+
+    /// <summary>
+    /// A trailing dead run in a pinned segment moves the bump pointer back to its first object.
+    /// The header of that object lies in the last word of the live array in front of it: the sweep
+    /// clears it, and the live array keeps its data and hash.
+    /// </summary>
+    private static void TestGCSweepDeadHeaderClearedPinnedBumpReset()
+    {
+        long first = 0;
+        byte[] lead = null;
+        bool adjacent = false;
+        for (int attempt = 0; attempt < 3 && !adjacent; attempt++)
+        {
+            CoreGC.Collect();
+            first = AllocPinnedDeadRunBehind(out lead, out adjacent);
+        }
+
+        Assert.True(adjacent, "GC: the dead run directly follows the live pinned array");
+        Assert.True(HeaderAt(first) != 0, "GC: the first dead pinned array carries a header before the collection");
+        int leadHash = RuntimeHelpers.GetHashCode(lead);
+
+        CoreGC.Collect();
+        CoreGC.Collect();
+
+        bool found = CoreGC.TryGetSegmentOf((nint)~first, out _, out nint bump);
+        Assert.True(found && bump == (nint)~first, "GC: the bump pointer moved back to the first dead pinned array");
+        Assert.Equal(0u, HeaderAt(first), "GC: the sweep cleared the header in the live neighbour's last word");
+        Assert.True(AllBytes(lead, 0xA5), "GC: the live pinned array in front keeps its data");
+        Assert.Equal(leadHash, RuntimeHelpers.GetHashCode(lead), "GC: the live pinned array in front keeps its hash");
+        lock (lead)
+        {
+            lead[0] = 0xA5;
+        }
+
+        GC.KeepAlive(lead);
+    }
+
+    private const int NeighbourProbePairs = 128;
+    private const long NeighbourPatternA = 0x1111111111111111;
+    private const long NeighbourPatternC = 0x7EEEEEEEEEEEEEEE;
+
+    /// <summary>
+    /// Allocates live and dead probes in turn. Every live one has a hash code and patterned fields,
+    /// every dead one a sync-table entry. Returns how many dead probes start directly behind a live
+    /// one (header slot in the live probe's last word) and how many live ones directly behind a dead one.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int FillNeighbourProbes(HeaderProbe[] keep, int[] hashes, out int liveBehindDead)
+    {
+        int deadBehindLive = 0;
+        liveBehindDead = 0;
+        nint previousDead = 0;
+        for (int i = 0; i < keep.Length; i++)
+        {
+            var live = new HeaderProbe { A = NeighbourPatternA, B = i, C = NeighbourPatternC };
+            hashes[i] = RuntimeHelpers.GetHashCode(live);
+            keep[i] = live;
+            nint liveAddress = AddressOf(live);
+            if (previousDead != 0 && liveAddress == previousDead + 40)
+            {
+                liveBehindDead++;
+            }
+
+            var dead = new HeaderProbe { A = i, C = i };
+            TakeSyncEntry(dead);
+            previousDead = AddressOf(dead);
+            if (previousDead == liveAddress + 40)
+            {
+                deadBehindLive++;
+            }
+        }
+
+        return deadBehindLive;
+    }
+
+    /// <summary>Allocates probes with a lock, so new objects take the dead probes' slots.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ReuseNeighbourSlots(int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            var probe = new HeaderProbe { A = ~i, B = ~i, C = ~i };
+            lock (probe)
+            {
+                probe.B = i;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Clearing a dead object's header and handing its slot out again leaves the live neighbours on
+    /// both sides as they were: hash code, fields (the last one ends at the next header slot) and lock.
+    /// </summary>
+    private static void TestGCSweepLiveNeighbourHeaderIntact()
+    {
+        CoreGC.Collect();
+        var keep = new HeaderProbe[NeighbourProbePairs];
+        var hashes = new int[NeighbourProbePairs];
+        int deadBehindLive = FillNeighbourProbes(keep, hashes, out int liveBehindDead);
+        Assert.True(deadBehindLive > 0, "GC: some dead probes start directly behind a live one");
+        Assert.True(liveBehindDead > 0, "GC: some live probes start directly behind a dead one");
+
+        CoreGC.Collect();
+        CoreGC.Collect();
+        ReuseNeighbourSlots(2 * NeighbourProbePairs);
+        CoreGC.Collect();
+
+        int broken = 0;
+        for (int i = 0; i < keep.Length; i++)
+        {
+            HeaderProbe live = keep[i];
+            if (RuntimeHelpers.GetHashCode(live) != hashes[i] || live.A != NeighbourPatternA || live.B != i || live.C != NeighbourPatternC)
+            {
+                broken++;
+            }
+
+            lock (live)
+            {
+                live.B = i;
+            }
+        }
+
+        Assert.Equal(0, broken, "GC: every live neighbour keeps hash code and fields");
     }
 
     /// <summary>
