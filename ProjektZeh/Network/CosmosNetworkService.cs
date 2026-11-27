@@ -18,6 +18,10 @@ internal sealed class CosmosNetworkService : INetworkService
     internal static readonly object Gate = new();
     private const int TimeoutMilliseconds = 5000;
     private const int DnsRetryMilliseconds = 2000;
+    // #746: Ohne ARP-Eintrag wartet Cosmos (IPv4OutgoingBuffer) nur eine feste Zahl von Durchlaeufen ohne Abgabe der CPU auf
+    // die Antwort; mit einer CPU kommt der Empfangsworker erst danach dran, das Echo wird verworfen. Die Antwort landet
+    // trotzdem im ARP-Cache, deshalb geht das Echo ohne Antwort erneut hinaus, innerhalb derselben Frist.
+    private const int PingRetryMilliseconds = 1000;
     private const int MaximumBody = 16384;
 
     // E6-C.11 (#390): die Adresse liest nur, wer Gate haelt; Leser ohne Gate bekommen den zuletzt veroeffentlichten Wert.
@@ -218,8 +222,13 @@ internal sealed class CosmosNetworkService : INetworkService
         try
         {
             client.Connect(address); client.SendEcho(); var source = new Cosmos.Kernel.System.Network.EndPoint(Address4.Zero, 0);
+            var sent = Stopwatch.StartNew();
             while (!received && clock.ElapsedMilliseconds < TimeoutMilliseconds)
-            { token.ThrowIfCancellationRequested(); received = client.Receive(ref source, 0) >= 0; if (!received) token.WaitHandle.WaitOne(10); }
+            {
+                token.ThrowIfCancellationRequested(); received = client.Receive(ref source, 0) >= 0;
+                if (!received && sent.ElapsedMilliseconds >= PingRetryMilliseconds) { client.SendEcho(); sent.Restart(); }
+                if (!received) token.WaitHandle.WaitOne(10);
+            }
             if (!received) throw new IOException("Ping-Zeitlimit erreicht.");
         }
         catch (Exception exception) { failure = exception; }
