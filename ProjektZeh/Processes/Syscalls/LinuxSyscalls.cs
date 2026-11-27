@@ -418,7 +418,7 @@ internal static partial class LinuxSyscalls
         long saved = file.Seek(0, 1);
         if (saved < 0)
         {
-            return saved;
+            return saved == -Vfs.LinuxErrno.ESPIPE ? -ENODEV : saved; // nicht suchbar (Terminal, Pipe): wie Linux kein mmap, ohne zu lesen
         }
 
         long r = file.Seek(offset, 0);
@@ -438,7 +438,7 @@ internal static partial class LinuxSyscalls
         long saved = file.Seek(0, 1);
         if (saved < 0)
         {
-            return saved;
+            return saved == -Vfs.LinuxErrno.ESPIPE ? -ENODEV : saved; // nicht suchbar (Terminal, Pipe): wie Linux kein mmap, ohne zu lesen
         }
 
         long r = file.Seek(offset, 0);

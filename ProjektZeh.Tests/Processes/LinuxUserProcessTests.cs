@@ -910,6 +910,37 @@ public sealed class LinuxUserProcessTests
     }
 
     [TestMethod]
+    public void MapFixedAnonymousOverProgramAndStackReplacesLikeLinux()
+    {
+        var (process, _, image, _) = Start();
+
+        // Linux: MAP_FIXED ersetzt jeden Bereich, auch Programmcode und Stack; der Inhalt ist danach null, der Schutz der neue.
+        Assert.IsTrue(process.TryRead(Code, new byte[1]));
+        Assert.AreEqual((long)Data, Sys(process, LinuxSyscalls.Mmap, Data, Page, ProtRW, MapAnon | MapFixedFlag, ulong.MaxValue, 0));
+        byte[] got = new byte[16];
+        Assert.IsTrue(process.TryRead(Data, got));
+        Assert.IsTrue(got.All(x => x == 0), "Datenseite ersetzt: Inhalt null");
+
+        Assert.AreEqual((long)Code, Sys(process, LinuxSyscalls.Mmap, Code, Page, ProtRW, MapAnon | MapFixedFlag, ulong.MaxValue, 0));
+        Assert.IsTrue(process.TryWrite(Code, "x"u8), "Codeseite ersetzt: jetzt beschreibbar");
+
+        ulong stackPage = image.StackPointer & ~(Page - 1);
+        Assert.AreEqual((long)stackPage, Sys(process, LinuxSyscalls.Mmap, stackPage, Page, ProtRW, MapAnon | MapFixedFlag, ulong.MaxValue, 0));
+        Assert.IsTrue(process.TryRead(stackPage, got));
+        Assert.IsTrue(got.All(x => x == 0), "Stackseite ersetzt: Argumente weg");
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapOfTerminalIsNoDevWithoutReading()
+    {
+        var (process, _) = StartWithFile(1);
+        Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, 0, 0), "Terminal (nicht suchbar): ENODEV");
+        Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, Code, Page, ProtR, MapPrivateFlag | MapFixedFlag, 0, 0), "mit MAP_FIXED ebenso");
+        process.Destroy();
+    }
+
+    [TestMethod]
     public void ReadlinkProcSelfExe()
     {
         var (process, _) = StartWithFile(1);
