@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using Serial = Cosmos.Kernel.System.Diagnostics.Log;
 
 namespace ProjektZeh.Processes.Syscalls;
 
@@ -468,6 +469,32 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         if (l == null)
         {
             return;
+        }
+
+        // DIAG lb-gate-null (nie mergen): Link ohne Gate = Speicher des Links genullt oder neu belegt; Adresse, MethodTable, GC-Nummer ausgeben.
+        if (l.Gate == null)
+        {
+            ulong addr = (ulong)System.Runtime.CompilerServices.Unsafe.As<Link, nint>(ref l);
+            unsafe
+            {
+                ulong w0 = *(ulong*)addr;
+                ulong w1 = *(ulong*)(addr + 8);
+                ulong w2 = *(ulong*)(addr + 16);
+                ulong w3 = *(ulong*)(addr + 24);
+                Serial.WriteString("ZehOS DIAG gate-null: link=");
+                Serial.WriteHexWithPrefix(addr);
+                Serial.WriteString(" mt=");
+                Serial.WriteHexWithPrefix(w0);
+                Serial.WriteString(" w1=");
+                Serial.WriteHexWithPrefix(w1);
+                Serial.WriteString(" gate=");
+                Serial.WriteHexWithPrefix(w2);
+                Serial.WriteString(" w3=");
+                Serial.WriteHexWithPrefix(w3);
+                Serial.WriteString(" gc=");
+                Serial.WriteNumber((ulong)GC.CollectionCount(0));
+                Serial.WriteString("\n");
+            }
         }
 
         List<LinuxSocketFds>? dropped = null;
