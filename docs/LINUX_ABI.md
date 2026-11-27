@@ -35,7 +35,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 228 | `clock_gettime` | Uhren 0-7; 0 und 5 Wanduhr, übrige monoton (CPU-Zeituhren 2, 3 ebenfalls monoton: Abweichung); Uhren 8, 9, 11 (BOOTTIME-Familie) `-EINVAL` (Abweichung); sonst `-EINVAL`. Quelle `ILinuxHost` (optional), sonst DateTime/Stopwatch |
 | 318 | `getrandom` | Flags nur GRND_NONBLOCK/RANDOM/INSECURE (RANDOM+INSECURE `-EINVAL`); füllt in 4-KiB-Stücken aus `ILinuxHost.TryFillRandom`; ohne Host `-ENOSYS` (nie schwacher Zufall), Quelle nicht bereit `-EAGAIN`; Abbruch je Stück wie `write` (#735) |
 | 63 | `uname` | Linux / zehos / 6.1.0-zehos / x86_64 |
-| 13, 14 | `rt_sigaction`, `rt_sigprocmask` | nur Verwaltung je Prozess (keine Zustellung); sigsetsize 8, SIGKILL/SIGSTOP nicht abfangbar und nicht blockierbar |
+| 13, 14 | `rt_sigaction`, `rt_sigprocmask` | Verwaltung je Prozess, Zustellung an Handler seit V18 (unten); sigsetsize 8, SIGKILL/SIGSTOP nicht abfangbar und nicht blockierbar |
 | 131 | `sigaltstack` | setzen/abfragen/abschalten; Größe < 2048 `-ENOMEM`; ohne Zustellung wirkungslos; SS_AUTODISARM wird nicht gemerkt (Abweichung) |
 | 24 | `sched_yield` | `0` |
 | 7 | `poll` | höchstens 1024 Einträge; offene fd melden POLLOUT, POLLIN nur eine Eingabe mit Bytes, Eingabeende oder Abbruch (sonst nie POLLIN), unbekannte fd POLLNVAL; wartet ein Eintrag auf Eingabe, wartet poll darauf in 50-ms-Scheiben (auch mit Frist -1, Abbruch beendet), warten mehrere (Pipe-Enden, V13), reihum in 10-ms-Scheiben; ohne bereite Einträge und mit Frist > 0 schläft sie die Frist über `ILinuxHost.SleepNanos` ab (ohne Host nicht); Frist -1 (unendlich) schläft nie, Ergebnis 0 |
@@ -45,7 +45,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 
 Grenze: `write` verlässt sich auf `ILinuxDescriptor.Write` ≤ angebotene Länge (größere Rückgaben werden nicht abgefangen); je Aufruf ein 4-KiB-Puffer.
 
-Nicht in S1: Dateien (siehe V2 unten), Signalzustellung, Threads (siehe V10), `MAP_FIXED`, Dateiabbildungen.
+Nicht in S1: Dateien (siehe V2 unten), Signalzustellung (siehe V18), Threads (siehe V10), `MAP_FIXED`, Dateiabbildungen.
 
 ## Dateien (V2)
 
@@ -273,10 +273,10 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxThreads.cs` und `LinuxUserPro
 | 60 | `exit` | beendet nur den Thread: `clear_child_tid` wird 0 und ein Wartender geweckt (pthread_join); der letzte Thread beendet den Prozess mit seinem Code |
 | 231 | `exit_group` | beendet alle Threads; futex-Wartende und Schlafende kehren mit `-EINTR` zurück, ein Lesen auf fd 0 bekommt Dateiende, dann verlassen alle den Ring 3. `clear_child_tid` der übrigen Threads bleibt ungeschrieben: Linux schreibt es nur, solange ein anderer den Adressraum nutzt, und das kann ohne zweiten Prozess, gemeinsamen Speicher oder ptrace niemand sehen |
 | 202 | `futex` | WAIT/WAIT_BITSET schlafen wirklich, bis ein anderer Thread weckt (`0`), die Frist abläuft (`-ETIMEDOUT`; WAIT relativ, WAIT_BITSET absolut auf MONOTONIC oder mit `FUTEX_CLOCK_REALTIME` auf der Wanduhr) oder der Prozess endet (`-EINTR`); abweichender Wert `-EAGAIN`; WAKE/WAKE_BITSET wecken in Wartereihenfolge und liefern die Anzahl; REQUEUE/CMP_REQUEUE hängen um; WAKE_OP, PI-Futexe `-ENOSYS`; `FUTEX_PRIVATE_FLAG` ohne Wirkung (ein Adressraum) |
-| 200, 234 | `tkill`, `tgkill` | Ziel prüfen (`-ESRCH`, `-EINVAL`), Signal 0 `0`; ignorierte Signale (SIG_IGN, SIGCHLD/CONT/URG/WINCH) `0`; SIGTSTP/TTIN/TTOU mit Standardaktion `0` und verworfen (verwaiste Prozessgruppe, wie Linux); blockierte Signale bleiben anhängig, bis `rt_sigprocmask` sie freigibt (dann Standardaktion) oder `rt_sigaction` sie ignoriert (verworfen); Standardaktion beendet den Prozess (Status `signal <n>`), SIGSTOP ebenfalls (kein Anhalten); mit Handler `-ENOSYS`, auch blockiert (keine Signalzustellung) |
+| 200, 234 | `tkill`, `tgkill` | Ziel prüfen (`-ESRCH`, `-EINVAL`), Signal 0 `0`; ignorierte Signale (SIG_IGN, SIGCHLD/CONT/URG/WINCH) `0`; SIGTSTP/TTIN/TTOU mit Standardaktion `0` und verworfen (verwaiste Prozessgruppe, wie Linux); blockierte Signale bleiben anhängig, bis `rt_sigprocmask` sie freigibt (dann Standardaktion) oder `rt_sigaction` sie ignoriert (verworfen); Standardaktion beendet den Prozess (Status `signal <n>`), SIGSTOP ebenfalls (kein Anhalten); mit Handler anhängig, der Handler läuft beim nächsten Rücksprung aus einem Aufruf (V18) |
 | 62 | `kill` | V15: Prozesse des Laufs (Baum ab dem ersten Prozess); `pid > 0` ein Prozess (Zombie `0` ohne Wirkung, geerntet `-ESRCH`), `0` und `-<erste PID>` alle, `-1` alle außer Aufrufer und erstem Prozess, andere Gruppen `-ESRCH`; Zustellung wie `tgkill`, an einen anderen Prozess verlassen dessen Threads den Ring 3 (nicht der Aufrufer); während vfork als Maske gemerkt und nach `execve` dem neuen Abbild zugestellt, SIGKILL/SIGSTOP vor den übrigen (endet das Kind vor `execve`, verfällt es). Waisen (Elternprozess beendet, auch geerntet) bleiben erreichbar, hängen aber nicht an init: `getppid` liefert die tote PID, ihr Status geht an niemanden. Keine Rechteprüfung (eine UID je Lauf) |
 | 35, 230 | `nanosleep`, `clock_nanosleep` | Uhren 0, 1, 4–7, 9, 11 (REALTIME, MONOTONIC, BOOTTIME, TAI, grobe), mit `TIMER_ABSTIME`; CPU-Zeituhren und unbekannte `-EINVAL`; nach vollem Schlaf `rem` 0 (V2c); mit Threads schläft der Aufruf auf der futex-Tabelle und endet mit `exit_group` (`-EINTR`, `rem` dann unberührt) |
-| 34 | `pause` | schläft bis zum Prozessende (`-EINTR`), da keine Signale zugestellt werden |
+| 34 | `pause` | schläft, bis ein Signal mit Handler kommt oder der Prozess endet (`-EINTR`) |
 
 Umsetzung und Grenzen:
 
@@ -290,7 +290,7 @@ Umsetzung und Grenzen:
   Speicher vor `UserPageTable` vor `PageAllocator`). Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.
 - Ein Absturz in einem Thread (Ausnahme, ungültige Register, Fehler der Brücke) beendet den ganzen Prozess wie bei Linux. `pthread_exit` in `main` lässt die
   anderen weiterlaufen; der Prozess endet mit dem letzten Thread.
-- Signalmaske, anhängige Signale und Alternativstack sind noch je Prozess, nicht je Thread; keine Signalzustellung (auch nicht pthread_cancel, `SIGCANCEL`). Ein anhängiges Signal, für das danach ein Handler gesetzt wird, bleibt anhängig und wird nie zugestellt; `rt_sigpending` fehlt.
+- Signalmaske, anhängige Signale und Alternativstack sind noch je Prozess, nicht je Thread (V18 stellt zu, siehe dort); `rt_sigpending` und `rt_sigsuspend` fehlen.
 - Dateien (V11): Deskriptortabelle, Arbeitsverzeichnis, `LinuxFileSystem` und die offenen Dateien schützt eine Sperre je Prozess (`ILinuxFiles.FileGate`). Jeder Datei- und Pfadaufruf läuft ganz unter ihr, auch `pread` (Position sichern, lesen, zurücksetzen) ist dadurch atomar; Dateiaufrufe verschiedener Threads laufen nacheinander, auch während einer langsamen Platte. Schreiben auf das Terminal und Lesen von fd 0 halten sie nicht (Lesen wartet auf Eingabe). Reihenfolge: Dateisperre vor Speichersperre und vor `StorageLock`, nie zusammen mit der futex-Tabelle. Grenze: Ersetzt ein Thread fd 0 per `dup2`, während ein anderer `read` darauf beginnt, kann dieser `-EBADF` sehen (die Art des Deskriptors wird vor der Sperre bestimmt).
 - Ein Thread, der in `read` auf fd 0 wartet, endet beim Prozessende über das Dateiende der Sitzung; ohne Sitzung (Gastprobe) liest fd 0 ohnehin leer.
 
@@ -324,7 +324,7 @@ Ereignisschleife aus anderen Threads über eine Pipe.
 | --- | --- | --- |
 | 22, 293 | `pipe`, `pipe2` | Pipe innerhalb des Prozesses (kein fork): kleinste freie Nummern für Lese- und Schreibende; Flags `O_CLOEXEC` (angenommen, nicht geführt: kein `execve`) und `O_NONBLOCK`, andere (`O_DIRECT`) `-EINVAL`; `-EFAULT` gibt beide Nummern wieder frei, `-EMFILE` ebenso |
 | 0, 19 | `read`, `readv` auf dem Leseende | blockiert ohne Daten bis zu einem Schreiben, bis kein Schreibende mehr offen ist (`0`, EOF) oder zum Abbruch (`-EINTR`); mit `O_NONBLOCK` `-EAGAIN`; liefert das Verfügbare, höchstens 4096 Bytes je Aufruf; auf dem Schreibende `-EBADF` |
-| 1, 20 | `write`, `writev` auf dem Schreibende | Puffer 64 KiB; bis 4096 Bytes (`PIPE_BUF`) ganz oder gar nicht; voll blockiert es, mit `O_NONBLOCK` `-EAGAIN`; ohne Leseende `-EPIPE` (kein `SIGPIPE`, Signale werden nicht zugestellt); auf dem Leseende `-EBADF` |
+| 1, 20 | `write`, `writev` auf dem Schreibende | Puffer 64 KiB; bis 4096 Bytes (`PIPE_BUF`) ganz oder gar nicht; voll blockiert es, mit `O_NONBLOCK` `-EAGAIN`; ohne Leseende `-EPIPE` und `SIGPIPE` (V18); auf dem Leseende `-EBADF` |
 | 7 | `poll` | Leseende `POLLIN` mit Daten, `POLLHUP` ohne Schreibende; Schreibende `POLLOUT` bei mindestens 4096 Bytes Platz, `POLLERR` ohne Leseende; wartet auf Pipe-Enden ohne Dateisperre und wacht beim Schreiben, Lesen oder Schließen eines anderen Threads auf |
 | 3 | `close` | erst das letzte `close` eines Endes (nach `dup`) meldet dem anderen EOF beziehungsweise `EPIPE`; Ungelesenes wird mit dem Leseende verworfen |
 | 5, 8 | `fstat`, `lseek` | `S_IFIFO` mit 0600, Größe 0; `lseek` `-ESPIPE` |
@@ -345,7 +345,7 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
 | 53 | `socketpair` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` und andere `-ESOCKTNOSUPPORT`), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
-| 46, 44 | `sendmsg`, `sendto` | Puffer je Richtung 212992 Bytes (`wmem_default`); Stream blockierend ganz, mit `O_NONBLOCK`/`MSG_DONTWAIT` so viel wie passt; Seqpacket ganz oder `-EAGAIN`, über 212992 Bytes `-EMSGSIZE`; Stream mit Zieladresse `-EISCONN`; `MSG_OOB` `-EOPNOTSUPP`; nach Ende oder `shutdown` `-EPIPE` (kein `SIGPIPE`, `MSG_NOSIGNAL` daher ohne Wirkung) |
+| 46, 44 | `sendmsg`, `sendto` | Puffer je Richtung 212992 Bytes (`wmem_default`); Stream blockierend ganz, mit `O_NONBLOCK`/`MSG_DONTWAIT` so viel wie passt; Seqpacket ganz oder `-EAGAIN`, über 212992 Bytes `-EMSGSIZE`; Stream mit Zieladresse `-EISCONN`; `MSG_OOB` `-EOPNOTSUPP`; nach Ende oder `shutdown` `-EPIPE` mit `SIGPIPE`, außer mit `MSG_NOSIGNAL` (V18) |
 | 47, 45 | `recvmsg`, `recvfrom` | Stream fasst Nachrichten zusammen und endet nach der ersten mit Dateien; Seqpacket eine Nachricht, Rest verworfen mit `MSG_TRUNC` (`MSG_TRUNC` im Aufruf liefert die volle Länge); `MSG_PEEK`, `MSG_WAITALL`, `MSG_DONTWAIT`, `MSG_CMSG_CLOEXEC`; `msg_namelen` 0 (unbenannte Gegenseite) |
 | 46/47 | `SCM_RIGHTS` | bis 253 Dateien je Nachricht; die Nachricht hält jede Datei wie eine Nummer (`LinuxOpenFiles` des Laufs), also überlebt sie das `close` des Senders und das Ende eines Kindprozesses; zu kleiner Hilfsdatenpuffer oder volle Tabelle: Rest geschlossen, `MSG_CTRUNC`; `MSG_PEEK` gibt zusätzliche Nummern; `read`/`recvfrom` verwerfen mitgeschickte Dateien; `SCM_CREDENTIALS` angenommen, nicht weitergereicht; andere Typen `-EINVAL` |
 | 48 | `shutdown` | `SHUT_RD`: Gepuffertes bleibt lesbar, dann EOF, Gegenseite `-EPIPE`; `SHUT_WR`: eigenes Senden `-EPIPE`, Gegenseite liest den Rest und EOF; sonst `-EINVAL`, ohne Verbindung `-ENOTCONN` |
@@ -382,3 +382,29 @@ oder Prozessende. Sperren: Speichersperre des Prozesses vor der Sperre der memfd
 Grenzen: Schrumpft `ftruncate` eine abgebildete Datei, behalten schon abgebildete Seiten ihren alten Frame (Linux entfernt sie, der nächste Zugriff gibt
 `SIGBUS`). `mremap` vergrößert
 geteilte Abbildungen nicht (wie alle, V9). Geteilte Frames zählen bei jedem abbildenden Prozess gegen seine Speichergrenze. Kein `fork` (Kopie beim Schreiben).
+
+## V18 Signalzustellung (Ladybird: LibCore setzt Handler für SIGCHLD, SIGINT, SIGPIPE)
+
+Prüfung: `experiments/LinuxAbi/src/v18/sig.c` (Erwartung von Linux 6.12 in `expected/v18`), Hosttests in `LinuxThreadsTests` und `LinuxProcessWaitTests`.
+
+- **Zustellung** beim Rücksprung aus jedem Aufruf (`CosmosLinuxRun.DeliverSignals`): alle anhängigen, nicht blockierten Signale mit Handler, niedrigste
+  Nummer zuerst, jedes mit eigenem Rahmen über dem vorigen. Rahmen wie Linux x86-64 (`struct rt_sigframe`): an RSP `sa_restorer`, dann `ucontext`
+  (uc_stack, sigcontext mit allen Registern, uc_sigmask), dann `siginfo`; darüber das fxsave-Abbild (fpstate, 64-Byte-ausgerichtet). Der Handler
+  beginnt mit rdi = Signal, rsi = &siginfo, rdx = &ucontext, RSP ≡ 8 (mod 16), 128 Byte rote Zone frei, DF/TF gelöscht, FPU im Grundzustand.
+  Ohne `SA_RESTORER` oder wenn der Rahmen nicht passt, endet der Prozess mit SIGSEGV (Linux: force_sigsegv).
+- **`rt_sigreturn` (15)**: Register, RFLAGS (nur CF, PF, AF, ZF, SF, DF, OF, AC), Maske, Alternativstack und FPU aus dem Rahmen; MXCSR wird mit
+  der MXCSR-Maske der CPU gefiltert (ein ungültiges Bit wäre bei fxrstor im Ring 0 ein #GP). Rückkehr über `sysretq`: rcx und r11 kommen wie nach
+  jedem Aufruf als RIP und RFLAGS zurück (ein unterbrochener Aufruf hatte sie ohnehin so).
+- **Flags**: `SA_SIGINFO` (siginfo: kill `SI_USER` mit si_pid/si_uid, tgkill `SI_TKILL`, SIGCHLD `CLD_EXITED`/`CLD_KILLED`/`CLD_DUMPED` mit si_status),
+  `SA_ONSTACK` mit `sigaltstack` (auch `SS_AUTODISARM`), `SA_NODEFER`, `SA_RESETHAND`, sa_mask.
+- **EINTR und `SA_RESTART`**: Wartende Aufrufe (read/write auf Pipes und Sockets, recvmsg/sendmsg, accept, wait4/waitid, poll, futex, pause, nanosleep,
+  clock_nanosleep) kehren mit `-EINTR` zurück, sobald ein Signal mit Handler wartet. Mit `SA_RESTART` startet die Brücke read, write, readv, writev,
+  pread, pwrite, send*/recv*, accept, connect, wait4, waitid und futex ohne Frist neu (RIP - 2, rax = Nummer); poll, nanosleep, pause und futex mit
+  Frist liefern `-EINTR` wie Linux. nanosleep schreibt die Restzeit. Reguläre Dateien unterbricht ein Signal nicht.
+- **SIGCHLD** beim Ende eines Kinds an die Eltern; Standard und SIG_IGN verwerfen es (SIG_IGN und `SA_NOCLDWAIT` holen das Kind weiter selbst ab).
+- **SIGPIPE** nach `-EPIPE` aus write, writev, pwrite, sendto, sendmsg (nicht mit `MSG_NOSIGNAL`); Standardaktion beendet den Prozess wie Linux.
+- **Grenzen**: Maske, anhängige Signale und Alternativstack je Prozess, nicht je Thread; ein Handler blockiert sein Signal für alle Threads, bis
+  rt_sigreturn die Maske des Rahmens zurückschreibt. Echtzeitsignale reihen sich nicht mehrfach ein. Kein Zustellen in einer Rechenschleife ohne
+  Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3) und keine Handler für Ausnahmen (SIGSEGV/SIGFPE aus einem Fehler im
+  Ring 3 beenden weiter). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigpending`, `rt_sigtimedwait` und
+  `signalfd` fehlen.

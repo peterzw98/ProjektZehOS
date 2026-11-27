@@ -169,12 +169,18 @@ internal static class LinuxSignalFrame
     /// </summary>
     public static void AfterSyscall(LinuxUserProcess p, ref LinuxUserRegs r, Span<byte> fpu, long number, ulong a2, ulong a3, long result)
     {
+        // Der Prozess endet (exit_group, kill, Abbruch): der Thread verlässt den Ring 3, kein Rahmen in einen Speicher, der gerade freigegeben wird.
+        if (p.IsAborted)
+        {
+            return;
+        }
+
         if (result == -LinuxSignalFrame.EPIPE && RaisesSigpipe(number, a2, a3))
         {
             p.RaiseSignal(13);
         }
 
-        bool interrupted = result == -LinuxSyscalls.EINTR && number >= 0 && !p.IsAborted;
+        bool interrupted = result == -LinuxSyscalls.EINTR && number >= 0;
         bool restart = interrupted && Restartable(number, a2, a3);
         bool first = true;
         for (int n = 0; n < 64 && p.TakeSignal(out LinuxSignalDelivery d); n++)
