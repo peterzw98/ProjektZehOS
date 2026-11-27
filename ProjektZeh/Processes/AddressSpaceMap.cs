@@ -311,6 +311,9 @@ internal sealed class AddressSpaceMap
     // Entfernt [from, to) aus allen Regionen; Randstücke bleiben erhalten. Ein Durchlauf: die betroffenen k Regionen werden mit
     // einem RemoveRange entfernt und höchstens zwei Randstücke eingesetzt (ein einzelnes Verschieben des Rests statt je Region,
     // sonst wird munmap über viele Abbildungen quadratisch).
+    // Zähler der Listenoperationen, die den Rest der Liste verschieben (nur für Tests; macht die Prüfung zeitunabhängig).
+    internal int CutShifts { get; private set; }
+
     private void Cut(ulong from, ulong to)
     {
         int first = FirstEndingAfter(from);
@@ -363,12 +366,14 @@ internal sealed class AddressSpaceMap
             }
 
             _regions.RemoveRange(at, last - at);
+            CutShifts++;
             return;
         }
 
         // kept == 2, removed == 1: eine Region wird geteilt.
         _regions[first] = head with { End = from };
         _regions.Insert(first + 1, tail with { Start = to });
+        CutShifts++;
     }
 
     // Setzt eine Region in die (nach Cut) freie Lücke und verschmilzt gleichartige Nachbarn.
