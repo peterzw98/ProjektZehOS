@@ -495,4 +495,26 @@ public sealed class AddressSpaceMapTests
 
         return -1;
     }
+
+    [TestMethod]
+    public void FreigabeUeberVieleAbbildungenIstNichtQuadratisch()
+    {
+        // V49: 60000 aneinandergrenzende Bereiche (Zugriff wechselt, also keine Verschmelzung) mit einem munmap entfernen.
+        // Je Region RemoveAt wäre quadratisch (Milliarden Elementverschiebungen); ein Durchlauf verschiebt den Rest höchstens einmal.
+        // Geprüft wird die Zahl der Verschiebungen statt der Zeit (Zeitgrenzen flackern auf der CI).
+        AddressSpaceMap map = Create();
+        const int count = 60000;
+        for (int i = 0; i < count; i++)
+        {
+            Fixed(map, Base + ((ulong)i * Page), 1, i % 2 == 0 ? MapAccess.ReadWrite : MapAccess.Read);
+        }
+
+        int before = map.CutShifts;
+        Assert.IsTrue(map.Release(Base + Page, ((ulong)count - 2) * Page).IsOK());
+
+        Assert.IsTrue(map.IsMapped(Base, Page));
+        Assert.IsFalse(map.IsMapped(Base + Page, Page));
+        Assert.IsTrue(map.IsMapped(Base + ((ulong)(count - 1) * Page), Page));
+        Assert.IsTrue(map.CutShifts - before <= 1, $"Release verschob die Liste {map.CutShifts - before}-mal");
+    }
 }

@@ -308,24 +308,72 @@ internal sealed class AddressSpaceMap
         return false;
     }
 
-    // Entfernt [from, to) aus allen Regionen; Randstücke bleiben erhalten.
+    // Entfernt [from, to) aus allen Regionen; Randstücke bleiben erhalten. Ein Durchlauf: die betroffenen k Regionen werden mit
+    // einem RemoveRange entfernt und höchstens zwei Randstücke eingesetzt (ein einzelnes Verschieben des Rests statt je Region,
+    // sonst wird munmap über viele Abbildungen quadratisch).
+    // Zähler der Listenoperationen, die den Rest der Liste verschieben (nur für Tests; macht die Prüfung zeitunabhängig).
+    internal int CutShifts { get; private set; }
+
     private void Cut(ulong from, ulong to)
     {
-        int i = FirstEndingAfter(from);
-        while (i < _regions.Count && _regions[i].Start < to)
+        int first = FirstEndingAfter(from);
+        int last = first;
+        while (last < _regions.Count && _regions[last].Start < to)
         {
-            Region region = _regions[i];
-            _regions.RemoveAt(i);
-            if (region.Start < from)
+            last++;
+        }
+
+        if (last == first)
+        {
+            return;
+        }
+
+        Region head = _regions[first];
+        Region tail = _regions[last - 1];
+        bool keepHead = head.Start < from;
+        bool keepTail = tail.End > to;
+        int removed = last - first;
+        int kept = (keepHead ? 1 : 0) + (keepTail ? 1 : 0);
+
+        if (kept == removed)
+        {
+            // Gleiche Anzahl: an Ort und Stelle ersetzen, ohne Verschiebung.
+            int at = first;
+            if (keepHead)
             {
-                _regions.Insert(i++, region with { End = from });
+                _regions[at++] = head with { End = from };
             }
 
-            if (region.End > to)
+            if (keepTail)
             {
-                _regions.Insert(i++, region with { Start = to });
+                _regions[at] = tail with { Start = to };
             }
+
+            return;
         }
+
+        if (kept < removed)
+        {
+            int at = first;
+            if (keepHead)
+            {
+                _regions[at++] = head with { End = from };
+            }
+
+            if (keepTail)
+            {
+                _regions[at++] = tail with { Start = to };
+            }
+
+            _regions.RemoveRange(at, last - at);
+            CutShifts++;
+            return;
+        }
+
+        // kept == 2, removed == 1: eine Region wird geteilt.
+        _regions[first] = head with { End = from };
+        _regions.Insert(first + 1, tail with { Start = to });
+        CutShifts++;
     }
 
     // Setzt eine Region in die (nach Cut) freie Lücke und verschmilzt gleichartige Nachbarn.
