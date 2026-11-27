@@ -296,6 +296,61 @@ public sealed class LinuxUnixSocketTests
     }
 
     [TestMethod]
+    public void DgramWarteschlangeIstAufZehNachrichtenBegrenztAuchLeere()
+    {
+        var f = new Fixture();
+        var (a, b) = f.SocketPair(Dgram | SockNonblock);
+        for (int i = 0; i < LinuxUnixSocket.MaxDgramQueue; i++)
+        {
+            Assert.AreEqual(0, f.SendMsg(a, []), "leeres Datagramm " + i);
+        }
+
+        Assert.AreEqual(-EAGAIN, f.SendMsg(a, []), "elftes leeres Datagramm: voll");
+        Assert.AreEqual(-EAGAIN, f.SendMsg(a, B("x")));
+        Assert.AreEqual(0, f.RecvMsg(b, 16, 0, out _, out _, out _));
+        Assert.AreEqual(1, f.SendMsg(a, B("x")), "nach dem Lesen wieder Platz");
+    }
+
+    [TestMethod]
+    public void DgramPollMeldetPolloutNurSolangeDieWarteschlangeNichtVollIst()
+    {
+        var f = new Fixture();
+        var (a, b) = f.SocketPair(Dgram | SockNonblock);
+        void Entry(int fd, short events)
+        {
+            var e = new byte[8];
+            BitConverter.TryWriteBytes(e.AsSpan(0, 4), fd);
+            BitConverter.TryWriteBytes(e.AsSpan(4, 2), events);
+            f.Put(f.Ctrl, e);
+        }
+
+        Entry(a, 4);
+        Assert.AreEqual(1, Fixture.Call(f.Parent, Poll, f.Ctrl, 1, 0), "leer: schreibbereit");
+        for (int i = 0; i < LinuxUnixSocket.MaxDgramQueue; i++)
+        {
+            Assert.AreEqual(1, f.SendMsg(a, B("x")));
+        }
+
+        Entry(a, 4);
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Poll, f.Ctrl, 1, 0), "voll: nicht schreibbereit");
+        Entry(b, 1);
+        Assert.AreEqual(1, Fixture.Call(f.Parent, Poll, f.Ctrl, 1, 0), "Empfänger lesbar");
+        Assert.AreEqual(1, f.RecvMsg(b, 16, 0, out _, out _, out _));
+        Entry(a, 4);
+        Assert.AreEqual(1, Fixture.Call(f.Parent, Poll, f.Ctrl, 1, 0), "wieder schreibbereit");
+    }
+
+    [TestMethod]
+    public void DgramEigenesShutWrGibtEpipeVorEconnrefused()
+    {
+        var f = new Fixture();
+        var (a, b) = f.SocketPair(Dgram | SockNonblock);
+        Assert.AreEqual(0, ((LinuxUnixSocket)f.Parent.GetDescriptor(a)!).Shutdown(1));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Close, (ulong)b));
+        Assert.AreEqual(-EPIPE, f.SendMsg(a, B("y")));
+    }
+
+    [TestMethod]
     public void SigpendingMeldetNurBlockierteAnhaengige()
     {
         var f = new Fixture();

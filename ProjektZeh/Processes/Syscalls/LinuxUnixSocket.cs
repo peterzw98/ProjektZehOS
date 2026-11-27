@@ -69,6 +69,11 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     /// <summary>Bytes je Richtung, wie Linux' Vorgabe für SO_SNDBUF (net.core.wmem_default).</summary>
     public const int Capacity = 212992;
 
+    /// <summary>Linux net.unix.max_dgram_qlen: so viele Datagramme warten höchstens beim Empfänger, auch leere (sonst unbegrenzter Kernelspeicher).</summary>
+    public const int MaxDgramQueue = 10;
+
+    private bool DgramQueueFull(Channel ch) => IsDgram && ch.Records.Count >= MaxDgramQueue;
+
     /// <summary>SCM_MAX_FD: höchstens so viele Dateien je Nachricht.</summary>
     public const int MaxFds = 253;
 
@@ -222,12 +227,17 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
                     return -err;
                 }
 
+                if (ch.WriteClosed)
+                {
+                    return done > 0 ? done : -EPIPE; // eigenes SHUT_WR geht vor ECONNREFUSED (Linux: sk_shutdown & SEND_SHUTDOWN zuerst)
+                }
+
                 if (IsDgram && PeerClosed)
                 {
                     return -ECONNREFUSED;
                 }
 
-                if (ch.WriteClosed || ch.ReadClosed)
+                if (ch.ReadClosed)
                 {
                     return done > 0 ? done : -EPIPE;
                 }
@@ -239,7 +249,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
 
                 int space = Capacity - ch.Bytes;
                 int want = data.Length - done;
-                if (IsStream ? space > 0 : space >= want)
+                if (IsStream ? space > 0 : space >= want && !DgramQueueFull(ch))
                 {
                     int take = Math.Min(space, want);
                     ch.Records.Enqueue(new Record(data.Slice(done, take).ToArray(), fdsTaken ? null : fds));
@@ -542,7 +552,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         }
 
         // Linux: schreibbereit, solange höchstens ein Viertel des Sendepuffers belegt ist; nach dem Ende der Gegenseite auch (write: EPIPE).
-        if (sndShut || outc.Bytes * 4L <= Capacity)
+        if (sndShut || (outc.Bytes * 4L <= Capacity && !DgramQueueFull(outc)))
         {
             r |= (short)(events & LinuxPipe.PollOut);
         }
