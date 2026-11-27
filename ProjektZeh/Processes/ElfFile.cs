@@ -60,6 +60,9 @@ internal readonly record struct ElfProgramHeader(uint Type, uint Flags, ulong Of
 /// überlaufsicher gegen die Dateigröße, denn das Abbild kommt vom Benutzer. Abschnittsköpfe braucht der Lader nicht und
 /// liest sie deshalb nicht. Plattformunabhängig, damit die Prüfungen auf dem Host testbar sind.
 /// </summary>
+/// <summary>Liest ab <paramref name="offset"/> höchstens <paramref name="dst"/>.Length Bytes; Anzahl (0 am Ende) oder -errno.</summary>
+internal delegate long ElfRangeReader(long offset, Span<byte> dst);
+
 internal sealed class ElfFile
 {
     public const ushort TypeExecutable = 2;
@@ -182,8 +185,106 @@ internal sealed class ElfFile
         return new ElfFile(type, entry, phoff, headers);
     }
 
+    /// <summary>
+    /// V28: Länge des Dateianfangs, den der Lader braucht: ELF-Kopf, Programmköpfe und die Dateibytes von PT_LOAD und PT_INTERP.
+    /// Abschnitte dahinter (Debuginformation, Symboltabellen) liest niemand; Ladybirds WebContent ist 175 MB groß, ladbar sind davon
+    /// rund 117 MB. Kopf und Programmköpfe kommen über <paramref name="read"/>; was sich nicht als ELF64 deuten lässt, bekommt die
+    /// ganze Datei (höchstens <paramref name="fileLength"/>), damit <see cref="Parse"/> den Fehler wie bisher meldet.
+    /// Rückgabe 0 oder -errno des Lesers.
+    /// </summary>
+    public static long LoadedLength(long fileLength, ElfRangeReader read, out long length)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        length = fileLength;
+        if (fileLength < HeaderSize)
+        {
+            return 0;
+        }
+
+        Span<byte> head = stackalloc byte[HeaderSize];
+        long r = ReadFull(read, 0, head);
+        if (r < 0)
+        {
+            return r;
+        }
+
+        if (r < HeaderSize || head[0] != 0x7F || head[1] != (byte)'E' || head[2] != (byte)'L' || head[3] != (byte)'F' || head[4] != 2 || head[5] != 1)
+        {
+            return 0;
+        }
+
+        ulong phoff = BinaryPrimitives.ReadUInt64LittleEndian(head.Slice(32));
+        ushort phentsize = BinaryPrimitives.ReadUInt16LittleEndian(head.Slice(54));
+        ushort phnum = BinaryPrimitives.ReadUInt16LittleEndian(head.Slice(56));
+        ulong tableSize = (ulong)phnum * ProgramHeaderSize;
+        if (phentsize != ProgramHeaderSize || phnum == 0 || phnum > MaxProgramHeaders || phoff > (ulong)fileLength || tableSize > (ulong)fileLength - phoff)
+        {
+            return 0;
+        }
+
+        byte[] table = new byte[(int)tableSize];
+        r = ReadFull(read, (long)phoff, table);
+        if (r < 0)
+        {
+            return r;
+        }
+
+        if (r < table.Length)
+        {
+            return 0;
+        }
+
+        ulong end = Math.Max((ulong)HeaderSize, phoff + tableSize);
+        for (int i = 0; i < phnum; i++)
+        {
+            ReadOnlySpan<byte> p = table.AsSpan(i * ProgramHeaderSize, ProgramHeaderSize);
+            uint type = BinaryPrimitives.ReadUInt32LittleEndian(p);
+            if (type != ElfProgramHeader.Load && type != ElfProgramHeader.Interpreter)
+            {
+                continue;
+            }
+
+            ulong offset = BinaryPrimitives.ReadUInt64LittleEndian(p.Slice(8));
+            ulong size = BinaryPrimitives.ReadUInt64LittleEndian(p.Slice(32));
+            if (!FitsInFile(offset, size, fileLength))
+            {
+                // Segment über das Dateiende: ganze Datei, der Lader lehnt es mit seiner Meldung ab.
+                return 0;
+            }
+
+            end = Math.Max(end, offset + size);
+        }
+
+        length = (long)end;
+        return 0;
+    }
+
+    /// <summary>Liest ab <paramref name="offset"/> bis <paramref name="dst"/> voll ist oder die Datei endet; Anzahl oder -errno.</summary>
+    public static long ReadFull(ElfRangeReader read, long offset, Span<byte> dst)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        int done = 0;
+        while (done < dst.Length)
+        {
+            long n = read(offset + done, dst.Slice(done));
+            if (n < 0)
+            {
+                return n;
+            }
+
+            if (n == 0)
+            {
+                break;
+            }
+
+            done += (int)n;
+        }
+
+        return done;
+    }
+
     /// <summary>[offset, offset + length) liegt vollständig in einer Datei der Länge <paramref name="fileLength"/>, ohne Überlauf.</summary>
-    public static bool FitsInFile(ulong offset, ulong length, int fileLength)
+    public static bool FitsInFile(ulong offset, ulong length, long fileLength)
     {
         ulong size = (ulong)fileLength;
         return offset <= size && length <= size - offset;

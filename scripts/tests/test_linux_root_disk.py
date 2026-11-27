@@ -149,6 +149,44 @@ class LinuxRootDiskTests(unittest.TestCase):
         _, result = self.build(lambda a: add_file(a, "bin/a", b"a"), adds=[f"/www/static.html={page}"])
         self.assertEqual(result["files"], 2)
 
+    def test_entry_below_link_or_file_fails(self):
+        def fill(archive):
+            add_file(archive, "usr/lib/a.so", b"a")
+            add_link(archive, "lib", "usr/lib")
+            add_file(archive, "lib/x.so", b"x")
+        with self.assertRaises(lrd.BundleError) as caught:
+            self.build(fill)
+        self.assertIn("Eintrag unter Link /lib wird nie erreicht: /lib/x.so", caught.exception.problems)
+        page = self.temp / "p.html"
+        page.write_text("p")
+        with self.assertRaises(lrd.BundleError) as caught:
+            self.build(lambda a: add_file(a, "bin/a", b"a"), adds=[f"/bin/a/p.html={page}"])
+        self.assertIn("Datei /bin/a", caught.exception.problems[0])
+        self.assertFalse((self.temp / "disk.img").exists())
+
+    def test_non_utf8_name_is_reported(self):
+        path = self.temp / "b.tar"
+        with tarfile.open(path, "w", format=tarfile.GNU_FORMAT, encoding="latin-1") as archive:
+            add_file(archive, "share/k\xe4se", b"k")
+        with self.assertRaises(lrd.BundleError) as caught:
+            lrd.build(path, self.temp / "disk.img", cluster_size=512, free_mib=1, work=self.temp)
+        self.assertIn("Name ist kein UTF-8: /share/k\\xe4se", caught.exception.problems)
+
+    def test_failed_write_leaves_no_image(self):
+        original = lrd.write_fat32
+
+        def broken(tree, image, **options):
+            image.write_bytes(b"halb")
+            raise OSError("Platte voll")
+        lrd.write_fat32 = broken
+        self.addCleanup(setattr, lrd, "write_fat32", original)
+        with self.assertRaises(OSError):
+            self.build(lambda a: add_file(a, "bin/a", b"a"))
+        self.assertFalse((self.temp / "disk.img").exists())
+        lrd.write_fat32 = original
+        self.build(lambda a: add_file(a, "bin/a", b"a"))
+        self.assertTrue((self.temp / "disk.img").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

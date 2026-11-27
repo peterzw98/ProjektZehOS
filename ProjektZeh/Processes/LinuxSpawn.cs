@@ -101,7 +101,8 @@ internal interface ILinuxSpawn
 /// </summary>
 internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 {
-    /// <summary>Größte Datei, die execve lädt (wie <c>CosmosLinuxRun.MaxFileSize</c>).</summary>
+    /// <summary>Größter ladbarer Teil einer Datei, den execve liest (V28: Kopf bis Ende des letzten Segments, ohne Debugabschnitte;
+    /// wie <c>CosmosLinuxRun.MaxFileSize</c>). Der Teil liegt beim Laden zweimal im Speicher (Puffer und Seiten).</summary>
     public const int MaxExecFileSize = 128 << 20;
 
     private const int ORdOnly = 0;
@@ -393,7 +394,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         return 0;
     }
 
-    /// <summary>Liest das Programm über das Dateisystem des Prozesses (nur reguläre Dateien bis <see cref="MaxExecFileSize"/>).</summary>
+    /// <summary>Liest den ladbaren Teil des Programms über das Dateisystem des Prozesses (reguläre Dateien, Teil bis <see cref="MaxExecFileSize"/>).</summary>
     private long ReadExecutable(string path, out byte[] elf)
     {
         elf = [];
@@ -424,30 +425,38 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                     return -LinuxSyscalls.EACCES;
                 }
 
-                if (st.Size > MaxExecFileSize || st.Size < 0)
+                if (st.Size < 0)
                 {
                     return -LinuxSyscalls.ENOMEM;
                 }
 
-                byte[] bytes = new byte[st.Size];
-                int done = 0;
-                while (done < bytes.Length)
+                // V28: nur Kopf, Programmköpfe und Segmente; die Grenze gilt für diesen Teil, nicht für Debugabschnitte dahinter.
+                ILinuxFile f = file;
+                long ReadAt(long offset, Span<byte> dst)
                 {
-                    long n = file.Read(bytes.AsSpan(done));
-                    if (n < 0)
-                    {
-                        return n;
-                    }
-
-                    if (n == 0)
-                    {
-                        break;
-                    }
-
-                    done += (int)n;
+                    long at = f.Seek(offset, 0);
+                    return at < 0 ? at : f.Read(dst);
                 }
 
-                elf = done == bytes.Length ? bytes : bytes.AsSpan(0, done).ToArray();
+                r = ElfFile.LoadedLength(st.Size, ReadAt, out long needed);
+                if (r < 0)
+                {
+                    return r;
+                }
+
+                if (needed > MaxExecFileSize)
+                {
+                    return -LinuxSyscalls.ENOMEM;
+                }
+
+                byte[] bytes = new byte[needed];
+                r = ElfFile.ReadFull(ReadAt, 0, bytes);
+                if (r < 0)
+                {
+                    return r;
+                }
+
+                elf = r == bytes.Length ? bytes : bytes.AsSpan(0, (int)r).ToArray();
                 return 0;
             }
             finally

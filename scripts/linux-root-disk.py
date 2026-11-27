@@ -156,6 +156,13 @@ def build_tree(files, dirs, links, adds: dict[PurePosixPath, Path], skip_danglin
         kinds[path] = "link"
     for path in files:
         kinds[path] = "file"
+    # Review P3 (1): Ein Eintrag unter einem Link oder einer Datei (tar 'lib -> usr/lib' und 'lib/x', --add /a/b mit a als Link)
+    # waere im Baum nie erreichbar und fiele still weg; das ist ein Fehler im Buendel.
+    hidden = sorted(f"Eintrag unter {'Link' if kinds[parent] == 'link' else 'Datei'} /{parent} wird nie erreicht: /{path}"
+                    for path in [*files, *dirs, *links] for parent in path.parents
+                    if parent != PurePosixPath() and kinds[parent] != "dir")
+    if hidden:
+        raise BundleError(hidden)
     children: dict[PurePosixPath, list[str]] = {}
     for path in kinds:
         if path != PurePosixPath():
@@ -239,6 +246,13 @@ def check_names(tree: Dir) -> tuple[list[str], dict]:
         seen: dict[str, str] = {}
         for name, child in node.children.items():
             path = f"{prefix}/{name}"
+            try:
+                name.encode("utf-8")
+            except UnicodeEncodeError:
+                # Review P3 (2): tarfile liefert fremde Bytes als Surrogate; Linux-Namen auf FAT brauchen UTF-8 (LFN in UTF-16).
+                shown = name.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+                problems.append(f"Name ist kein UTF-8: {prefix.encode('utf-8', 'surrogateescape').decode('utf-8', 'backslashreplace')}/{shown}")
+                continue
             units = len(name.encode("utf-16-le")) // 2
             if units > 255:
                 problems.append(f"Name mit {units} UTF-16-Einheiten (FAT hoechstens 255): {path}")
@@ -476,9 +490,14 @@ def build(bundle: Path, image: Path, dest: str = "lb", strip: int = 0, adds: lis
         tree.mtime = tree.mtime or time.time()
         node.children[dest_parts[-1]] = tree
         raw = image if image.suffix != ".qcow2" else staging / "disk.img"
-        layout = write_fat32(tree=disk, image=raw, cluster_size=cluster_size, free_bytes=free_mib << 20)
-        if raw != image:
-            to_qcow2(raw, image)
+        try:
+            layout = write_fat32(tree=disk, image=raw, cluster_size=cluster_size, free_bytes=free_mib << 20)
+            if raw != image:
+                to_qcow2(raw, image)
+        except BaseException:
+            # Review P3 (4): Das Ziel gab es vorher nicht (oben geprueft); ein halbes Image blockierte sonst den naechsten Lauf.
+            image.unlink(missing_ok=True)
+            raise
     return {**stats, **layout, "links": len(links), "warnings": warnings, "dest": "/".join(dest_parts)}
 
 
