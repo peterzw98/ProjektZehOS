@@ -207,6 +207,33 @@ public sealed class LinuxTerminalInputTests
     }
 
     [TestMethod]
+    public void ReadvMitRiesigenEintraegenAllokiertNichtUndLiefertFehler()
+    {
+        var (session, _, _, p) = Program();
+        session.Submit("hallo");
+        void Iov(int i, ulong b, ulong l)
+        {
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16, 8), b);
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16 + 8, 8), l);
+        }
+        // Ein einzelner Eintrag mit fast MAX_RW_COUNT: gelesen wird hoechstens ein Chunk (4096), nie die Eintragslaenge.
+        Iov(0, Base + 0x100, 0x7ffff000UL);
+        Assert.AreEqual(6, Call(p, LinuxSyscalls.Readv, 0, Base, 1));
+        session.Submit("hallo");
+        // Spaeterer Eintrag ueber der Grenze: -EINVAL, auch wenn der erste harmlos ist.
+        Iov(0, Base + 0x100, 4);
+        Iov(1, Base + 0x200, 0x80000000UL);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Readv, 0, Base, 2));
+        // Summe ueber MAX_RW_COUNT: -EINVAL.
+        Iov(0, Base + 0x100, 0x7ffff000UL);
+        Iov(1, Base + 0x200, 0x1000UL);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Readv, 0, Base, 2));
+        // Die Eingabezeile ging nirgends verloren.
+        Iov(0, Base + 0x100, 16);
+        Assert.AreEqual(6, Call(p, LinuxSyscalls.Readv, 0, Base, 1));
+    }
+
+    [TestMethod]
     public void PollMeldetEingabeUndWartetOhneFristAufEnter()
     {
         var (session, _, clock, p) = Program();
