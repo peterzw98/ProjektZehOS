@@ -190,7 +190,7 @@ Bau (L1-A, #448, PR #669, Kommentar 7151270240, Kopf `26f8f188`; Ladybird `6fba5
 
 Grenzen: ein Rechner, Linux-Host statt ZehOS, glibc statt musl; drei Läufe je Seite. `build-stats.json` vermerkt `"resumed": true` (Schritt `build` nach Unterbrechung weitergeführt), die Bauzeit ist daher keine Messung eines ganzen kalten Baus; `LAGOM_LINK_POOL_SIZE` nicht gesetzt (Ladybird hat an diesem Commit einen Fehler, siehe PR #669). Nicht gemessen: Verhalten bei mehreren Tabs, längeren Sitzungen oder Netzseiten.
 
-### Tor N1-Z (Lage, keine Entscheidung)
+### Tor N1-Z: GO (Peter, 27.11.2026)
 
 Nach der festen Regel des Plans (Tabelle im [Plan](superpowers/plans/2026-11-24-ladybird-n1-nachweise.md), Abschnitt „Tor“) am Stand `story/ladybird` `e548f75b`:
 
@@ -205,6 +205,8 @@ Nach der festen Regel des Plans (Tabelle im [Plan](superpowers/plans/2026-11-24-
 | #423 abgenommen | **ja**, Entscheidung Peter 27.11. (Option A): AOT fertig und Standard; Reste (Schlüsselschutz, `.aot`-Pakete, VMware) in #749, betreffen den nativen Weg nicht | #423, #749 |
 
 Mit der Abnahme von #423 (Peter, 27.11.) greift wegen D `offen` die Zeile „C oder D `offen`, sonst wie Zeile 1: **Peter kann GO geben, Ladybird (N6) wartet**“; mit D `trägt` oder `glibc` wäre es GO. Die Regel wurde nur angewandt, nicht entschieden: **Die Entscheidung trifft Peter oder Lars.**
+
+**Entscheidung: GO** (Peter im Terminal, 27. November 2026): Der Ladybird-Port beginnt, ohne auf D zu warten. D bleibt offen und wird mit dem Port selbst geschlossen (Ladybird ohne Oberfläche im ZehOS-Gast). Nächste Pakete: dynamisches Laden über `PT_INTERP` (die musl-Helfer `WebContent`, `RequestServer` und `ImageDecoder` sind dynamisch gelinkt und brauchen nur `ld-musl`, `libstdc++`, `libgcc_s`, WebContent zusätzlich `libdrm`), Ladybird-Bau ohne Qt für den headless-Start, Fehlersignale (V24).
 
 ### Offene Punkte
 
