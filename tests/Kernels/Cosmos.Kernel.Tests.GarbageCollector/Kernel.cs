@@ -2327,39 +2327,42 @@ public class Kernel : Sys.Kernel
         GC.KeepAlive(lead);
     }
 
-    private const int NeighbourProbePairs = 128;
+    private const int NeighbourProbes = 256;
     private const long NeighbourPatternA = 0x1111111111111111;
     private const long NeighbourPatternC = 0x7EEEEEEEEEEEEEEE;
 
     /// <summary>
-    /// Allocates live and dead probes in turn. Every live one has a hash code and patterned fields,
-    /// every dead one a sync-table entry. Returns how many dead probes start directly behind a live
-    /// one (header slot in the live probe's last word) and how many live ones directly behind a dead one.
+    /// Allocates triples of a live, a dead and a live probe back to back, before anything else
+    /// allocates (a lock takes a sync-table entry and a <c>Lock</c>). Every live probe has a hash
+    /// code and patterned fields, every dead one a sync-table entry. Returns how many dead probes
+    /// start directly behind a live one (header slot in the live probe's last word) and, in
+    /// <paramref name="liveBehindDead"/>, how many live ones directly behind a dead one.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int FillNeighbourProbes(HeaderProbe[] keep, int[] hashes, out int liveBehindDead)
     {
         int deadBehindLive = 0;
         liveBehindDead = 0;
-        nint previousDead = 0;
-        for (int i = 0; i < keep.Length; i++)
+        for (int i = 0; i + 1 < keep.Length; i += 2)
         {
-            var live = new HeaderProbe { A = NeighbourPatternA, B = i, C = NeighbourPatternC };
-            hashes[i] = RuntimeHelpers.GetHashCode(live);
-            keep[i] = live;
-            nint liveAddress = AddressOf(live);
-            if (previousDead != 0 && liveAddress == previousDead + 40)
+            var front = new HeaderProbe { A = NeighbourPatternA, B = i, C = NeighbourPatternC };
+            var dead = new HeaderProbe { A = i, C = i };
+            var back = new HeaderProbe { A = NeighbourPatternA, B = i + 1, C = NeighbourPatternC };
+            keep[i] = front;
+            keep[i + 1] = back;
+            if (AddressOf(dead) == AddressOf(front) + 40)
+            {
+                deadBehindLive++;
+            }
+
+            if (AddressOf(back) == AddressOf(dead) + 40)
             {
                 liveBehindDead++;
             }
 
-            var dead = new HeaderProbe { A = i, C = i };
+            hashes[i] = RuntimeHelpers.GetHashCode(front);
+            hashes[i + 1] = RuntimeHelpers.GetHashCode(back);
             TakeSyncEntry(dead);
-            previousDead = AddressOf(dead);
-            if (previousDead == liveAddress + 40)
-            {
-                deadBehindLive++;
-            }
         }
 
         return deadBehindLive;
@@ -2386,15 +2389,15 @@ public class Kernel : Sys.Kernel
     private static void TestGCSweepLiveNeighbourHeaderIntact()
     {
         CoreGC.Collect();
-        var keep = new HeaderProbe[NeighbourProbePairs];
-        var hashes = new int[NeighbourProbePairs];
+        var keep = new HeaderProbe[NeighbourProbes];
+        var hashes = new int[NeighbourProbes];
         int deadBehindLive = FillNeighbourProbes(keep, hashes, out int liveBehindDead);
         Assert.True(deadBehindLive > 0, "GC: some dead probes start directly behind a live one");
         Assert.True(liveBehindDead > 0, "GC: some live probes start directly behind a dead one");
 
         CoreGC.Collect();
         CoreGC.Collect();
-        ReuseNeighbourSlots(2 * NeighbourProbePairs);
+        ReuseNeighbourSlots(NeighbourProbes);
         CoreGC.Collect();
 
         int broken = 0;
