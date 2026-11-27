@@ -41,6 +41,7 @@
     <!-- Ladybird V3: Befehl run fuer statische Linux-Programme, nur Testbau. Die Probe startet beim Boot ein eingebettetes Buendel und haelt an. -->
     <ZehOSLinuxRun Condition="'$(ZehOSLinuxRunProbe)' == 'true'">true</ZehOSLinuxRun>
     <DefineConstants Condition="'$(ZehOSLinuxRun)' == 'true'">$(DefineConstants);ZEHOS_LINUX_RUN</DefineConstants>
+    <DefineConstants Condition="'$(ZehOSLinuxRun)' == 'true' and '$(ZehOSLinuxTrace)' == 'true'">$(DefineConstants);ZEHOS_LINUX_TRACE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSLinuxRunProbe)' == 'true'">$(DefineConstants);ZEHOS_LINUX_RUN_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>

@@ -480,6 +480,40 @@ internal static unsafe class CosmosLinuxRun
         return 0;
     }
 
+#if ZEHOS_LINUX_TRACE
+    // Testbau -p:ZehOSLinuxTrace=true: Ringpuffer der letzten Aufrufe (alle Prozesse); bei exit_group mit Status != 0 kommen die
+    // letzten 50 mit Rueckgabe ins Serial ("LXTRACE ..."). Nur Diagnose, kein Teil des Normalbaus.
+    private const int TraceSize = 1024;
+    private static readonly long[] TraceNr = new long[TraceSize], TraceRet = new long[TraceSize], TracePid = new long[TraceSize];
+    private static readonly ulong[] TraceA = new ulong[TraceSize * 4];
+    private static int _traceNext;
+
+    private static void Trace(LinuxUserProcess process, SyscallArgs call, long result)
+    {
+        // Rauschen (Uhr, Speicher, Signale, futex, sched_yield) bleibt draussen, sonst verdraengt es die Datei-Aufrufe aus dem Ring.
+        long number = call.Number;
+        if (number != LinuxSyscalls.ExitGroup && (number == 228 || number == 9 || number == 10 || number == 11 || number == 28 || number == 14 || number == 13
+            || number == 202 || number == 24 || number == 35 || number == 230))
+        {
+            return;
+        }
+
+        int i = (System.Threading.Interlocked.Increment(ref _traceNext) - 1) & (TraceSize - 1);
+        TraceNr[i] = call.Number; TraceRet[i] = result; TracePid[i] = process.Pid;
+        TraceA[i * 4] = call.A0; TraceA[i * 4 + 1] = call.A1; TraceA[i * 4 + 2] = call.A2; TraceA[i * 4 + 3] = call.A3;
+        if (call.Number == LinuxSyscalls.ExitGroup && (call.A0 & 0xff) != 0)
+        {
+            int end = _traceNext;
+            for (int n = Math.Max(end - 600, 0); n < end; n++)
+            {
+                int j = n & (TraceSize - 1);
+                Serial("LXTRACE pid=" + TracePid[j] + " nr=" + TraceNr[j] + " a=" + TraceA[j * 4].ToString("x") + "," + TraceA[j * 4 + 1].ToString("x")
+                    + "," + TraceA[j * 4 + 2].ToString("x") + "," + TraceA[j * 4 + 3].ToString("x") + " ret=" + TraceRet[j]);
+            }
+        }
+    }
+#endif
+
     private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
 
     /// <summary>Lädt und startet das Programm und wartet auf sein Ende, höchstens <paramref name="timeoutSeconds"/> Sekunden.</summary>
@@ -969,6 +1003,9 @@ internal static unsafe class CosmosLinuxRun
             var args = call;
             long takenBefore = me.Process.SignalsTaken;
             long result = LinuxSyscalls.Dispatch(ref args, me.Process);
+#if ZEHOS_LINUX_TRACE
+            Trace(me.Process, call, result);
+#endif
             if (me.Resume)
             {
                 ResumeParent(me, frame);
