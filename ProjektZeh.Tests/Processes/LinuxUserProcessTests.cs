@@ -179,6 +179,23 @@ public sealed class LinuxUserProcessTests
     }
 
     [TestMethod]
+    public void FaultWithoutFrameReportsOutOfMemory()
+    {
+        // V43: Verweigert der Kernel den Frame (Reserve), meldet der Fehler "kein Speicher": Der Lauf beendet den Prozess mit SIGKILL
+        // wie der OOM-Killer von Linux, statt SIGSEGV an einen Handler zu geben, der selbst wieder Speicher braucht.
+        var (process, pages, image, _) = Start();
+        pages.Limit = pages.Frames.Count;
+        Assert.IsFalse(process.HandlePageFault(Data + Page, NotPresentWrite, out bool bus, out bool noMemory));
+        Assert.IsTrue(noMemory);
+        Assert.IsFalse(bus);
+        Assert.IsFalse(process.HandlePageFault(Code, PresentWrite, out _, out noMemory), "Schutzverletzung");
+        Assert.IsFalse(noMemory, "Schutzverletzung ist kein Speichermangel");
+        pages.Limit = int.MaxValue;
+        Assert.IsTrue(process.HandlePageFault(Data + Page, NotPresentWrite, out _, out noMemory));
+        Assert.IsFalse(noMemory);
+    }
+
+    [TestMethod]
     public void UserMemoryChecksRightsAndIsAllOrNothing()
     {
         var (process, pages, image, _) = Start();

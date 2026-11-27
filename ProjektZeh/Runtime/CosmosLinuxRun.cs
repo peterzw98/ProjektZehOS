@@ -1461,10 +1461,11 @@ internal static unsafe class CosmosLinuxRun
         }
 
         bool busError = false; // V30-P3: Dateiseite nicht lesbar, Linux schickt SIGBUS statt SIGSEGV
+        bool outOfMemory = false; // V43: kein Frame mehr (Kernel-Reserve), Linux beendet mit SIGKILL (OOM-Killer)
         try
         {
             // Im vfork-Kind leitet der Prozess an den Speicher des Elternprozesses weiter (V15).
-            if (vector == PageFault && me.Process.HandlePageFault(address, error, out busError))
+            if (vector == PageFault && me.Process.HandlePageFault(address, error, out busError, out outOfMemory))
             {
                 return 1;
             }
@@ -1486,7 +1487,8 @@ internal static unsafe class CosmosLinuxRun
         ulong faultRip = frame->Rip; // DeliverFault setzt den Rahmen auf den Handler
         try
         {
-            if (!me.Process.InVfork && DeliverFault(me, frame, vector, error, address, busError))
+            // V43: Ohne Speicher kein Handler: Er bräuchte selbst Seiten (Stack, Absturzbericht), SIGKILL lässt sich nicht abfangen.
+            if (!outOfMemory && !me.Process.InVfork && DeliverFault(me, frame, vector, error, address, busError))
             {
                 // Nur merken (kein Protokoll im Ausnahmehandler); Fault bleibt false, der Thread läuft im Handler weiter.
                 me.FaultVector = vector;
@@ -1505,7 +1507,7 @@ internal static unsafe class CosmosLinuxRun
 
         // V15: Eine Ausnahme in einem Kindprozess (nach execve) beendet nur ihn; sein Thread meldet sie nach dem Verlassen.
         // Im vfork-Kind (vor execve) bricht sie den ganzen Lauf ab: Der Thread trägt die Register des blockierten Elternthreads.
-        int signal = busError ? LinuxFault.SigBus : SignalOf(vector);
+        int signal = outOfMemory ? LinuxFault.SigKill : busError ? LinuxFault.SigBus : SignalOf(vector);
         me.Fault = true;
         me.FaultVector = vector;
         me.FaultSignal = signal;

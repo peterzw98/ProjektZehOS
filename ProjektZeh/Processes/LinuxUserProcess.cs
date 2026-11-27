@@ -93,6 +93,9 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     private readonly LinuxOpenFiles _openFiles;
     private readonly ulong _maxFrames;
 
+    /// <summary>V43: Ein <see cref="NewFrame"/> unter <see cref="_memGate"/> bekam keinen Frame; nur für den laufenden Seitenfehler.</summary>
+    private bool _noFrame;
+
     // V10: Threads teilen den Adressraum. Diese Sperre schützt Karte, Frames und brk; sie wird in Aufrufen und Seitenfehlern
     // genommen (Threadkontext, Interrupts an), nie im Interrupt. Platz in der Reihenfolge: nach der Sperre der futex-Tabelle
     // (LinuxFutexTable liest den Wert unter ihrer Sperre), vor der Sperre der UserPageTable (in IUserPages) und des PageAllocator.
@@ -911,16 +914,25 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// Wie <see cref="HandlePageFault(ulong, ulong)"/>; <paramref name="busError"/> (V30-P3) meldet bei false, dass eine Dateiseite sich nicht
     /// lesen ließ (Lesefehler oder Seite ganz hinter dem Dateiende): Linux schickt dann SIGBUS statt SIGSEGV.
     /// </summary>
-    public bool HandlePageFault(ulong address, ulong error, out bool busError)
+    public bool HandlePageFault(ulong address, ulong error, out bool busError) => HandlePageFault(address, error, out busError, out _);
+
+    /// <summary>
+    /// Wie <see cref="HandlePageFault(ulong, ulong, out bool)"/>; <paramref name="outOfMemory"/> (V43) meldet bei false, dass für eine
+    /// erlaubte Seite kein Frame mehr kam (Prozessgrenze oder Kernel-Reserve). Linux beendet den Prozess dann mit SIGKILL (OOM-Killer).
+    /// </summary>
+    public bool HandlePageFault(ulong address, ulong error, out bool busError, out bool outOfMemory)
     {
         if (_vforkOf != null)
         {
-            return _vforkOf.HandlePageFault(address, error, out busError);
+            return _vforkOf.HandlePageFault(address, error, out busError, out outOfMemory);
         }
 
         lock (_memGate)
         {
-            return HandlePageFaultLocked(address, error, out busError);
+            _noFrame = false;
+            bool handled = HandlePageFaultLocked(address, error, out busError);
+            outOfMemory = !handled && _noFrame;
+            return handled;
         }
     }
 
@@ -1387,7 +1399,12 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         return frame;
     }
 
-    private ulong NewFrame() => (ulong)_frames.Count >= _maxFrames ? 0 : _pages.AllocateFrame();
+    private ulong NewFrame()
+    {
+        ulong frame = (ulong)_frames.Count >= _maxFrames ? 0 : _pages.AllocateFrame();
+        _noFrame |= frame == 0;
+        return frame;
+    }
 
     /// <summary>Gibt [start, end) frei; start und end ausgerichtet und im Adressraum der Karte.</summary>
     private bool Release(ulong start, ulong end)
