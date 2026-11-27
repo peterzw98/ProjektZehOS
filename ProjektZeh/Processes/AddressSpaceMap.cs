@@ -18,6 +18,9 @@ internal sealed class AddressSpaceMap
 {
     public const ulong PageSize = 4096;
 
+    /// <summary>V48: Obergrenze der Bereiche wie Linux vm.max_map_count; darüber scheitert mmap mit ENOMEM statt den Kernelspeicher zu füllen.</summary>
+    public const int MaxRegions = 65530;
+
     private readonly record struct Region(ulong Start, ulong End, MapAccess Access);
 
     private readonly ulong _start;
@@ -53,6 +56,11 @@ internal sealed class AddressSpaceMap
         if (!check.IsOK())
         {
             return ResultObjectFactory.CreateFailure<ulong>(check);
+        }
+
+        if (_regions.Count >= MaxRegions)
+        {
+            return ResultObjectFactory.CreateFailure<ulong>(ResultCode.Failure, "Zu viele Abbildungen (vm.max_map_count).");
         }
 
         if (placement == Placement.Hint)
@@ -109,6 +117,11 @@ internal sealed class AddressSpaceMap
         if (!IsFullyCovered(address, endAddress))
         {
             return ResultErr.CreateFailure(ResultCode.NotFound, "Der Bereich enthält unbelegte Adressen.");
+        }
+
+        if (_regions.Count >= MaxRegions)
+        {
+            return ResultErr.CreateFailure(ResultCode.Failure, "Zu viele Abbildungen (vm.max_map_count).");
         }
 
         Cut(address, endAddress);

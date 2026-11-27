@@ -401,6 +401,25 @@ public sealed class AddressSpaceMapTests
         }
     }
 
+    [TestMethod]
+    public void ReserveUeberAbbildungsgrenzeScheitertUndFreigabeMachtPlatz()
+    {
+        AddressSpaceMap map = Create();
+        // Jede zweite Seite belegen: keine Verschmelzung, jede Abbildung bleibt eine eigene Region.
+        for (int i = 0; i < AddressSpaceMap.MaxRegions; i++)
+        {
+            ResultObject<ulong> r = map.Reserve(Base + (ulong)i * 2 * Page, Page, MapAccess.ReadWrite, Placement.FixedReplace);
+            Assert.IsTrue(r.IsOK(), $"Abbildung {i}");
+        }
+
+        Assert.IsFalse(map.Reserve(0, Page, MapAccess.ReadWrite, Placement.Hint).IsOK());
+        Assert.IsFalse(map.Reserve(Top - Page, Page, MapAccess.ReadWrite, Placement.FixedNoReplace).IsOK());
+        Assert.IsFalse(map.Protect(Base, Page, MapAccess.Read).IsOK());
+
+        Assert.IsTrue(map.Release(Base, Page).IsOK());
+        Assert.IsTrue(map.Reserve(0, Page, MapAccess.ReadWrite, Placement.Hint).IsOK());
+    }
+
     private static int FindRun(MapAccess?[] model, int from, int count)
     {
         int run = 0;
