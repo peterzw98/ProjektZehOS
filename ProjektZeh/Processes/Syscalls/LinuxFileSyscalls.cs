@@ -133,7 +133,7 @@ internal static partial class LinuxSyscalls
     /// </summary>
     internal static long ReleaseIfUnused(ILinuxProcess p, ILinuxDescriptor d)
     {
-        if (d is not ILinuxFile and not LinuxPipeEnd and not LinuxUnixSocket)
+        if (d is not ILinuxFile and not LinuxPipeEnd and not LinuxUnixSocket and not ILinuxAnonFile)
         {
             return 0; // Terminal und andere gehören dem Prozess, nicht der Tabelle
         }
@@ -155,6 +155,12 @@ internal static partial class LinuxSyscalls
         if (d is LinuxUnixSocket socket)
         {
             socket.Close(); // V16: Gegenseite sieht EOF/EPIPE, Ungelesenes und mitgeschickte Dateien verfallen
+            return 0;
+        }
+
+        if (d is ILinuxAnonFile anon)
+        {
+            anon.Close(); // V20: eventfd, inotify
             return 0;
         }
 

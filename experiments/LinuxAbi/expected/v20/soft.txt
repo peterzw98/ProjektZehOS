@@ -1,0 +1,64 @@
+eventfd2_badflag=-1 errno=22
+eventfd2_ok=1 errno=0
+fd_cloexec=1 errno=0
+fl=2050 errno=0
+put4=8 errno=0
+poll=5 errno=0
+take=8 v=7
+take_empty=-1 errno=11
+poll_empty=4 errno=0
+read_small=-1 errno=22
+read_zero=-1 errno=22
+write_small=-1 errno=22
+put_max=-1 errno=22
+put_full=8 errno=0
+put_over=-1 errno=11
+poll_full=1 errno=0
+take_full=8 high=ffffffff
+fstat=0 errno=0
+mode=600 size=0
+fstatfs=0 errno=0
+anon_magic=9041934
+sem1=8 v=1
+sem2=8 v=1
+sem3=-1 errno=11
+wait=1 errno=0
+child=8 v=42 status=0
+statfs_root=0 errno=0
+namelen=255 bsize_ok=1
+statfs_missing=-1 errno=2
+statfs_fault=-1 errno=14
+fstatfs_badfd=-1 errno=9
+pipe=0 errno=0
+fstatfs_pipe=0 errno=0
+pipe_magic=50495045
+socketpair=0 errno=0
+fstatfs_sock=0 errno=0
+sock_magic=534f434b
+init1_badflag=-1 errno=22
+init1_ok=1 errno=0
+fd_cloexec=1 errno=0
+fl=2048 errno=0
+add_mask0=-1 errno=22
+add_addcreate=-1 errno=22
+add_badfd=-1 errno=9
+add_notinotify=-1 errno=22
+add_missing=-1 errno=2
+add_root=1 errno=0
+add_same=1 errno=0
+add_create_again=-1 errno=17
+tmp=1 errno=0
+add_onlydir=-1 errno=20
+add_file=1 errno=0
+poll_none=0 errno=0
+read_none=-1 errno=11
+write=-1 errno=9
+rm_bad=-1 errno=22
+rm_file=0 errno=0
+rm_again=-1 errno=22
+poll_ignored=1 errno=0
+read_small=-1 errno=22
+read_ignored=16 wd_ok=1 mask=8000 len=0
+fstat=0 errno=0
+mode=600
+ende

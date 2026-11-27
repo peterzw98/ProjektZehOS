@@ -31,6 +31,7 @@ internal sealed partial class LinuxUnixSocket
     private int _backlog;
 
     // 0 frei, 1 connect läuft oder fertig: verhindert zwei gleichzeitige connect desselben Sockets (Linux: EALREADY/EISCONN).
+    // Geschrieben und gelesen nur unter _nameGate.
     private int _connecting;
 
     /// <summary>Lauscht (listen); für SO_ACCEPTCONN.</summary>
@@ -96,14 +97,16 @@ internal sealed partial class LinuxUnixSocket
     /// <summary>listen: -EINVAL verbunden, unbenannt (Linux bindet hier nicht automatisch) oder geschlossen; erneutes listen ändert nur den Rückstand.</summary>
     public long Listen(int backlog)
     {
-        if (IsConnected || Volatile.Read(ref _connecting) != 0)
+        if (IsConnected)
         {
             return -EINVAL;
         }
 
         lock (_nameGate)
         {
-            if (_name.IsUnnamed || Volatile.Read(ref _closed) != 0)
+            // _connecting unter _nameGate lesen: ConnectTo reserviert unter derselben Sperre, sonst könnte ein paralleles connect
+            // zwischen Prüfung und _listening = true durchrutschen (Socket wäre dann lauschend und verbunden).
+            if (_connecting != 0 || _name.IsUnnamed || Volatile.Read(ref _closed) != 0)
             {
                 return -EINVAL;
             }
@@ -130,20 +133,29 @@ internal sealed partial class LinuxUnixSocket
             return -EISCONN;
         }
 
-        if (IsListening)
+        lock (_nameGate)
         {
-            return -EINVAL;
-        }
+            // Lauschzustand und Reservierung zusammen unter _nameGate, passend zu Listen (Rennen listen gegen connect).
+            if (_listening)
+            {
+                return -EINVAL;
+            }
 
-        if (Interlocked.CompareExchange(ref _connecting, 1, 0) != 0)
-        {
-            return IsConnected ? -EISCONN : -EALREADY;
+            if (_connecting != 0)
+            {
+                return IsConnected ? -EISCONN : -EALREADY;
+            }
+
+            _connecting = 1;
         }
 
         long r = listener.Enqueue(this, nonBlocking, abort);
         if (r < 0)
         {
-            Volatile.Write(ref _connecting, 0);
+            lock (_nameGate)
+            {
+                _connecting = 0;
+            }
         }
 
         return r;
@@ -182,6 +194,8 @@ internal sealed partial class LinuxUnixSocket
 
             var server = new LinuxUnixSocket(Type, false, CreatorPid);
             server._name = _name; // das angenommene Ende meldet den Namen des Lauschenden (getsockname, getpeername der Gegenseite)
+            server._bound = true; // Linux: bind auf ein angenommenes Ende -EINVAL (unix_bind: schon ein Name), wie auf ein gebundenes
+            server._connecting = 1; // verbunden: listen -EINVAL, connect -EISCONN
             Connect(client, server);
             _pending.Enqueue(server);
             Monitor.PulseAll(_nameGate); // wartende accept
