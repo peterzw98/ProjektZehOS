@@ -1,0 +1,11 @@
+r1 rc=1
+r2 rc=1
+r3 rc=1
+r4 rc=1
+r5 rc=1
+r6 rc=1
+r7 rc=1
+r8 rc=1
+r9 rc=1
+r10 rc=1
+done
