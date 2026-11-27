@@ -1,0 +1,87 @@
+# gekuerztes serielles Protokoll, Stand d1d06dc0, Lauf halt-d1d06dc0-sockloop-smp1-oom
+# (Timer/Scheduler-Zeilen entfernt, LINUXRUN OUT dekodiert)
+  CosmosOS v3.0.97-zehos.0.g9ff7e86 (gen3)
+[linux-run] Kernel-Reserve 64 MiB, frei 432 von 477 MiB
+## GC-Zeilen im ganzen Lauf (Zeilennummer im Original)
+131: [GC] Initializing with free list allocator
+132: [GC] Initialization complete
+138: [GC] Registered frozen segment at 0xFFFFFFFF806C7998, size: 702064
+618: [GC] Collection #1, refills since the last: 9211
+619: [GC] WARNING: Mark stack overflow
+620: [GC] WARNING: finalizer queue cannot grow, finalization postponed
+621: [GC] Freed 747925 objects
+627: [GC] Collection #2, refills since the last: 619
+628: [GC] Freed 86177 objects
+629: [GC] Collection #3, refills since the last: 3
+630: [GC] Freed 17 objects
+## ab dem letzten LINUXRUN BEGIN (Zeile 555)
+LINUXRUN BEGIN bin/memprobe
+OUT START sockloop gesamt=477 frei=428 grenze=150
+OUT PROG 2 stage 1
+OUT PROG 2 stage 2
+OUT PROG 2 stage 3
+OUT PROG 2 stage 4
+OUT PROG 2 stage 5
+OUT PROG 2 stage 6
+OUT PROG 2 stage 7
+OUT PROG 2 stage 8
+OUT PROG 2 stage 9
+OUT PROG 2 stage 10
+OUT PROG 2 stage 11
+OUT PROG 2 stage 12
+OUT PROG 2 stage 13
+OUT PROG 2 stage 14
+OUT PROG 2 stage 15
+OUT PROG 2 stage 16
+OUT PROG 2 stage 17
+OUT PROG 2 stage 18
+OUT PROG 2 stage 19
+OUT PROG 2 stage 20
+OUT PROG 2 stage 21
+OUT PROG 2 stage 22
+OUT PROG 2 stage 23
+OUT PROG 2 stage 24
+OUT PROG 2 stage 25
+OUT PROG 2 stage 26
+OUT PROG 2 stage 27
+OUT PROG 2 stage 28
+OUT PROG 2 stage 29
+OUT PROG 2 stage 30
+OUT PROG 2 stage 31
+OUT PROG 2 stage 32
+OUT PROG 2 stage 33
+OUT PROG 2 stage 34
+OUT PROG 2 stage 35
+OUT PROG 2 stage 36
+OUT PROG 2 stage 37
+OUT PROG 2 stage 38
+OUT PROG 2 stage 39
+OUT PROG 2 stage 40
+OUT PROG 2 stage 41
+OUT PROG 2 stage 42
+OUT PROG 2 stage 43
+OUT PROG 2 stage 44
+OUT PROG 2 stage 45
+OUT PROG 2 stage 46
+[GC] Collection #1, refills since the last: 9211
+[GC] WARNING: Mark stack overflow
+[GC] WARNING: finalizer queue cannot grow, finalization postponed
+[GC] Freed 747925 objects
+OUT PROG 2 stage 47
+OUT PROG 2 stage 48
+OUT PROG 2 stage 49
+OUT PROG 2 stage 50
+OUT PROG 2 stage 51
+[GC] Collection #2, refills since the last: 619
+[GC] Freed 86177 objects
+[GC] Collection #3, refills since the last: 3
+[GC] Freed 17 objects
+=== DOTNET EXCEPTION THROWN ===
+Message: Insufficient memory to continue the execution of the program.
+Exception at 0x18446744071566244395
+RBP: 0x18446603336685088752
+RSP: 0x18446603336685088624
+*** UNHANDLED EXCEPTION ***
+No catch handler found. System halting...
+[FAILFAST] Unhandled exception
+Exception: Insufficient memory to continue the execution of the program.

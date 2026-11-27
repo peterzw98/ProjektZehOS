@@ -1,0 +1,49 @@
+# gekuerztes serielles Protokoll, Stand c95ab059, Lauf halt-c95ab059-maps-smp1
+# (Timer/Scheduler-Zeilen entfernt, LINUXRUN OUT dekodiert)
+  CosmosOS v3.0.97-zehos.0.g9ff7e86 (gen3)
+[linux-run] Kernel-Reserve 64 MiB, frei 432 von 477 MiB
+## GC-Zeilen im ganzen Lauf (Zeilennummer im Original)
+131: [GC] Initializing with free list allocator
+132: [GC] Initialization complete
+138: [GC] Registered frozen segment at 0xFFFFFFFF806C7998, size: 702064
+5291: [GC] Collection #1, refills since the last: 18751
+5292: [GC] Freed 1231008 objects
+5670: [GC] Collection #2, refills since the last: 22130
+5671: [GC] Freed 3215238 objects
+5679: [GC] Collection #3, refills since the last: 13593
+5680: [GC] Freed 1401251 objects
+5681: [GC] Registered frozen segment at 0xFFFF8000180D9010, size: 8
+## ab dem letzten LINUXRUN BEGIN (Zeile 5699)
+LINUXRUN BEGIN bin/memprobe
+OUT START maps gesamt=477 frei=403 grenze=0
+OUT PROG 2 stage 1
+OUT PROG 2 stage 2
+ZehOS: Thread 749, Wasm-Worker 11, Gastcode 0, IF 1
+========================================
+CPU EXCEPTION: Page Fault (#PF)
+========================================
+Interrupt Vector: 14
+CPU Flags (ESR): 0x10206
+Registers:
+  RAX: 0xFFFF800019716138  RBX: 0xFFFF800000289D30
+  RCX: 0x6E  RDX: 0xFFFFFFFF80785A90
+  RSI: 0x4  RDI: 0x0
+  RBP: 0xFFFF80001BA67800  R8:  0x9D0000
+  R9:  0xD9C0CE2902421B75  R10: 0xFFFF8000006273B8
+  R11: 0x3  R12: 0x415FE8
+  R13: 0x1E8480  R14: 0x0
+  R15: 0x1E2
+  RIP: 0xFFFFFFFF803CA733  RSP: 0xFFFF80001BA677E0
+  RFL: 0x10206
+  CR2: 0x14
+Stack trace (raw return addresses, symbolicate with nm):
+  ip:  0xFFFFFFFF803CA733
+  sp0: 0x800006E002E9DA0 (return address if ip is a frameless leaf)
+  [0]  0xFFFFFFFF80359E26
+  [1]  0xFFFFFFFF8034143C
+  [2]  0xFFFFFFFF803469BE
+  [3]  0xFFFFFFFF8030DC4B
+  [4]  0xFFFFFFFF8023EF45
+  [5]  0xFFFFFFFF800241A2
+========================================
+System halted.
