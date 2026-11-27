@@ -13,7 +13,9 @@ namespace ProjektZeh.Processes.Syscalls;
 /// <para>
 /// Sperren: Adresse, Port und Optionen liegen unter <c>_nameGate</c> (Blattsperre wie bei Unix-Namen); der UDP-Eingang unter
 /// <see cref="_inboxGate"/>, ebenfalls eine Blattsperre. Zustellen nimmt nur die Eingangssperre des Ziels und danach <c>_idle</c> zum
-/// Wecken von poll; die Porttabelle wird vorher und ohne Socket-Sperre befragt.
+/// Wecken von poll; die Porttabelle wird vorher und ohne Socket-Sperre befragt. V27b: <see cref="_bindGate"/> macht bind, automatisches
+/// Binden und UDP-disconnect zu einem Schritt (Linux: lock_sock); Reihenfolge <see cref="_bindGate"/> vor <c>_nameGate</c> und vor der Sperre
+/// der Porttabelle, nie umgekehrt.
 /// </para>
 /// </summary>
 internal sealed partial class LinuxUnixSocket
@@ -28,6 +30,7 @@ internal sealed partial class LinuxUnixSocket
 
     private const long EDESTADDRREQ = 89;
 
+    private readonly object _bindGate = new();
     private readonly object _inboxGate = new();
     private readonly Queue<Datagram> _inbox = new();
     private int _inboxBytes;
@@ -39,6 +42,11 @@ internal sealed partial class LinuxUnixSocket
     private uint _udpPeerAddr;
     private int _udpPeerPort;
 
+    // V27b: bind mit Adresse ungleich 0 beziehungsweise Port ungleich 0 (Linux SOCK_BINDADDR_LOCK/SOCK_BINDPORT_LOCK); UDP-disconnect behält
+    // nur das, was so gebunden wurde. Nur unter _nameGate.
+    private bool _addrLocked;
+    private bool _portLocked;
+
     // Socketoptionen, die getsockopt wieder meldet; ohne Wirkung auf die Übertragung (Loopback ohne Nagle und ohne Keepalive-Pakete).
     private int _reuseAddr;
     private int _reusePort;
@@ -47,6 +55,12 @@ internal sealed partial class LinuxUnixSocket
 
     // Fehler eines unverbundenen Sockets für SO_ERROR (nichtblockierendes connect auf einen Port ohne Lauschenden: ECONNREFUSED).
     private long _connectError;
+
+    // V27b: Zustand nach einem nichtblockierenden connect mit EINPROGRESS (Linux sock->state SS_CONNECTING). 1: verweigert (TCP_CLOSE),
+    // das nächste connect meldet den Fehler; 2: aufgebaut, das nächste connect meldet 0. Nur über Interlocked.
+    private int _connectPending;
+    private const int PendingRefused = 1, PendingDone = 2;
+    private const long ECONNABORTED = 103;
 
     /// <summary>AF_UNIX oder <see cref="AfInet"/>.</summary>
     public int Family { get; private set; } = LinuxUnixAddress.AfUnix;
@@ -107,40 +121,79 @@ internal sealed partial class LinuxUnixSocket
 
     /// <summary>
     /// bind (und das automatische Binden): trägt den Port in die Porttabelle ein. -EINVAL schon gebunden, -EADDRINUSE belegt.
-    /// <paramref name="port"/> 0 vergibt einen kurzlebigen Port.
+    /// <paramref name="port"/> 0 vergibt einen kurzlebigen Port. Unter <see cref="_bindGate"/>: Wer -EINVAL bekommt, sieht danach den
+    /// fertigen Port (kein Zwischenzustand gebunden ohne Port wie vor V27b).
     /// </summary>
     public long BindInet(LinuxUnixNames names, uint addr, int port)
     {
-        lock (_nameGate)
+        lock (_bindGate)
         {
-            if (_bound)
+            lock (_nameGate)
             {
-                return -EINVAL;
+                if (_bound)
+                {
+                    return -EINVAL;
+                }
             }
 
-            _bound = true;
-        }
-
-        long r = names.Ports.Bind(IsInetDgram, port, this);
-        lock (_nameGate)
-        {
+            long r = names.Ports.Bind(IsInetDgram, port, this);
             if (r < 0)
             {
-                _bound = false;
                 return r;
             }
 
-            _inetAddr = addr;
-            _inetPort = (int)r;
-            _names = names;
-        }
+            lock (_nameGate)
+            {
+                _bound = true;
+                _inetAddr = addr;
+                _inetPort = (int)r;
+                _addrLocked = addr != 0;
+                _portLocked = port != 0;
+                _names = names;
+            }
 
-        if (Volatile.Read(ref _closed) != 0)
+            if (Volatile.Read(ref _closed) != 0)
+            {
+                names.Ports.Release(IsInetDgram, (int)r, this); // ein gleichzeitiges letztes close hat den Port noch nicht gesehen
+            }
+
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// UDP connect mit AF_UNSPEC (Linux __udp_disconnect): löst die Gegenstelle; ohne SOCK_BINDADDR_LOCK wird die Adresse 0.0.0.0, ohne
+    /// SOCK_BINDPORT_LOCK verliert das Socket seinen Port (das nächste sendto bindet neu).
+    /// </summary>
+    public void DisconnectUdp()
+    {
+        lock (_bindGate)
         {
-            names.Ports.Release(this); // ein gleichzeitiges letztes close hat _names noch nicht gesehen
-        }
+            LinuxUnixNames? names = null;
+            int port = 0;
+            lock (_nameGate)
+            {
+                _udpPeerAddr = 0;
+                _udpPeerPort = 0;
+                if (!_addrLocked)
+                {
+                    _inetAddr = 0;
+                }
 
-        return 0;
+                if (!_portLocked && _inetPort != 0)
+                {
+                    names = _names;
+                    port = _inetPort;
+                    _inetPort = 0;
+                    _bound = false;
+                }
+            }
+
+            if (port != 0)
+            {
+                names?.Ports.Release(true, port, this);
+            }
+        }
     }
 
     /// <summary>Das angenommene Ende übernimmt Familie und Adresse des Lauschenden (Linux: gleicher lokaler Port, Adresse der Verbindung).</summary>
@@ -161,8 +214,43 @@ internal sealed partial class LinuxUnixSocket
         }
     }
 
-    /// <summary>Nichtblockierendes connect wurde verweigert: SO_ERROR meldet es einmal, poll meldet POLLERR|POLLHUP.</summary>
-    public void SetConnectError(long error) => Interlocked.Exchange(ref _connectError, error);
+    /// <summary>
+    /// Nichtblockierendes connect wurde verweigert: SO_ERROR meldet es einmal, poll meldet POLLERR|POLLHUP, das nächste connect liefert es
+    /// (V27b).
+    /// </summary>
+    public void SetConnectError(long error)
+    {
+        Interlocked.Exchange(ref _connectError, error);
+        Interlocked.Exchange(ref _connectPending, PendingRefused);
+    }
+
+    /// <summary>V27b: nichtblockierendes connect über einen vollen Rückstand hinaus (EINPROGRESS), schon aufgebaut.</summary>
+    public void MarkConnectInProgress() => Interlocked.Exchange(ref _connectPending, PendingDone);
+
+    /// <summary>
+    /// V27b, zweites connect nach EINPROGRESS (Linux __inet_stream_connect, SS_CONNECTING): verweigert -&gt; der anstehende Fehler, ohne
+    /// (schon mit SO_ERROR abgeholt) -ECONNABORTED, danach wieder unverbunden; aufgebaut -&gt; 0, danach -EISCONN. Sonst 1: kein offenes connect.
+    /// </summary>
+    public long TakePendingConnect()
+    {
+        switch (Interlocked.Exchange(ref _connectPending, 0))
+        {
+            case PendingRefused:
+                int e = TakeConnectError();
+                return -(e != 0 ? e : ECONNABORTED);
+            case PendingDone:
+                return 0;
+            default:
+                return 1;
+        }
+    }
+
+    /// <summary>V27b: TCP connect mit AF_UNSPEC auf ein unverbundenes Socket (tcp_disconnect in TCP_CLOSE): vergisst ein verweigertes connect.</summary>
+    public void ForgetConnectError()
+    {
+        Interlocked.Exchange(ref _connectPending, 0);
+        Interlocked.Exchange(ref _connectError, 0);
+    }
 
     private int TakeConnectError() => (int)Interlocked.Exchange(ref _connectError, 0);
 
@@ -229,7 +317,7 @@ internal sealed partial class LinuxUnixSocket
             return -EDESTADDRREQ;
         }
 
-        if (names.Ports.Find(true, toPort) is LinuxUnixSocket target && target.AcceptsDatagramFor(toAddr))
+        if (names.Ports.Find(true, toPort) is LinuxUnixSocket target && target.AcceptsDatagramFor(toAddr, from, fromPort))
         {
             target.DeliverDatagram(data.ToArray(), from, fromPort);
         }
@@ -251,10 +339,19 @@ internal sealed partial class LinuxUnixSocket
         return port == 0 ? -EDESTADDRREQ : SendDatagram(data, addr, port);
     }
 
-    private bool AcceptsDatagramFor(uint toAddr)
+    /// <summary>
+    /// Nimmt das Socket ein Datagramm an (<paramref name="toAddr"/>) von (<paramref name="fromAddr"/>, <paramref name="fromPort"/>) an? Ein
+    /// verbundenes UDP-Socket nur von seiner Gegenstelle (V27b, Linux compute_score: inet_daddr/inet_dport müssen passen).
+    /// </summary>
+    private bool AcceptsDatagramFor(uint toAddr, uint fromAddr, int fromPort)
     {
         lock (_nameGate)
         {
+            if (_udpPeerPort != 0 && (_udpPeerAddr != fromAddr || _udpPeerPort != fromPort))
+            {
+                return false;
+            }
+
             return _inetAddr == 0 || _inetAddr == toAddr;
         }
     }

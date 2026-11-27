@@ -71,30 +71,19 @@ internal sealed class LinuxInetPorts
         }
     }
 
-    /// <summary>Gibt die Ports von <paramref name="owner"/> frei (letztes close).</summary>
-    public void Release(object owner)
+    /// <summary>
+    /// Gibt <paramref name="port"/> frei, wenn er <paramref name="owner"/> gehört (letztes close, UDP-disconnect). O(1): Der Socket kennt seinen
+    /// Port, die Tabelle wird nicht durchsucht; ein inzwischen fremder Eintrag bleibt stehen.
+    /// </summary>
+    public void Release(bool udp, int port, object owner)
     {
         lock (_gate)
         {
-            ReleaseIn(_tcp, owner);
-            ReleaseIn(_udp, owner);
-        }
-    }
-
-    private static void ReleaseIn(Dictionary<int, object> t, object owner)
-    {
-        List<int>? drop = null;
-        foreach (KeyValuePair<int, object> kv in t)
-        {
-            if (ReferenceEquals(kv.Value, owner))
+            Dictionary<int, object> t = Table(udp);
+            if (t.TryGetValue(port, out object? o) && ReferenceEquals(o, owner))
             {
-                (drop ??= new List<int>()).Add(kv.Key);
+                t.Remove(port);
             }
-        }
-
-        foreach (int port in drop ?? [])
-        {
-            t.Remove(port);
         }
     }
 }

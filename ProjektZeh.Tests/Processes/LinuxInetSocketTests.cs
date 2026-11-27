@@ -19,7 +19,7 @@ public sealed class LinuxInetSocketTests
     private const int Inet = 2, Stream = 1, Dgram = 2, Seqpacket = 5, SockNonblock = 0x800;
     private const long EAGAIN = 11, EINVAL = 22, EAFNOSUPPORT = 97, EPROTONOSUPPORT = 93, ESOCKTNOSUPPORT = 94, EADDRINUSE = 98,
         EADDRNOTAVAIL = 99, ENETUNREACH = 101, ENOTCONN = 107, ECONNREFUSED = 111, EINPROGRESS = 115, EOPNOTSUPP = 95, ENOPROTOOPT = 92,
-        EDESTADDRREQ = 89;
+        EDESTADDRREQ = 89, ECONNABORTED = 103, EISCONN = 106;
 
     private sealed class Pages : IUserPages
     {
@@ -367,5 +367,190 @@ public sealed class LinuxInetSocketTests
         Assert.AreEqual(1, Call(LinuxSyscalls.Sendto, (ulong)u1, Buf, 1, 0, Addr2, PutIn(Addr2, LinuxUnixSocket.Loopback, p2)));
         Assert.IsTrue(rx.Wait(5000));
         Assert.AreEqual(1, rx.Result);
+    }
+
+    // V27b (Review-P3 zu V27)
+
+    [TestMethod]
+    public void NichtblockierendVerweigertZweitesConnectMeldetFehler()
+    {
+        int d = Sock(Stream);
+        Assert.AreEqual(0, Bind(d, LinuxUnixSocket.Loopback, 0));
+        int dead = PortOf(d);
+
+        // __inet_stream_connect: SS_CONNECTING mit TCP_CLOSE -> sock_error, danach wieder SS_UNCONNECTED.
+        int nb = Sock(Stream | SockNonblock);
+        Assert.AreEqual(-EINPROGRESS, Connect(nb, LinuxUnixSocket.Loopback, dead));
+        Assert.AreEqual(-ECONNREFUSED, Connect(nb, LinuxUnixSocket.Loopback, dead), "zweites connect liefert den Fehler");
+        Assert.AreEqual(0, GetOpt(nb, 1, 4, out int err));
+        Assert.AreEqual(0, err, "Fehler vom zweiten connect verbraucht");
+        Assert.AreEqual(-EINPROGRESS, Connect(nb, LinuxUnixSocket.Loopback, dead), "drittes connect ist ein neuer Versuch");
+
+        // Fehler schon mit SO_ERROR abgeholt: ECONNABORTED.
+        int nb2 = Sock(Stream | SockNonblock);
+        Assert.AreEqual(-EINPROGRESS, Connect(nb2, LinuxUnixSocket.Loopback, dead));
+        Assert.AreEqual(0, GetOpt(nb2, 1, 4, out err));
+        Assert.AreEqual((int)ECONNREFUSED, err);
+        Assert.AreEqual(-ECONNABORTED, Connect(nb2, LinuxUnixSocket.Loopback, dead));
+
+        // Inzwischen lauscht jemand: das zweite connect meldet trotzdem erst den alten Fehler.
+        int nb3 = Sock(Stream | SockNonblock);
+        Assert.AreEqual(-EINPROGRESS, Connect(nb3, LinuxUnixSocket.Loopback, dead));
+        Assert.AreEqual(0, Call(LinuxSyscalls.Listen, (ulong)d, 4));
+        Assert.AreEqual(-ECONNREFUSED, Connect(nb3, LinuxUnixSocket.Loopback, dead));
+        Assert.AreEqual(0, Connect(nb3, LinuxUnixSocket.Loopback, dead));
+    }
+
+    [TestMethod]
+    public void NichtblockierendBeiVollemRueckstandEinprogress()
+    {
+        int ls = Sock(Stream);
+        Assert.AreEqual(0, Call(LinuxSyscalls.Listen, (ulong)ls, 0));
+        int port = PortOf(ls);
+        int c1 = Sock(Stream | SockNonblock);
+        Assert.AreEqual(0, Connect(c1, LinuxUnixSocket.Loopback, port), "Rückstand 0 nimmt eine Verbindung");
+        int c2 = Sock(Stream | SockNonblock);
+        Assert.AreEqual(-EINPROGRESS, Connect(c2, LinuxUnixSocket.Loopback, port), "voll: EINPROGRESS statt EAGAIN");
+        Assert.AreEqual(4, PollEvents(c2, 4) & 4);
+        Assert.AreEqual(0, Connect(c2, LinuxUnixSocket.Loopback, port), "zweites connect nach Aufbau: 0");
+        Assert.AreEqual(-EISCONN, Connect(c2, LinuxUnixSocket.Loopback, port));
+        Assert.IsTrue(Call(LinuxSyscalls.Accept, (ulong)ls, 0, 0) >= 0);
+        int a2 = (int)Call(LinuxSyscalls.Accept, (ulong)ls, 0, 0);
+        Assert.IsTrue(a2 >= 0);
+        Assert.AreEqual(2, WriteBytes(c2, "ok"));
+        Assert.AreEqual("ok", ReadBytes(a2, out _));
+    }
+
+    [TestMethod]
+    public void ConnectAufLauschendesOderVerbundenesIstEisconn()
+    {
+        int ls = Listener(out int port);
+        Assert.AreEqual(-EISCONN, Connect(ls, LinuxUnixSocket.Loopback, port), "lauschend: EISCONN");
+        int c = Sock(Stream);
+        Assert.AreEqual(0, Connect(c, LinuxUnixSocket.Loopback, port));
+        Assert.AreEqual(-EISCONN, Call(LinuxSyscalls.Connect, (ulong)c, Addr2, 8), "Zustand vor der Adresslänge");
+        int a = (int)Call(LinuxSyscalls.Accept, (ulong)ls, 0, 0);
+        Assert.AreEqual(-EISCONN, Connect(a, LinuxUnixSocket.Loopback, port), "angenommenes Ende");
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Connect, (ulong)Sock(Stream), Addr2, 8), "unverbunden: zu kurz");
+    }
+
+    [TestMethod]
+    public void ConnectAfUnspecLoestUdpGegenstelle()
+    {
+        int u1 = Sock(Dgram), u2 = Sock(Dgram);
+        Assert.AreEqual(0, Bind(u2, LinuxUnixSocket.Loopback, 0));
+        int p2 = PortOf(u2);
+        Assert.AreEqual(0, Connect(u1, LinuxUnixSocket.Loopback, p2));
+        Assert.AreNotEqual(0, PortOf(u1));
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Connect, (ulong)u1, Addr2, 1), "kürzer als sa_family");
+        _ = PutIn(Addr2, 0, 0, 0);
+        Assert.AreEqual(0, Call(LinuxSyscalls.Connect, (ulong)u1, Addr2, 2), "AF_UNSPEC, Länge 2");
+        Assert.AreEqual(-ENOTCONN, GetName(LinuxSyscalls.Getpeername, u1, out _, out _, out _));
+        Assert.AreEqual(-EDESTADDRREQ, WriteBytes(u1, "x"));
+        Assert.AreEqual(0, PortOf(u1), "automatisch gebundener Port wird frei (udp_disconnect ohne BINDPORT_LOCK)");
+
+        // Mit Port gebunden: Port und Adresse bleiben (SOCK_BINDPORT_LOCK, SOCK_BINDADDR_LOCK).
+        int u3 = Sock(Dgram);
+        Assert.AreEqual(0, Bind(u3, LinuxUnixSocket.Loopback, 40001));
+        Assert.AreEqual(0, Connect(u3, LinuxUnixSocket.Loopback, p2));
+        Assert.AreEqual(0, Call(LinuxSyscalls.Connect, (ulong)u3, Addr2, PutIn(Addr2, 0, 0, 0)));
+        Assert.AreEqual(0, GetName(LinuxSyscalls.Getsockname, u3, out _, out uint ip, out int port));
+        Assert.AreEqual((LinuxUnixSocket.Loopback, 40001), (ip, port));
+
+        // Mit Port 0 gebunden: der Port geht, die Adresse bleibt.
+        Assert.AreEqual(0, Connect(u2, LinuxUnixSocket.Loopback, 9));
+        Assert.AreEqual(0, Call(LinuxSyscalls.Connect, (ulong)u2, Addr2, PutIn(Addr2, 0, 0, 0)));
+        Assert.AreEqual(0, GetName(LinuxSyscalls.Getsockname, u2, out _, out ip, out port));
+        Assert.AreEqual((LinuxUnixSocket.Loopback, 0), (ip, port));
+
+        // TCP unverbunden: 0; lauschend/verbunden ist eine Abweichung (LINUX_ABI).
+        Assert.AreEqual(0, Call(LinuxSyscalls.Connect, (ulong)Sock(Stream), Addr2, PutIn(Addr2, 0, 0, 0)));
+        int ls = Listener(out _);
+        Assert.AreEqual(-EOPNOTSUPP, Call(LinuxSyscalls.Connect, (ulong)ls, Addr2, PutIn(Addr2, 0, 0, 0)));
+    }
+
+    [TestMethod]
+    public void AdresslaengeIstInt()
+    {
+        int u1 = Sock(Dgram), u2 = Sock(Dgram);
+        Assert.AreEqual(0, Bind(u2, LinuxUnixSocket.Loopback, 0));
+        int p2 = PortOf(u2);
+        Assert.IsTrue(_p.TryWrite(Buf, Encoding.ASCII.GetBytes("udp")));
+        ulong len = PutIn(Addr2, LinuxUnixSocket.Loopback, p2);
+        Assert.AreEqual(3, Call(LinuxSyscalls.Sendto, (ulong)u1, Buf, 3, 0, Addr2, len | 0xffff_ffff_0000_0000UL), "obere Bits zählen nicht");
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Sendto, (ulong)u1, Buf, 3, 0, Addr2, 0xffff_ffffUL), "-1");
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Sendto, (ulong)u1, Buf, 3, 0, Addr2, 0), "Adresse mit Länge 0");
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Sendto, (ulong)u1, Buf, 3, 0, Addr2, 8));
+        Assert.AreEqual(0, Call(LinuxSyscalls.Connect, (ulong)u1, Addr2, len | 0x1_0000_0000UL));
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Connect, (ulong)u1, Addr2, 0xffff_fff0UL));
+
+        // sendmsg: msg_namelen über 128 wird gekürzt (__copy_msghdr), 0 heißt ohne Adresse.
+        ulong hdr = Buf + 0x800, iov = Buf + 0x900;
+        var io = new byte[16];
+        BitConverter.TryWriteBytes(io.AsSpan(0, 8), Buf);
+        BitConverter.TryWriteBytes(io.AsSpan(8, 8), 3UL);
+        Assert.IsTrue(_p.TryWrite(iov, io));
+        var h = new byte[56];
+        BitConverter.TryWriteBytes(h.AsSpan(0, 8), Addr2);
+        BitConverter.TryWriteBytes(h.AsSpan(8, 4), 200);
+        BitConverter.TryWriteBytes(h.AsSpan(16, 8), iov);
+        BitConverter.TryWriteBytes(h.AsSpan(24, 8), 1UL);
+        Assert.IsTrue(_p.TryWrite(hdr, h));
+        Assert.AreEqual(3, Call(LinuxSyscalls.Sendmsg, (ulong)u1, hdr, 0));
+        BitConverter.TryWriteBytes(h.AsSpan(8, 4), -1);
+        Assert.IsTrue(_p.TryWrite(hdr, h));
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Sendmsg, (ulong)u1, hdr, 0));
+        Assert.AreEqual(3, Call(LinuxSyscalls.Recvfrom, (ulong)u2, Buf2, 64, 0x40, 0, 0));
+        Assert.AreEqual(3, Call(LinuxSyscalls.Recvfrom, (ulong)u2, Buf2, 64, 0x40, 0, 0));
+        Assert.AreEqual(-EAGAIN, Call(LinuxSyscalls.Recvfrom, (ulong)u2, Buf2, 64, 0x40, 0, 0));
+    }
+
+    [TestMethod]
+    public void UdpVerbundenNimmtNurVonGegenstelle()
+    {
+        int u1 = Sock(Dgram), u2 = Sock(Dgram), u3 = Sock(Dgram);
+        Assert.AreEqual(0, Bind(u1, LinuxUnixSocket.Loopback, 0));
+        Assert.AreEqual(0, Bind(u2, LinuxUnixSocket.Loopback, 0));
+        int p1 = PortOf(u1), p2 = PortOf(u2);
+        Assert.AreEqual(0, Connect(u2, LinuxUnixSocket.Loopback, p1));
+        Assert.IsTrue(_p.TryWrite(Buf, Encoding.ASCII.GetBytes("abc")));
+        Assert.AreEqual(3, Call(LinuxSyscalls.Sendto, (ulong)u3, Buf, 3, 0, Addr2, PutIn(Addr2, LinuxUnixSocket.Loopback, p2)), "fremder Absender");
+        Assert.AreEqual(0, PollEvents(u2, 1), "verworfen");
+        Assert.AreEqual(2, Call(LinuxSyscalls.Sendto, (ulong)u1, Buf, 2, 0, Addr2, PutIn(Addr2, LinuxUnixSocket.Loopback, p2)));
+        Assert.AreEqual(2, Call(LinuxSyscalls.Recvfrom, (ulong)u2, Buf2, 64, 0x40, 0, 0));
+        Assert.AreEqual(-EAGAIN, Call(LinuxSyscalls.Recvfrom, (ulong)u2, Buf2, 64, 0x40, 0, 0));
+    }
+
+    [TestMethod]
+    public void PortFreigabeNurFuerEigentuemer()
+    {
+        var ports = new LinuxInetPorts();
+        object a = new(), b = new();
+        Assert.AreEqual(5000, ports.Bind(false, 5000, a));
+        ports.Release(false, 5000, b);
+        Assert.AreSame(a, ports.Find(false, 5000));
+        ports.Release(true, 5000, a);
+        Assert.AreSame(a, ports.Find(false, 5000), "UDP-Tabelle getrennt");
+        ports.Release(false, 5000, a);
+        Assert.IsNull(ports.Find(false, 5000));
+    }
+
+    [TestMethod]
+    public void ListenNebenBindLiefertNieEinval()
+    {
+        for (int i = 0; i < 200; i++)
+        {
+            int s = Sock(Stream);
+            _ = PutIn(Addr + 0x40, LinuxUnixSocket.Loopback, 0);
+            Task<long> b = Task.Run(() =>
+            {
+                var a = new SyscallArgs { Number = LinuxSyscalls.Bind, A0 = (ulong)s, A1 = Addr + 0x40, A2 = 16 };
+                return LinuxSyscalls.Dispatch(ref a, _p);
+            });
+            long l = Call(LinuxSyscalls.Listen, (ulong)s, 1);
+            Assert.IsTrue(b.Wait(5000));
+            Assert.AreEqual(0, l, $"Lauf {i}");
+            Assert.AreEqual(0, Call(Close, (ulong)s));
+        }
     }
 }

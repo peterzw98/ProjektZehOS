@@ -44,31 +44,42 @@ internal static partial class LinuxSyscalls
     }
 
     /// <summary>
-    /// Liest eine sockaddr_in: kürzer als 16 Bytes -EINVAL, Familie nicht AF_INET -EAFNOSUPPORT (bind nimmt AF_UNSPEC mit 0.0.0.0 an wie
-    /// Linux' inet_bind). Adresse und Port in Rechnerreihenfolge.
+    /// Liest eine Socketadresse wie move_addr_to_kernel: <paramref name="len"/> ist ein int (V27b: obere Bits des Registers zählen nicht),
+    /// negativ oder länger als sockaddr_storage (128) -EINVAL, sonst werden <paramref name="len"/> Bytes gelesen (-EFAULT). Familie -1 bei
+    /// weniger als 2 Bytes; Adresse und Port (Rechnerreihenfolge) nur ab 16 Bytes, sonst 0. Längen- und Familienprüfung macht der Aufrufer, weil
+    /// bind, connect und sendto sie in verschiedener Reihenfolge prüfen.
     /// </summary>
-    private static long ReadInetAddress(ILinuxProcess p, ulong addr, ulong len, bool forBind, out uint ip, out int port)
+    private static long ReadInetAddress(ILinuxProcess p, ulong addr, int len, out int family, out uint ip, out int port)
     {
+        family = -1;
         ip = 0;
         port = 0;
-        // move_addr_to_kernel: länger als sockaddr_storage (128) -EINVAL, vor jeder Familienprüfung.
-        if (len < SockaddrInSize || len > 128)
+        if (len < 0 || len > 128)
         {
             return -SockErr.EINVAL;
         }
 
-        Span<byte> raw = stackalloc byte[SockaddrInSize];
-        if (addr + SockaddrInSize < addr || !p.Memory.TryRead(addr, raw))
+        if (len == 0)
+        {
+            return 0;
+        }
+
+        Span<byte> raw = stackalloc byte[128];
+        raw = raw.Slice(0, len);
+        if (addr + (ulong)len < addr || !p.Memory.TryRead(addr, raw))
         {
             return -SockErr.EFAULT;
         }
 
-        int family = BitConverter.ToUInt16(raw.Slice(0, 2));
-        port = (raw[2] << 8) | raw[3];
-        ip = ((uint)raw[4] << 24) | ((uint)raw[5] << 16) | ((uint)raw[6] << 8) | raw[7];
-        if (family != AfInet && !(forBind && family == AfUnspec && ip == 0))
+        if (len >= 2)
         {
-            return -SockErr.EAFNOSUPPORT;
+            family = BitConverter.ToUInt16(raw.Slice(0, 2));
+        }
+
+        if (len >= SockaddrInSize)
+        {
+            port = (raw[2] << 8) | raw[3];
+            ip = ((uint)raw[4] << 24) | ((uint)raw[5] << 16) | ((uint)raw[6] << 8) | raw[7];
         }
 
         return 0;
@@ -110,10 +121,21 @@ internal static partial class LinuxSyscalls
 
     private static long DoBindInet(ILinuxProcess p, LinuxUnixSocket s, ulong addr, ulong len)
     {
-        long r = ReadInetAddress(p, addr, len, forBind: true, out uint ip, out int port);
+        long r = ReadInetAddress(p, addr, (int)len, out int family, out uint ip, out int port);
         if (r < 0)
         {
             return r;
+        }
+
+        // inet_bind_sk: kürzer als sockaddr_in -EINVAL; __inet_bind: AF_UNSPEC nur mit INADDR_ANY.
+        if ((int)len < SockaddrInSize)
+        {
+            return -SockErr.EINVAL;
+        }
+
+        if (family != AfInet && !(family == AfUnspec && ip == 0))
+        {
+            return -SockErr.EAFNOSUPPORT;
         }
 
         if (!LinuxUnixSocket.IsLocal(ip))
@@ -138,7 +160,7 @@ internal static partial class LinuxSyscalls
         }
 
         long r = s.BindInet(named.UnixNames, ip, 0);
-        return r == -SockErr.EINVAL ? 0 : r; // ein gleichzeitiges bind hat gewonnen
+        return r == -SockErr.EINVAL ? 0 : r; // ein gleichzeitiges bind hat gewonnen und ist fertig (BindInet unter _bindGate, V27b)
     }
 
     private static long DoListenInet(ILinuxProcess p, LinuxUnixSocket s, int backlog)
@@ -157,27 +179,39 @@ internal static partial class LinuxSyscalls
         return r < 0 ? r : s.Listen(backlog);
     }
 
+    /// <summary>
+    /// connect eines AF_INET-Sockets in Linux' Reihenfolge (V27b): Länge und Lesen, kürzer als sa_family -EINVAL, AF_UNSPEC trennt; dann der
+    /// Zustand (verbunden oder lauschend -EISCONN, offenes nichtblockierendes connect), erst danach sockaddr_in-Länge und Familie.
+    /// </summary>
     private static long DoConnectInet(ILinuxProcess p, LinuxUnixSocket s, ulong addr, ulong len)
     {
-        long r = ReadInetAddress(p, addr, len, forBind: false, out uint ip, out int port);
+        int alen = (int)len;
+        long r = ReadInetAddress(p, addr, alen, out int family, out uint ip, out int port);
         if (r < 0)
         {
             return r;
         }
 
-        if (ip == 0)
+        if (alen < 2)
         {
-            ip = LinuxUnixSocket.Loopback; // Linux: connect auf INADDR_ANY geht an die eigene Adresse
+            return -SockErr.EINVAL;
         }
 
-        if (!LinuxUnixSocket.IsLocal(ip))
+        if (family == AfUnspec)
         {
-            return -InetENETUNREACH;
+            return DisconnectInet(s);
         }
 
         if (s.IsInetDgram)
         {
+            // inet_dgram_connect bindet vor ip4_datagram_connect, das erst dann Länge und Familie prüft.
             r = AutobindInet(p, s, 0);
+            if (r < 0)
+            {
+                return r;
+            }
+
+            r = CheckConnectTarget(alen, family, ref ip);
             if (r < 0)
             {
                 return r;
@@ -189,7 +223,25 @@ internal static partial class LinuxSyscalls
 
         if (s.IsConnected)
         {
-            return -InetEISCONN;
+            // Aufgebaut über einen vollen Rückstand (EINPROGRESS): das erste weitere connect meldet 0 (SS_CONNECTING -> SS_CONNECTED).
+            return s.TakePendingConnect() == 0 ? 0 : -InetEISCONN;
+        }
+
+        if (s.IsListening)
+        {
+            return -InetEISCONN; // SS_UNCONNECTED, aber sk_state TCP_LISTEN
+        }
+
+        r = s.TakePendingConnect();
+        if (r <= 0)
+        {
+            return r; // verweigertes nichtblockierendes connect: Fehler einmal, danach wieder unverbunden
+        }
+
+        r = CheckConnectTarget(alen, family, ref ip);
+        if (r < 0)
+        {
+            return r;
         }
 
         if (p is not ILinuxUnixNames named)
@@ -218,7 +270,57 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
-        return s.ConnectTo(listener, s.NonBlocking, p as ILinuxAbort);
+        r = s.ConnectTo(listener, s.NonBlocking, p as ILinuxAbort, overfill: true);
+        if (r == 1)
+        {
+            s.MarkConnectInProgress();
+            return -InetEINPROGRESS; // V27b: Rückstand voll, nichtblockierend (Linux verwirft das SYN und wiederholt)
+        }
+
+        return r;
+    }
+
+    /// <summary>tcp_v4_connect/ip4_datagram_connect: kürzer als sockaddr_in -EINVAL, Familie nicht AF_INET -EAFNOSUPPORT, nur Loopback.</summary>
+    private static long CheckConnectTarget(int alen, int family, ref uint ip)
+    {
+        if (alen < SockaddrInSize)
+        {
+            return -SockErr.EINVAL;
+        }
+
+        if (family != AfInet)
+        {
+            return -SockErr.EAFNOSUPPORT;
+        }
+
+        if (ip == 0)
+        {
+            ip = LinuxUnixSocket.Loopback; // Linux: connect auf INADDR_ANY geht an die eigene Adresse
+        }
+
+        return LinuxUnixSocket.IsLocal(ip) ? 0 : -InetENETUNREACH;
+    }
+
+    /// <summary>
+    /// connect mit AF_UNSPEC: UDP löst die Gegenstelle (udp_disconnect), ein unverbundenes TCP-Socket vergisst ein verweigertes connect
+    /// (tcp_disconnect in TCP_CLOSE). Abweichung: Ein lauschendes oder verbundenes TCP-Socket trennt Linux (Rückstand verwerfen, RST);
+    /// hier -EOPNOTSUPP statt eines halben Abbaus (LINUX_ABI.md, V27b).
+    /// </summary>
+    private static long DisconnectInet(LinuxUnixSocket s)
+    {
+        if (s.IsInetDgram)
+        {
+            s.DisconnectUdp();
+            return 0;
+        }
+
+        if (s.IsListening || s.IsConnected)
+        {
+            return -SockErr.EOPNOTSUPP;
+        }
+
+        s.ForgetConnectError();
+        return 0;
     }
 
     private static long DoGetNameInet(ILinuxProcess p, LinuxUnixSocket s, ulong addr, ulong lenPtr, bool peer)
@@ -238,18 +340,37 @@ internal static partial class LinuxSyscalls
         return WriteInetName(p, ip, port, addr, lenPtr);
     }
 
-    /// <summary>UDP sendto/sendmsg: mit Zieladresse an diese, sonst an die Gegenstelle aus connect.</summary>
-    private static long SendDatagramInet(ILinuxProcess p, LinuxUnixSocket s, ReadOnlySpan<byte> data, ulong addr, ulong addrLen)
+    /// <summary>
+    /// UDP sendto/sendmsg: mit Zieladresse (<paramref name="addr"/> ungleich 0) an diese, sonst an die Gegenstelle aus connect. Die Länge ist ein
+    /// int wie bei Linux (V27b); sendmsg kürzt und nullt sie vorher selbst.
+    /// </summary>
+    private static long SendDatagramInet(ILinuxProcess p, LinuxUnixSocket s, ReadOnlySpan<byte> data, ulong addr, int addrLen)
     {
-        if (addr == 0 || addrLen == 0)
+        if (addr == 0)
         {
             return s.Write(data);
         }
 
-        long r = ReadInetAddress(p, addr, addrLen, forBind: false, out uint ip, out int port);
+        long r = ReadInetAddress(p, addr, addrLen, out int family, out uint ip, out int port);
         if (r < 0)
         {
             return r;
+        }
+
+        // udp_sendmsg: kürzer als sockaddr_in -EINVAL (auch Länge 0 mit Adresse), Familie AF_INET oder AF_UNSPEC, Zielport 0 -EINVAL vor dem Routing.
+        if (addrLen < SockaddrInSize)
+        {
+            return -SockErr.EINVAL;
+        }
+
+        if (family != AfInet && family != AfUnspec)
+        {
+            return -SockErr.EAFNOSUPPORT;
+        }
+
+        if (port == 0)
+        {
+            return -SockErr.EINVAL;
         }
 
         if (ip == 0)
@@ -260,11 +381,6 @@ internal static partial class LinuxSyscalls
         if (!LinuxUnixSocket.IsLocal(ip))
         {
             return -InetENETUNREACH;
-        }
-
-        if (port == 0)
-        {
-            return -SockErr.EINVAL; // udp_sendmsg: Zielport 0
         }
 
         r = AutobindInet(p, s, 0);
@@ -284,7 +400,7 @@ internal static partial class LinuxSyscalls
             return -SockErr.EFAULT;
         }
 
-        return SendDatagramInet(p, s, data, addr, addrLen);
+        return SendDatagramInet(p, s, data, addr, (int)addrLen);
     }
 
     /// <summary>
