@@ -1,6 +1,7 @@
 #if ZEHOS_LINUX_RUN_PROBE
 using System;
 using System.Buffers.Binary;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Cosmos.Kernel.System.Diagnostics;
@@ -77,8 +78,24 @@ internal static unsafe partial class CosmosLinuxRunProbe
                 Write("begin " + name + " size=" + size);
                 string? root = StorageLock.Run(() => VfsManager.TryGetMount("/data", out _)) ? RootBase + "/" + name : null;
                 Write("root " + name + " " + (root ?? "memory"));
+
+                // V19: Das Programm liegt auch als Datei in seiner Wurzel (/bin/<name>, neben dem Arbeitsverzeichnis), damit /proc/self/exe
+                // auf es zeigt und es sich per posix_spawn oder execve selbst starten kann wie unter run-linux.py.
+                string? exePath = null;
+                if (root != null)
+                {
+                    string dir = root + "/bin";
+                    StorageLock.Run(() =>
+                    {
+                        Directory.CreateDirectory(dir);
+                        File.WriteAllBytes(dir + "/" + name, elf);
+                        return true;
+                    });
+                    exePath = "/bin/" + name;
+                }
+
                 CosmosLinuxRun.Outcome outcome = CosmosLinuxRun.Run(elf, [name, "a1", "b 2"], CosmosLinuxRun.Environment, new SerialOutput(), TimeoutSeconds,
-                    root: root, cwd: ProbeCwd);
+                    root: root, cwd: ProbeCwd, exePath: exePath);
                 Write(outcome.Ran
                     ? "status " + name + " " + outcome.Status + (outcome.Detail.Length > 0 ? " (" + outcome.Detail + ")" : string.Empty)
                     : "status " + name + " notrun (" + outcome.Detail + ")");

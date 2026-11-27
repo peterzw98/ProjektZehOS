@@ -231,6 +231,27 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     /// </summary>
     public Func<LinuxUserProcess, UserImage, bool>? StartExec { get; set; }
 
+    /// <summary>
+    /// V19, Kernel: execve ohne vfork. Der aufrufende Thread läuft ab dem Rücksprung als <paramref name="next"/> am Einsprung des Abbilds
+    /// weiter (eigene Seitentabelle, Register und FPU frisch). false nur ohne Brücke; dann endet der Prozess mit SIGKILL.
+    /// </summary>
+    public Func<LinuxUserProcess, UserImage, bool>? ReplaceImage { get; set; }
+
+    // V19: Unter _children: Nach execve ohne vfork gehören die Kinder dem neuen Abbild; ein spätes ChildEnded oder FreeIfOrphaned auf dem
+    // alten Objekt (das Kind las Parent vor dem Umzug) geht dorthin weiter.
+    private LinuxUserProcess? _childrenMovedTo;
+
+    // V19: prctl PR_SET_PDEATHSIG; Signal an diesen Prozess, wenn sein Elternprozess endet (0: keins). Bleibt über execve (Linux: außer bei
+    // setuid-Programmen, die es hier nicht gibt), gilt nicht für ein vfork-Kind des Prozesses (Linux: copy_process setzt es auf 0).
+    private int _parentDeathSignal;
+
+    /// <summary>V19 prctl PR_SET_PDEATHSIG / PR_GET_PDEATHSIG.</summary>
+    public int ParentDeathSignal
+    {
+        get => Volatile.Read(ref _parentDeathSignal);
+        set => Volatile.Write(ref _parentDeathSignal, value);
+    }
+
     private long CloneVforkProcess(ulong flags, ulong stack)
     {
         // Nur das Austrittssignal (SIGCHLD) neben CLONE_VM|CLONE_VFORK; geteilte Dateien, Handler oder TLS im neuen Prozess gibt es nicht.
@@ -272,9 +293,16 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     public long Exec(string path, string[] argv, string[] envp)
     {
         ArgumentNullException.ThrowIfNull(path);
-        if (!InVfork || CreatePages == null || StartExec == null || Parent == null)
+        bool inVfork = InVfork;
+        if (CreatePages == null || (inVfork ? StartExec == null || Parent == null : ReplaceImage == null))
         {
-            // execve ohne vfork bräuchte den Austausch des Adressraums unter dem laufenden Thread (und das Ende aller anderen Threads).
+            return -LinuxSyscalls.ENOSYS;
+        }
+
+        // V19: execve ohne vfork tauscht den Adressraum unter dem aufrufenden Thread. Linux beendet dafür alle anderen Threads (de_thread);
+        // das fehlt hier noch (Abweichung): Mit weiteren Threads oder aus einem Nebenthread bleibt execve -ENOSYS, bevor etwas geladen wird.
+        if (!inVfork && !OnlyMainThreadLives())
+        {
             return -LinuxSyscalls.ENOSYS;
         }
 
@@ -324,9 +352,14 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
         // Ab hier kein Rückweg (Linux: point of no return): Dateien, Arbeitsverzeichnis und Signalmaske wandern ins neue Abbild.
         next.TakeOver(this);
-        Parent.ReplaceChild(Pid, next);
+        if (!inVfork)
+        {
+            return ReplaceOwnImage(next, image);
+        }
+
+        Parent!.ReplaceChild(Pid, next);
         ulong killed = HandOverKill(next); // kill während vfork (LinuxWait.cs)
-        if (!StartExec(next, image))
+        if (!StartExec!(next, image))
         {
             next.ReportEnd(9);
             next.Destroy();
@@ -402,6 +435,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     {
         Parent = from.Parent;
         from._pidPassed = true;
+        _uid = from._uid;
+        _gid = from._gid;
+        ParentDeathSignal = from.ParentDeathSignal;
         lock (_fileGate)
         {
             // Die Nummern wandern, die Zählung in LinuxOpenFiles bleibt gleich.
@@ -539,9 +575,11 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     private void FreeIfOrphaned(int pid)
     {
         LinuxChild? removed = null;
+        LinuxUserProcess? successor;
         lock (_children)
         {
-            if (_reapsOrphans || _children.Exists(c => c.Pid == pid && c.AutoReaped))
+            successor = _childrenMovedTo;
+            if (successor == null && (_reapsOrphans || _children.Exists(c => c.Pid == pid && c.AutoReaped)))
             {
                 removed = _children.Find(c => c.Pid == pid);
                 _children.RemoveAll(c => c.Pid == pid);
@@ -549,7 +587,11 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             }
         }
 
-        if (removed != null)
+        if (successor != null)
+        {
+            successor.FreeIfOrphaned(pid);
+        }
+        else if (removed != null)
         {
             KeepOrphansReachable(removed.Process);
         }
@@ -600,6 +642,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     public void ReportEnd(int waitStatus)
     {
         CloseAllFiles();
+        SignalParentDeath();
         Parent?.ChildEnded(Pid, waitStatus);
     }
 
@@ -610,8 +653,10 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     private void ChildEnded(int pid, int waitStatus)
     {
         bool ended = false;
+        LinuxUserProcess? successor;
         lock (_children)
         {
+            successor = _childrenMovedTo;
             LinuxChild? child = _children.Find(c => c.Pid == pid);
             if (child != null && child.WaitStatus == null)
             {
@@ -625,6 +670,12 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             Monitor.PulseAll(_children);
         }
 
+        if (successor != null && !ended)
+        {
+            successor.ChildEnded(pid, waitStatus); // V19: Kinder sind mit execve umgezogen
+            return;
+        }
+
         // V18: SIGCHLD an die Eltern wie Linux (do_notify_parent), außerhalb von ChildGate (DeliverSignal nimmt _threadGate und weckt).
         // Standard und SIG_IGN verwerfen es (IsIgnored); siginfo nennt das Kind: CLD_EXITED 1 mit Exitcode, CLD_KILLED 2/CLD_DUMPED 3 mit Signal.
         if (ended)
@@ -633,6 +684,93 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             int code = exited ? 1 : (waitStatus & 0x80) != 0 ? 3 : 2;
             int value = exited ? LinuxWaitStatus.ExitCode(waitStatus) : LinuxWaitStatus.TermSignal(waitStatus);
             _ = DeliverSignal(SigChld, fromOutside: true, code, pid, value);
+        }
+    }
+
+    /// <summary>V19: Der aufrufende Thread ist der Hauptthread und der einzige, der noch läuft (Bedingung für execve ohne vfork).</summary>
+    private bool OnlyMainThreadLives()
+    {
+        lock (_threadGate)
+        {
+            return _liveThreads == 1 && !MainThread.Exited && ReferenceEquals(CurrentThread, MainThread);
+        }
+    }
+
+    /// <summary>
+    /// V19 execve ohne vfork, nach <see cref="TakeOver"/>: Kinder, Waisenliste und kill-Weiterleitung ziehen zu <paramref name="next"/>, der
+    /// Elternprozess sieht unter derselben PID das neue Abbild, die Brücke setzt den Thread auf dessen Einsprung. Danach gibt dieses Objekt
+    /// seinen Speicher frei (die PID bleibt, sie gehört jetzt <paramref name="next"/>). Liefert 0; der Thread kehrt in das neue Programm zurück.
+    /// </summary>
+    private long ReplaceOwnImage(LinuxUserProcess next, UserImage image)
+    {
+        MoveChildren(next);
+        Parent?.ReplaceChild(Pid, next);
+        _ = HandOverKill(next); // ein späteres kill trifft das neue Abbild; ohne vfork gibt es keine gemerkten Signale
+
+        // Ein kill, der vor der Übergabe ankam, hat dieses Objekt schon beendet: Der Status gilt für das neue Abbild, dessen Thread verlässt
+        // den Ring 3 mit der schon angeforderten Rückkehr.
+        lock (_threadGate)
+        {
+            if (ExitCode != null)
+            {
+                next.ExitCode = ExitCode;
+                next.TerminatedBySignal = TerminatedBySignal;
+            }
+        }
+
+        if (!ReplaceImage!(next, image))
+        {
+            next.ReportEnd(9);
+            next.Destroy();
+            Terminate(9);
+            return 0;
+        }
+
+        Destroy();
+        return 0;
+    }
+
+    /// <summary>V19: Kinder (laufend und beendet) gehören nach execve dem neuen Abbild; ihr getppid und wait4 bleiben gleich.</summary>
+    private void MoveChildren(LinuxUserProcess next)
+    {
+        lock (_children)
+        {
+            lock (next._children)
+            {
+                foreach (LinuxChild c in _children)
+                {
+                    next._children.Add(c);
+                    c.Process.Parent = next;
+                }
+
+                _children.Clear();
+                _childrenMovedTo = next;
+            }
+        }
+
+        lock (_orphanHolders)
+        {
+            lock (next._orphanHolders)
+            {
+                next._orphanHolders.AddRange(_orphanHolders);
+                _orphanHolders.Clear();
+            }
+        }
+    }
+
+    /// <summary>
+    /// V19 PR_SET_PDEATHSIG: Endet dieser Prozess, bekommen seine laufenden Kinder ihr gewähltes Signal (Linux: si_code SI_USER, si_pid 0).
+    /// Ein vfork-Kind auf diesem Thread gibt es dann nicht mehr (es blockierte den Thread); Kinder nach execve tragen den Wert aus TakeOver.
+    /// </summary>
+    private void SignalParentDeath()
+    {
+        foreach (LinuxChild c in Children)
+        {
+            int signal = c.Process.ParentDeathSignal;
+            if (c.WaitStatus == null && signal != 0)
+            {
+                _ = c.Process.DeliverSignal(signal, fromOutside: true, SiUser, 0);
+            }
         }
     }
 

@@ -141,6 +141,30 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     /// <summary>Nichtkanonischer Stapelzeiger nach rt_sigreturn: Linux lädt ihn, der erste Stapelzugriff ist #SS und endet mit SIGBUS.</summary>
     public void ForceBus() => Terminate(7);
 
+    /// <summary>
+    /// V19 ppoll: <paramref name="mask"/> gilt ab jetzt (SIGKILL und SIGSTOP bleiben frei), die bisherige merkt sich <paramref name="thread"/>.
+    /// Ein schon anhängiges, jetzt freigegebenes Signal mit Standardaktion "beenden" wirkt sofort wie nach sigprocmask; eins mit Handler lässt
+    /// das folgende Warten mit -EINTR enden. Abweichung wie bei der Maske überhaupt: Sie gilt je Prozess, nicht je Thread.
+    /// </summary>
+    public void BeginWaitMask(LinuxThread thread, ulong mask)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        thread.SavedBlocked = Volatile.Read(ref Signals.Blocked);
+        thread.RestoreBlocked = true;
+        RestoreBlocked(mask);
+    }
+
+    /// <summary>V19: Ende der Wartemaske ohne Signalrahmen (ppoll mit Ergebnis oder ohne Handler): die alte Maske gilt wieder.</summary>
+    public void EndWaitMask(LinuxThread thread)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        if (thread.RestoreBlocked)
+        {
+            thread.RestoreBlocked = false;
+            RestoreBlocked(thread.SavedBlocked);
+        }
+    }
+
     /// <summary>rt_sigreturn: Maske aus dem Rahmen; ein jetzt freigegebenes Signal folgt seiner Aktion wie nach sigprocmask.</summary>
     public void RestoreBlocked(ulong blocked)
     {
@@ -202,8 +226,20 @@ internal static class LinuxSignalFrame
         bool interrupted = result == -LinuxSyscalls.EINTR && number >= 0;
         bool restart = interrupted && Restartable(number, call.A1, call.A3);
         bool first = true;
+
+        // V19 ppoll mit -EINTR: Die Handler laufen unter der Wartemaske, der erste Rahmen trägt die Maske von vorher (rt_sigreturn stellt
+        // sie her, Linux restore_saved_sigmask über den Rahmen). Ohne genommenes Signal gilt sie nach der Schleife sofort wieder.
+        LinuxThread thread = p.CurrentThread;
+        bool saved = thread.RestoreBlocked;
+        thread.RestoreBlocked = false;
         for (int n = 0; n < 64 && p.TakeSignal(out LinuxSignalDelivery d); n++)
         {
+            if (first && saved)
+            {
+                d = d with { OldBlocked = thread.SavedBlocked };
+                saved = false;
+            }
+
             if (first && interrupted)
             {
                 if (restart && (d.Flags & LinuxUserProcess.SaRestart) != 0)
@@ -220,6 +256,11 @@ internal static class LinuxSignalFrame
                 p.ForceSegv();
                 return;
             }
+        }
+
+        if (saved)
+        {
+            p.RestoreBlocked(thread.SavedBlocked);
         }
 
         // Ein anderer Thread nahm das Signal, das diesen Aufruf unterbrach: Linux startet ihn dann still neu (ERESTARTSYS ohne Handler).

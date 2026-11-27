@@ -1,0 +1,39 @@
+ppoll leer Frist 0: ret=0 errno=0
+ppoll Pipe bereit: ret=1 errno=0
+revents POLLIN=1
+ppoll sigsetsize 4: ret=-1 errno=22
+ppoll nsec zu gross: ret=-1 errno=22
+ppoll Frist EFAULT: ret=-1 errno=14
+SIGUSR2 noch nicht zugestellt=1
+ppoll mit freigebender Maske: ret=-1 errno=4
+Handler lief=1
+SIGUSR2 danach wieder gesperrt=1
+ppoll ohne Maske bleibt gesperrt: ret=0 errno=0
+Handler nicht gelaufen=1
+nach Freigabe gelaufen=1
+close_range first>last: ret=-1 errno=22
+close_range Flag unbekannt: ret=-1 errno=22
+close_range CLOEXEC 20..21: ret=0 errno=0
+fd 20 FD_CLOEXEC=1
+fd 22 FD_CLOEXEC=0
+close_range 21..~0: ret=0 errno=0
+fd 20 offen=1
+fd 21 errno=9
+fd 22 errno=9
+/proc/self/fd Punkte=2
+/proc/self/fd hat 0, 20, eigenen fd=1
+/proc/self/fd ohne 21=1
+/proc/self/fd schreibend: ret=-1 errno=21
+prctl PDEATHSIG 65: ret=-1 errno=22
+prctl GET_PDEATHSIG: ret=0 errno=0
+eigenes PDEATHSIG=0
+Mitte exit 0=1
+ppoll auf Enkel: ret=1 errno=0
+Enkel meldet: ret=1 errno=0
+Enkel bekam SIGUSR1=1
+jetzt execve im Hauptprozess
+zweites Abbild argc=2
+fd 7 offen (ohne CLOEXEC)=1
+fd 8 (CLOEXEC) errno=9
+SIGTERM gesperrt geblieben=1
+Kind von vor execve geerntet=1

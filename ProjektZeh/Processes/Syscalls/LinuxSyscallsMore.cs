@@ -73,6 +73,8 @@ internal static partial class LinuxSyscalls
             case Sigaltstack: return DoSigaltstack(p, a.A0, a.A1);
             case SchedYield: return 0;
             case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
+            case Ppoll: return DoPpoll(p, a.A0, a.A1, a.A2, a.A3, a.A4); // V19
+            case CloseRange: return p is ILinuxFiles ranged ? DoCloseRange(p, ranged, (uint)a.A0, (uint)a.A1, (uint)a.A2) : -ENOSYS;
             case Madvise: return DoMadvise(p, a.A0, a.A1, (int)a.A2);
             case Nanosleep: return DoNanosleep(p, a.A0, a.A1);
             case ClockNanosleep: return DoClockNanosleep(p, (int)a.A0, (int)a.A1, a.A2, a.A3);
@@ -420,7 +422,14 @@ internal static partial class LinuxSyscalls
         {
             // Ohne bereite Einträge schläft poll die Frist ab (sonst drehen Warteschleifen, etwa poll(NULL, 0, ms)).
             // Negative Frist (unendlich) schläft nie: es kann niemand wecken, Ergebnis 0. Ohne Host entfällt das Schlafen.
-            host.SleepNanos(timeoutMs * 1_000_000L);
+            // V19: in Scheiben, damit ein Signal (auch ein vor ppoll anhängiges, das die Wartemaske freigibt) das Schlafen sofort beendet.
+            // Gezählt wird die nominale Schlafzeit (SleepNanos kehrt nur beim Abbruch früher zurück; Ersatzhosts der Tests schlafen gar nicht).
+            for (long slept = 0; slept < timeoutMs && p is not ILinuxSignalWake { SignalWaiting: true } && !LinuxInterrupt.Check(p as ILinuxAbort);)
+            {
+                long slice = Math.Min(timeoutMs - slept, PollMultiSliceMs);
+                host.SleepNanos(slice * 1_000_000L);
+                slept += slice;
+            }
         }
 
         // V18: Ohne bereiten Eintrag unterbricht ein Signal poll wie unter Linux (-EINTR, auch mit SA_RESTART); revents bleiben dann unberührt.

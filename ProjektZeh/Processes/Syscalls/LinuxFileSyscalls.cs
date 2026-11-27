@@ -75,7 +75,23 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
-        r = f.FileSystem.Open(path, flags, mode & 0xfff, out ILinuxFile? file);
+        ILinuxFile? file;
+        if (IsProcSelfFd(p, path))
+        {
+            // V19: nur lesen (O_ACCMODE 0); Linux meldet für Schreibzugriff auf ein Verzeichnis -EISDIR.
+            if ((flags & 3) != 0)
+            {
+                return -FileErr.EISDIR;
+            }
+
+            file = new LinuxProcFdDirectory(p, path);
+            r = 0;
+        }
+        else
+        {
+            r = f.FileSystem.Open(path, flags, mode & 0xfff, out file);
+        }
+
         if (r < 0)
         {
             return r;

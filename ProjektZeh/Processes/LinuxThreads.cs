@@ -27,6 +27,15 @@ internal sealed class LinuxThread
     /// <summary>Gesetzt, sobald der Thread mit exit geendet hat (oder der Prozess mit exit_group).</summary>
     public bool Exited { get; set; }
 
+    /// <summary>
+    /// V19 ppoll: Maske vor dem Warten, solange die Wartemaske gilt (Linux: saved_sigmask mit TIF_RESTORE_SIGMASK). Nur der eigene Thread
+    /// schreibt und liest sie (Aufruf und Rücksprung desselben Threads), deshalb ohne Sperre.
+    /// </summary>
+    public ulong SavedBlocked { get; set; }
+
+    /// <summary>V19: <see cref="SavedBlocked"/> ist gültig und muss vor dem Rücksprung in den Ring 3 zurück.</summary>
+    public bool RestoreBlocked { get; set; }
+
     /// <summary>Gehört der Brücke des Kernels (Kernelthread, gesicherte Register); der plattformunabhängige Teil liest es nie.</summary>
     public object? Host { get; set; }
 }
