@@ -608,6 +608,9 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
     /// <summary>Programmpfad im Prozess (V12, /proc/self/exe); setzt der Starter vor dem ersten Befehl, danach nur gelesen.</summary>
     public string? ExePath { get; set; }
 
+    /// <summary>V26: absoluter, normalisierter Pfad von argv[0] des Starters (relativ zum Start-Arbeitsverzeichnis); execve darauf findet <see cref="ExePath"/>.</summary>
+    public string? StartPath { get; set; }
+
     public ILinuxDescriptor? GetDescriptor(int fd) => (uint)fd < MaxDescriptors ? _descriptors[fd] : null;
 
     // ILinuxFiles: Tabelle und Arbeitsverzeichnis; Pfade, dup und close setzt der Verteiler darauf um (V2 Dateien).
