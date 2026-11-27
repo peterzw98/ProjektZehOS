@@ -471,8 +471,10 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
   beginnt mit rdi = Signal, rsi = &siginfo, rdx = &ucontext, RSP ≡ 8 (mod 16), 128 Byte rote Zone frei, DF/TF gelöscht, FPU im Grundzustand.
   Ohne `SA_RESTORER` oder wenn der Rahmen nicht passt, endet der Prozess mit SIGSEGV (Linux: force_sigsegv).
 - **`rt_sigreturn` (15)**: Register, RFLAGS (nur CF, PF, AF, ZF, SF, DF, OF, AC), Maske, Alternativstack und FPU aus dem Rahmen; MXCSR wird mit
-  der MXCSR-Maske der CPU gefiltert (ein ungültiges Bit wäre bei fxrstor im Ring 0 ein #GP). Rückkehr über `sysretq`: rcx und r11 kommen wie nach
-  jedem Aufruf als RIP und RFLAGS zurück (ein unterbrochener Aufruf hatte sie ohnehin so).
+  der MXCSR-Maske der CPU gefiltert (ein ungültiges Bit wäre bei fxrstor im Ring 0 ein #GP). Seit V45 (Cosmos-Patch `sigreturn-iretq`) kommen auch
+  rcx und r11 aus dem Rahmen: Der Rückweg nimmt `sysretq` nur, wenn rcx = RIP und r11 = RFLAGS (ohne RF, TF), sonst `iretq` mit allen Registern. Das
+  braucht ein Handler für eine Ausnahme (V24), der zurückkehrt statt `siglongjmp`; vorher kamen rcx und r11 als RIP und RFLAGS zurück. Gastprogramm
+  `experiments/LinuxAbi/src/v45/sigret.c` (Erwartung Linux 6.12 in `expected/v45`).
   Ein Handler, der RSP im Rahmen verbiegt: nichtkanonisch endet der Prozess mit SIGBUS (Linux: #SS beim ersten Stapelzugriff), ein Wert in der
   Kernelhälfte mit SIGSEGV, weil `UserMode.Prepare` jede Rückkehr mit RIP oder RSP ab `0x0000_8000_0000_0000` ablehnt (Gastprogramm `v18/badrsp.c`,
   als `rspnc` und `rspkern`).

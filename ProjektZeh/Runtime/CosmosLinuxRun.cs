@@ -1142,6 +1142,8 @@ internal static unsafe class CosmosLinuxRun
             return;
         }
 
+        // V45: rcx und r11 aus dem Rahmen gelten; trägt er sie nicht als RIP und RFLAGS (Rahmen einer Ausnahme, V24), kehrt
+        // UserMode.s per iretq zurück statt per sysretq (Cosmos-Patch sigreturn-iretq).
         FromRegs(frame, regs);
         DeliverSignals(me, frame, new SyscallArgs { Number = -1 }, 0, 0);
     }

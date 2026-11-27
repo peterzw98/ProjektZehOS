@@ -208,11 +208,27 @@ Mit der Abnahme von #423 (Peter, 27.11.) greift wegen D `offen` die Zeile „C o
 
 **Entscheidung: GO** (Peter im Terminal, 27. November 2026): Der Ladybird-Port beginnt, ohne auf D zu warten. D bleibt offen und wird mit dem Port selbst geschlossen (Ladybird ohne Oberfläche im ZehOS-Gast). Nächste Pakete: dynamisches Laden über `PT_INTERP` (die musl-Helfer `WebContent`, `RequestServer` und `ImageDecoder` sind dynamisch gelinkt und brauchen nur `ld-musl`, `libstdc++`, `libgcc_s`, WebContent zusätzlich `libdrm`), Ladybird-Bau ohne Qt für den headless-Start, Fehlersignale (V24).
 
-**Stand D nach GO (27.11., 11:23, agent-peter-senior):** Ladybird (musl-Bündel `99fb75b7`, Hub ohne Qt, `--headless=screenshot --disable-sandbox`) rendert `static.html` **im ZehOS-Gast** vollständig: PNG 798 × 4087 mit allen 50 Absätzen und der Tabelle (KVM, 1 CPU, `story/ladybird` `cbcdb6bb`, ein Lauf, `--screenshot-delay 30`). Dafür nötig waren V25/V25b (dynamisches Laden), V28/V28b (Bündel-Platte, Dateisperren), V29 (`/proc`), V30 (Dateiseiten bei Zugriff), V32 (`MAP_SHARED` auf Dateien), V33 (`FIONBIO`), V34 (Eigentümer), V35 (Prozessgruppen), V36 (Thread-Plätze), V37 (Umgebung), der Cosmos-Patch AHCI-Flush 30 s und im Bündel `fonts.conf`/`conf.d`. Nach V38 (Signalmaske je Thread, Seitenfehler-Rennen; `story/ladybird` `4c8f73e3`): KVM 3/3 mit 1 CPU und 3/3 mit 4 CPUs ohne Absturz (je etwa 85 s, 12:25). TCG (`-accel tcg -cpu max`, 1 CPU): 3/3 ohne Absturz (12:39). Offen: VMware, echte Hardware; Ladedauer im Gast 5–8 s gegenüber 0,3 s unter Linux.
+### Stand nach dem GO am 27. November 2026
+
+Der erste vollständige **Gast-Screenshot von `static.html`** (798 × 4087 Pixel, 50 Absätze und eine Tabelle) gelang auf `cbcdb6bb` mit dem musl-Bündel `99fb75b7`, Hub ohne Qt, QEMU/KVM, 1 CPU und 30 s Screenshot-Verzögerung (senior, #first, 11:23). Dafür nötig waren unter anderem dynamisches Laden (V25/V25b), Dateisperren und die Bündelplatte (V28/V28b), `/proc` (V29), Dateiseiten bei Zugriff (V30), `MAP_SHARED` für Dateien (V32), `FIONBIO` (V33), Eigentümer (V34), Prozessgruppen (V35), Thread-Plätze (V36), Umgebung (V37), AHCI-Flush mit 30 s sowie `fonts.conf` und `conf.d`. [V31 strace-Abgleich](superpowers/plans/2026-11-27-ladybird-v31-strace.md)
+
+| Gastnachweis | Stand und Bedingungen | Ergebnis |
+| --- | --- | --- |
+| Stabilität nach V38 | `4c8f73e3`, `static.html` | KVM 3/3 mit 1 CPU und 3/3 mit 4 CPUs, je etwa 85 s. TCG mit 1 CPU 3/3. |
+| KVM-Abnahme mit V43/V45 | `0760f4b8`, Cosmos `053fb42`, `lb-headless-99fb75b7`, 2 GiB, je 1 und 4 CPUs | `static.html`, `css.html`, `js.html`, `img.html` **8/8** im ersten Versuch, Gastlauf 82–89 s, gleicher Anteil nicht-weißer Pixel je Seite (senior2, #first, 18:02). |
+| TCG auf demselben Abnahmestand | `0760f4b8`, `lb-headless-99fb75b7`, 1 CPU, 2 GiB | `static.html` und `js.html` je 1/1, 104 bzw. 120 s im Gast, Pixelanteil wie bei KVM (senior2, #first, 18:11). |
+| Neues Standardbündel | Runner `a104d235`, ISO `0760f4b8-run`, `ladybird-static-with-images.tar.gz`, KVM, 1 CPU, 2 GiB | `static.html` und `img.html` je 1/1 (senior2, #first, 18:17). |
+| Generalproben | `ca0e3238` und finaler Cache-Check `77194232`, ISO `0760f4b8-run`, Standardbündel | MSI/KVM: static, Projektseite und Canvas je 1/1 und 88 s gesamt. WSL/TCG: static 2/2, je 104 s gesamt (96 s im Gast), PNG bytegleich zur MSI-Referenz. [Demo-Ablauf](superpowers/plans/2026-12-04-ladybird-demo-ablauf.md) |
+| Generalprobe am Stück (Freeze-Kandidat) | `9d461fa7`, ISO `0760f4b8-run`, Standard- und HTTP-Bündel aus dem Asset-Ordner, MSI/KVM, 1 CPU, 2 GiB | Alle Schritte im ersten Versuch: static 88 s, Projektseite 87 s, Canvas 89 s, HTTP 71 s; 335 s reine Laufzeit. PNGs bytegleich zu den früheren Läufen (senior2, #first, 19:55).
+| HTTP über IPv4-Loopback | `e4f5eff6`, `6301341f`, `2dd30960`, kombiniertes `bundle-http.tar.gz`, KVM, 1 CPU, 2 GiB | Projektseite 3/3 (68–91 s, PNG 798 × 720 Pixel), BusyBox-`httpd` und Hub im selben LinuxRun-Prozessbaum (engineer2, #first, 17:34, Befehle von senior2, 18:41). |
+
+**Grenzen der Demo.** Die Gastläufe verwenden Headless mit `--disable-sandbox`. Der geprüfte HTTP-Pfad bleibt auf IPv4-Loopback beschränkt. Die WSL-HTTP-Zusatzprobe mit dem ursprünglichen Archiv-Wrapper speicherte ein bytegleiches PNG, blieb danach beim Warten auf den Server stehen. Der KVM-Ablauf verwendet den gesondert geprüften Wrapper ohne diesen Warteaufruf. VMware und echte Hardware stehen aus. Die Demo nutzt 2 GiB Gast-RAM. Bei 512 MiB kann V43 `WebContent` per `SIGKILL` beenden. In der V38-Startmessung lud die Seite im Gast in 5–8 s, unter Linux in 0,3 s.
+
+Der [Risiko-Review](superpowers/specs/2026-11-27-ladybird-risk-uebersicht.md) umfasst fünf Blöcke. P1 `readv` und die P2-Befunde bis auf die `SCM_RIGHTS`-Grenze wurden behoben und von laser nachgeprüft.
 
 ### Offene Punkte
 
-1. **N1-D2 (#636):** Ursache von `no_screenshot` klären, `static.html` headless mit Screenshot, Branch `task/ladybird-n1d2-alles` mergen, Bericht `…-n1-musl.md`, Urteil D (`trägt` oder `glibc`).
+1. **N1-D2 (#636):** Der Headless-Screenshot ist im [Stand nach dem GO](#stand-nach-dem-go-am-27-november-2026) belegt. Offen sind der Merge von `task/ladybird-n1d2-alles`, der D2-Bericht und das förmliche Urteil D (`trägt` oder `glibc`).
 2. **#749:** AOT-Reste nach #423 (Schlüsselschutz §5.1, erste `.aot`-Pakete, VMware); keine Voraussetzung des Tors mehr.
 3. **#716:** Kosten je Adressraumwechsel erst nach sofortigem Yield messbar.
 4. **#700-Rest:** verschachteltes NMI unter TCG, Ursache offen.

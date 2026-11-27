@@ -1,4 +1,4 @@
-/* Fetch-Probe fuer scripts/ladybird-demo-run.sh --selftest: schreibt ein gueltiges 1x1-PNG nach /shot.png (Prozesswurzel =
+/* Fetch-Probe fuer den Ladybird-Demo-Runner. Schreibt ein gueltiges 1x1-PNG nach /shot.png (Prozesswurzel =
  * Platten-Ordner lb) und endet mit 0. Prueft so den Weg Gast -> Platten-Kopie -> fetch-data-disk-file.py ohne Ladybird.
  * Bauen: gcc -static -O1 -o probe scripts/ladybird-demo-probe.c (nur Systemaufrufe open/write/close). */
 #include <fcntl.h>

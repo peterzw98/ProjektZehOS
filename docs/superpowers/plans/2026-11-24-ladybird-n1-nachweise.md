@@ -227,6 +227,9 @@ Jedes Programm schreibt nur deterministischen Text. `expected/<satz>/<name>.txt`
 
 ### N1-Z: Tor
 
+Teilurteile für #624: [D – musl](../specs/2026-11-24-ladybird-n1-musl.md)
+und [E – Vergleichsprogramme](../specs/2026-11-24-ladybird-n1-vergleichsprogramme.md).
+
 - **Branch:** `docs/ladybird-n1z-tor` · **Größe:** 1 · **Rolle:** Lead · **Voraussetzung:** N1-A7, N1-B5, N1-C2, N1-D2, N1-E2, N1-E3, #450, Stand von #423
 - **Dateien:** `docs/LADYBIRD_FEASIBILITY.md` („Ergebnis N1“), Übersicht, `ROADMAP.md`; bei GO werden N2 und N3 in Pakete geschnitten.
 - **Regel (fest):**
