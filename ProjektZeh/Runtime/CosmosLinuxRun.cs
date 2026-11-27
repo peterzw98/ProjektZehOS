@@ -32,6 +32,17 @@ internal static unsafe class CosmosLinuxRun
     /// <summary>Speicher je Programm (Frames), danach endet ein Seitenfehler mit Abbruch.</summary>
     private const ulong MaxBytes = 512UL << 20;
 
+    /// <summary>
+    /// V43: Seiten, die Nutzer-Frames dem Kernel lassen (<see cref="UserPageTable.ReservedPages"/>): ein Achtel des Speichers,
+    /// mindestens 64 MiB, höchstens 128 MiB. Ohne Reserve nahmen die Frames aller Programme (Ladybird: mehrere Prozesse je bis
+    /// <see cref="MaxBytes"/>) dem Kernel-Heap die letzte Seite, und der Kernel hielt mit OutOfMemoryException an; mit ihr
+    /// scheitert der Seitenfehler oder mmap des Programms.
+    /// </summary>
+    private const ulong ReserveMinPages = (64UL << 20) / AddressSpaceMap.PageSize;
+
+    /// <summary>Obergrenze der Reserve (<see cref="ReserveMinPages"/>).</summary>
+    private const ulong ReserveMaxPages = (128UL << 20) / AddressSpaceMap.PageSize;
+
     /// <summary>Größter ladbarer Teil eines Programms (V28: ohne Debugabschnitte, <see cref="FileService.ReadExecutable"/>).</summary>
     public const int MaxFileSize = 128 << 20;
 
@@ -520,6 +531,21 @@ internal static unsafe class CosmosLinuxRun
         return 0;
     }
 
+    /// <summary>Setzt die Kernel-Reserve (<see cref="ReserveMinPages"/>) beim ersten Programm; Threadkontext, vor jedem Prozess.</summary>
+    private static void ReserveKernelPages()
+    {
+        if (UserPageTable.ReservedPages != 0)
+        {
+            return;
+        }
+
+        ulong pages = Math.Clamp(UserPageTable.TotalPages / 8, ReserveMinPages, ReserveMaxPages);
+        UserPageTable.ReservedPages = pages;
+        Serial("[linux-run] Kernel-Reserve " + (pages * AddressSpaceMap.PageSize >> 20).ToString() + " MiB, frei "
+            + (UserPageTable.FreePages * AddressSpaceMap.PageSize >> 20).ToString() + " von "
+            + (UserPageTable.TotalPages * AddressSpaceMap.PageSize >> 20).ToString() + " MiB");
+    }
+
     private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
 
     /// <summary>Lädt und startet das Programm und wartet auf sein Ende, höchstens <paramref name="timeoutSeconds"/> Sekunden.</summary>
@@ -536,6 +562,7 @@ internal static unsafe class CosmosLinuxRun
         Running? run = null;
         try
         {
+            ReserveKernelPages();
             if (!Prepare(elf, argv, envp, root, out UserImage? image, out string why))
             {
                 return new Outcome(false, string.Empty, why);
