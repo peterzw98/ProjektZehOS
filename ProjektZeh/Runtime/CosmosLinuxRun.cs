@@ -1,6 +1,7 @@
 #if ZEHOS_LINUX_RUN
 using System;
 using System.IO;
+using System.Text;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
@@ -692,8 +693,9 @@ internal static unsafe class CosmosLinuxRun
             long made = process.FileSystem.Mkdir(path, mode);
             if (made < 0 && made != -LinuxErrno.EEXIST)
             {
-                run.Error = "Ordner " + path + ": errno " + (-made);
-                return;
+                // Nur Warnung: Ein Programm kommt oft ohne /tmp oder /.cache aus (etwa schreibgeschützte Wurzel); ein Abbruch wäre schlimmer.
+                byte[] warning = Encoding.UTF8.GetBytes("run: Warnung: Ordner " + path + " nicht angelegt (errno " + (-made) + ")\n");
+                run.Terminal.Write(warning);
             }
         }
 
