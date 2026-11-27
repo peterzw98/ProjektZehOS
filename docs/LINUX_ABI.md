@@ -326,14 +326,14 @@ Ereignisschleife aus anderen Threads über eine Pipe.
 | 22, 293 | `pipe`, `pipe2` | kleinste freie Nummern für Lese- und Schreibende; vfork-Kinder und `SCM_RIGHTS` teilen die Enden (V15, V16); Flags `O_CLOEXEC` (setzt `FD_CLOEXEC` auf beiden Nummern, V15) und `O_NONBLOCK`, andere (`O_DIRECT`) `-EINVAL`; `-EFAULT` gibt beide Nummern wieder frei, `-EMFILE` ebenso |
 | 0, 19 | `read`, `readv` auf dem Leseende | blockiert ohne Daten bis zu einem Schreiben, bis kein Schreibende mehr offen ist (`0`, EOF) oder zum Abbruch (`-EINTR`); mit `O_NONBLOCK` `-EAGAIN`; liefert das Verfügbare, höchstens 4096 Bytes je Aufruf; auf dem Schreibende `-EBADF` |
 | 1, 20 | `write`, `writev` auf dem Schreibende | Puffer 64 KiB; bis 4096 Bytes (`PIPE_BUF`) ganz oder gar nicht; voll blockiert es, mit `O_NONBLOCK` `-EAGAIN`; ohne Leseende `-EPIPE` und `SIGPIPE` (V18); auf dem Leseende `-EBADF` |
-| 7 | `poll` | Leseende `POLLIN` mit Daten, `POLLHUP` ohne Schreibende; Schreibende `POLLOUT` bei mindestens 4096 Bytes Platz, `POLLERR` ohne Leseende; wartet auf Pipe-Enden ohne Dateisperre und wacht beim Schreiben, Lesen oder Schließen eines anderen Threads auf |
+| 7 | `poll` | Leseende `POLLIN` mit Daten, `POLLHUP` ohne Schreibende; Schreibende `POLLOUT` bei mindestens 4096 Bytes Platz, ohne Leseende `POLLERR` (seit V22 zusammen mit `POLLOUT` wie Linux' `pipe_poll`); wartet auf Pipe-Enden ohne Dateisperre und wacht beim Schreiben, Lesen oder Schließen eines anderen Threads auf |
 | 3 | `close` | erst das letzte `close` eines Endes (nach `dup`) meldet dem anderen EOF beziehungsweise `EPIPE`; Ungelesenes wird mit dem Leseende verworfen |
 | 5, 8 | `fstat`, `lseek` | `S_IFIFO` mit 0600, Größe 0; `lseek` `-ESPIPE` |
 | 99 | `sysinfo` | `uptime` aus der monotonen Uhr in Sekunden, `totalram`/`freeram` in Bytes (`mem_unit` 1) aus dem Seitenverwalter von Cosmos, `procs` 1; Lastwerte, Swap, `sharedram`, `bufferram` 0 |
 
 Grenzen: Ein `write` über 4096 Bytes mit `O_NONBLOCK` wird in Stücken zu 4096 Bytes geschrieben; ist weniger als ein Stück frei, kommt `-EAGAIN` (Linux schriebe
 den freien Rest). Schließt ein Thread das Schreibende, während ein anderer noch hineinschreibt, sieht der Leser schon EOF (Linux hält die Datei bis zum Ende
-des Aufrufs). `ioctl(FIONREAD)`, `select` und `epoll` gibt es nicht (`ppoll` seit V19). Die Pipe-Sperre ist eine Blattsperre: Dateisperre vor Pipe-Sperre, darin weder
+des Aufrufs). `ioctl(FIONREAD)` und `select` gibt es nicht (`ppoll` seit V19, `epoll` seit V22). Die Pipe-Sperre ist eine Blattsperre: Dateisperre vor Pipe-Sperre, darin weder
 Benutzerspeicher noch eine andere Sperre. `read` auf dem Leseende prüft den Puffer vor dem Entnehmen; gibt ein anderer Thread ihn danach per `munmap` oder
 `mprotect` frei, scheitert das Zurückschreiben mit `-EFAULT`, und die entnommenen Bytes sind verloren (Abweichung: Linux rückt in `pipe_read` erst nach erfolgreichem Kopieren vor und behält sie).
 
@@ -488,5 +488,29 @@ fontconfig fragt statfs, Ladybird beobachtet die Zeitzone mit inotify.
 
 Grenzen: ZehOS meldet **keine Dateiänderungen**; inotify erzeugt außer `IN_IGNORED` nach `inotify_rm_watch` nie ein Ereignis (Ladybird merkt eine geänderte
 Zeitzone also erst beim Neustart). `IN_ONESHOT` und `IN_EXCL_UNLINK` werden angenommen und ohne Wirkung gespeichert; `ioctl(FIONREAD)` fehlt. statfs meldet
-für den ganzen Baum dieselben Werte, auch für das virtuelle `/dev`; der freie Platz der Platte selbst fließt nicht ein. `select`, `epoll` und `signalfd` fehlen
-weiter. Die Sperren von eventfd und inotify sind Blattsperren wie die Pipe-Sperre (Dateisperre davor möglich); Lesen und Warten laufen ohne Dateisperre.
+für den ganzen Baum dieselben Werte, auch für das virtuelle `/dev`; der freie Platz der Platte selbst fließt nicht ein. `select` und `signalfd` fehlen
+weiter (`epoll` seit V22). Die Sperren von eventfd und inotify sind Blattsperren wie die Pipe-Sperre (Dateisperre davor möglich); Lesen und Warten laufen ohne Dateisperre.
+
+## epoll (V22)
+
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxEpoll.cs` (Hosttests `LinuxEpollTests`, Gastprogramm `experiments/LinuxAbi/src/v22/epoll.c`, Ausgabe
+gleich Linux 6.12). Anlass: LibCore von Ladybird wartet über epoll; s3 `pipe_epoll` prüft den Umfang (braucht darüber hinaus timerfd und fork).
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 213, 291 | `epoll_create`, `epoll_create1` | `size` ≤ 0 `-EINVAL`; Flags nur `EPOLL_CLOEXEC`, andere `-EINVAL`; anon_inode wie eventfd (fstat 0600, `close` erst mit der letzten Nummer) |
+| 233 | `epoll_ctl` | Reihenfolge wie Linux: Ereignis unlesbar (außer `DEL`) `-EFAULT`; epfd oder fd ungültig `-EBADF`; reguläre Datei `-EPERM`; epfd kein epoll, fd gleich epfd oder ein anderes epoll `-EINVAL`; `EPOLLEXCLUSIVE` mit anderen Bits als Ereignis/ET/Wakeup oder bei `MOD` `-EINVAL`; `ADD` doppelt `-EEXIST`, `MOD`/`DEL` unbekannt `-ENOENT`, unbekannte Operation `-EINVAL`; höchstens 4096 Einträge (`-ENOSPC`). `EPOLLERR` und `EPOLLHUP` gelten immer; `MOD` macht einen `EPOLLONESHOT`-Eintrag wieder scharf und vergisst die letzte Flanke |
+| 232, 281, 441 | `epoll_wait`, `epoll_pwait`, `epoll_pwait2` | `maxevents` ≤ 0 oder über `INT_MAX/12` `-EINVAL`; Zielpuffer außerhalb des Benutzerbereichs `-EFAULT` (nur Adressbereich wie `access_ok`; ein nicht abgebildeter scheitert erst beim Zurückschreiben); epfd `-EBADF`, kein epoll `-EINVAL`. Bereitschaft wie `poll` (Pipes, Unix-Sockets, eventfd, inotify, Terminal: `EPOLLOUT` immer, `EPOLLIN` mit Eingabe). Pegelgesteuert meldet jeder Aufruf erneut; gemeldete Einträge gehen ans Ende, damit bei kleinem `maxevents` die anderen drankommen. `EPOLLET` meldet bei neu bereiten Bits oder einem neuen Ereignis der Quelle (Pipe: Schreiben oder Ende der Schreibseite; eventfd: `write`; Unix-Socket: Daten oder Ende der Gegenseite), sonst nicht; `EPOLLONESHOT` schweigt nach einer Meldung bis zum nächsten `MOD`. Signalmaske und Frist (`timespec` bei `pwait2`) wie `ppoll`; ein Signal ohne Ereignis `-EINTR`, nie neu gestartet |
+| 0, 1 | `read`, `write` auf epoll | `-EINVAL` |
+
+Gewartet wird wie bei `poll`, ohne Dateisperre: auf den ersten nicht bereiten Eintrag in Scheiben von höchstens 50 ms (ein `epoll_ctl` aus einem anderen Thread
+wird spätestens dann gesehen), bei mehreren Einträgen oder einem flankengesteuerten, der bereit, aber schon gemeldet ist, in 10-ms-Scheiben mit neuem Durchgang.
+Sperren: Dateisperre vor epoll-Sperre vor der Blattsperre des Deskriptors; gewartet wird nie unter der epoll-Sperre.
+
+Grenzen: Ein Eintrag hängt an Nummer und Deskriptor. Zeigt die Nummer nicht mehr auf denselben Deskriptor (`close`, `dup2` darüber), fällt der Eintrag beim
+nächsten `epoll_ctl` oder `epoll_wait` weg, auch wenn ein `dup` derselben Datei offen bleibt (Linux behält ihn, bis die letzte Nummer zu ist). Verschachteltes epoll,
+die Verteilung von `EPOLLEXCLUSIVE` (wird angenommen, weckt aber alle), `EPOLLWAKEUP`, `EPOLLPRI` und `EPOLLRDHUP` auf Pipes fehlen. `EPOLLET` auf Deskriptoren
+ohne Ereigniszähler (Terminal, lauschendes Socket) meldet nur den Übergang von nicht bereit zu bereit; eine zweite wartende Verbindung bei einer schon gemeldeten
+meldet ein lauschendes Socket also nicht erneut. Platz zum Schreiben zählt nur als Übergang (Linux weckt `EPOLLOUT` bei jedem Lesen der Gegenseite). Bereitschaft
+wird bei jedem Aufruf erfragt, nicht über Rückrufe gesammelt: Ein Aufruf kostet Zeit proportional zur Zahl der Einträge. Ein Prozess nach vfork, der dasselbe epoll
+benutzt, sieht die Einträge mit seinen eigenen Nummern.

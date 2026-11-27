@@ -75,6 +75,10 @@ internal static partial class LinuxSyscalls
             case SchedYield: return 0;
             case Poll: return DoPoll(p, a.A0, a.A1, (int)a.A2);
             case Ppoll: return DoPpoll(p, a.A0, a.A1, a.A2, a.A3, a.A4); // V19
+            // V22: epoll_wait wartet und läuft deshalb wie poll ohne die Dateisperre; epoll_create und epoll_ctl darunter (DispatchSoft).
+            case EpollWait: return DoEpollPwait(p, (int)a.A0, a.A1, (int)a.A2, (int)a.A3, 0, 0);
+            case EpollPwait: return DoEpollPwait(p, (int)a.A0, a.A1, (int)a.A2, (int)a.A3, a.A4, a.A5);
+            case EpollPwait2: return DoEpollPwait2(p, (int)a.A0, a.A1, (int)a.A2, a.A3, a.A4, a.A5);
             case CloseRange: return p is ILinuxFiles ranged ? DoCloseRange(p, ranged, (uint)a.A0, (uint)a.A1, (uint)a.A2) : -ENOSYS;
             case Madvise: return DoMadvise(p, a.A0, a.A1, (int)a.A2);
             case Nanosleep: return DoNanosleep(p, a.A0, a.A1);

@@ -58,6 +58,9 @@ internal static partial class LinuxSyscalls
             case SoftNr.InotifyInit1: return DoInotifyInit(f, (int)a.A0);
             case SoftNr.InotifyAddWatch: return DoInotifyAddWatch(p, f, (int)a.A0, a.A1, (uint)a.A2);
             case SoftNr.InotifyRmWatch: return DoInotifyRmWatch(p, (int)a.A0, (int)a.A1);
+            case EpollCreate: return DoEpollCreate(f, (int)a.A0); // V22
+            case EpollCreate1: return DoEpollCreate1(f, (int)a.A0);
+            case EpollCtl: return DoEpollCtl(p, (int)a.A0, (int)a.A1, (int)a.A2, a.A3);
             default: return -ENOSYS;
         }
     }
