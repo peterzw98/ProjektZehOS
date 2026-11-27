@@ -36,6 +36,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 318 | `getrandom` | Flags nur GRND_NONBLOCK/RANDOM/INSECURE (RANDOM+INSECURE `-EINVAL`); füllt in 4-KiB-Stücken aus `ILinuxHost.TryFillRandom`; ohne Host `-ENOSYS` (nie schwacher Zufall), Quelle nicht bereit `-EAGAIN`; Abbruch je Stück wie `write` (#735) |
 | 63 | `uname` | Linux / zehos / 6.1.0-zehos / x86_64 |
 | 13, 14 | `rt_sigaction`, `rt_sigprocmask` | Verwaltung je Prozess, Zustellung an Handler seit V18 (unten); sigsetsize 8, SIGKILL/SIGSTOP nicht abfangbar und nicht blockierbar |
+| 127 | `rt_sigpending` | V23: schreibt anhängige und blockierte Signale (Maske je Prozess); `sigsetsize` > 128 `-EINVAL`, kleiner schneidet ab, Zeiger ungültig `-EFAULT` |
 | 131 | `sigaltstack` | setzen/abfragen/abschalten; Größe < 2048 `-ENOMEM`; ohne Zustellung wirkungslos; SS_AUTODISARM wird nicht gemerkt (Abweichung) |
 | 24 | `sched_yield` | `0` |
 | 7 | `poll` | höchstens 1024 Einträge; offene fd melden POLLOUT, POLLIN nur eine Eingabe mit Bytes, Eingabeende oder Abbruch (sonst nie POLLIN), unbekannte fd POLLNVAL; wartet ein Eintrag auf Eingabe, wartet poll darauf in 50-ms-Scheiben (auch mit Frist -1, Abbruch beendet), warten mehrere (Pipe-Enden, V13), reihum in 10-ms-Scheiben; ohne bereite Einträge und mit Frist > 0 schläft sie die Frist über `ILinuxHost.SleepNanos` ab (ohne Host nicht); Frist -1 (unendlich) schläft nie, Ergebnis 0 |
@@ -290,7 +291,7 @@ Umsetzung und Grenzen:
   Speicher vor `UserPageTable` vor `PageAllocator`). Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.
 - Ein Absturz in einem Thread (Ausnahme, ungültige Register, Fehler der Brücke) beendet den ganzen Prozess wie bei Linux. `pthread_exit` in `main` lässt die
   anderen weiterlaufen; der Prozess endet mit dem letzten Thread.
-- Signalmaske, anhängige Signale und Alternativstack sind noch je Prozess, nicht je Thread (V18 stellt zu, siehe dort); `rt_sigpending` und `rt_sigsuspend` fehlen.
+- Signalmaske, anhängige Signale und Alternativstack sind noch je Prozess, nicht je Thread (V18 stellt zu, siehe dort); `rt_sigsuspend` fehlt; `rt_sigpending` (V23) meldet anhängig und blockiert der einen Prozessmenge (Echtzeitsignale gibt es nicht).
 - Dateien (V11): Deskriptortabelle, Arbeitsverzeichnis, `LinuxFileSystem` und die offenen Dateien schützt eine Sperre je Prozess (`ILinuxFiles.FileGate`). Jeder Datei- und Pfadaufruf läuft ganz unter ihr, auch `pread` (Position sichern, lesen, zurücksetzen) ist dadurch atomar; Dateiaufrufe verschiedener Threads laufen nacheinander, auch während einer langsamen Platte. Schreiben auf das Terminal und Lesen von fd 0 halten sie nicht (Lesen wartet auf Eingabe). Reihenfolge: Dateisperre vor Speichersperre und vor `StorageLock`, nie zusammen mit der futex-Tabelle. Grenze: Ersetzt ein Thread fd 0 per `dup2`, während ein anderer `read` darauf beginnt, kann dieser `-EBADF` sehen (die Art des Deskriptors wird vor der Sperre bestimmt).
 - Ein Thread, der in `read` auf fd 0 wartet, endet beim Prozessende über das Dateiende der Sitzung; ohne Sitzung (Gastprobe) liest fd 0 ohnehin leer.
 
@@ -368,13 +369,13 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
-| 41 | `socket` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`, kein Netz), `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` `-ESOCKTNOSUPPORT`), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
+| 41 | `socket` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`, kein Netz), `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` über `socket` weiter `-ESOCKTNOSUPPORT`: nur als `socketpair`, V23), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
 | 49 | `bind` | abstrakte Namen (führendes Nullbyte, binär) und Pfade relativ zum Arbeitsverzeichnis; ein Pfad legt eine leere Datei an (vorhanden: `-EADDRINUSE`), die nach `close` stehen bleibt; Länge 2 bindet automatisch (`\0` und fünf Hexziffern); schon gebunden oder angenommenes Ende `-EINVAL`; Namen gelten je Lauf |
 | 50 | `listen` | unbenannt oder verbunden `-EINVAL`; Rückstand bis 4096, wie Linux wartet eine Verbindung mehr als angegeben |
 | 42 | `connect` | legt das Gegenende sofort an (Senden vor `accept` geht); volle Warteschlange: blockierend warten, sonst `-EAGAIN`; kein Lauschender, gewöhnliche Datei oder anderer Typ unter abstraktem Namen `-ECONNREFUSED`, anderer Typ unter Pfad `-EPROTOTYPE`, fehlender Pfad `-ENOENT` (auch nach `unlink`), verbunden `-EISCONN`, Länge bis 2 `-EINVAL` |
 | 43, 288 | `accept`, `accept4` | älteste Verbindung; nicht lauschend `-EINVAL`, leer mit `O_NONBLOCK` `-EAGAIN`; Name des Verbindenden (unbenannt: Länge 2); `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `close` des Lauschenden beendet nicht angenommene Verbindungen (EOF beim Verbindenden) |
 | 51, 52 | `getsockname`, `getpeername` | Länge wie Linux (Pfad mit Nullbyte, abstrakt genau, unbenannt 2), gekürzt auf den Puffer; das angenommene Ende trägt den Namen des Lauschenden; `getpeername` unverbunden `-ENOTCONN` |
-| 53 | `socketpair` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` und andere `-ESOCKTNOSUPPORT`), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
+| 53 | `socketpair` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` seit V23, verbundenes Paar; Typ außerhalb 1..10 `-EINVAL`, andere `-ESOCKTNOSUPPORT`; Dgram: Nachrichtengrenzen, leere Datagramme, SCM_RIGHTS, kein EOF beim close der Gegenseite, dann Senden `-ECONNREFUSED` (eigenes SHUT_WR zuerst `-EPIPE`), Warteschlange höchstens 10 Nachrichten (max_dgram_qlen, auch leere): voll `-EAGAIN` beziehungsweise blockierend, poll ohne POLLOUT), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
 | 46, 44 | `sendmsg`, `sendto` | Puffer je Richtung 212992 Bytes (`wmem_default`); Stream blockierend ganz, mit `O_NONBLOCK`/`MSG_DONTWAIT` so viel wie passt; Seqpacket ganz oder `-EAGAIN`, über 212992 Bytes `-EMSGSIZE`; Stream mit Zieladresse `-EISCONN`; `MSG_OOB` `-EOPNOTSUPP`; nach Ende oder `shutdown` `-EPIPE` mit `SIGPIPE`, außer mit `MSG_NOSIGNAL` (V18) |
 | 47, 45 | `recvmsg`, `recvfrom` | Stream fasst Nachrichten zusammen und endet nach der ersten mit Dateien; Seqpacket eine Nachricht, Rest verworfen mit `MSG_TRUNC` (`MSG_TRUNC` im Aufruf liefert die volle Länge); `MSG_PEEK`, `MSG_WAITALL`, `MSG_DONTWAIT`, `MSG_CMSG_CLOEXEC`; `msg_name` ist der Name des Senders, `msg_namelen` 0 bei unbenanntem Sender |
 | 46/47 | `SCM_RIGHTS` | bis 253 Dateien je Nachricht; die Nachricht hält jede Datei wie eine Nummer (`LinuxOpenFiles` des Laufs), also überlebt sie das `close` des Senders und das Ende eines Kindprozesses; zu kleiner Hilfsdatenpuffer oder volle Tabelle: Rest geschlossen, `MSG_CTRUNC`; `MSG_PEEK` gibt zusätzliche Nummern; `read`/`recvfrom` verwerfen mitgeschickte Dateien; `SCM_CREDENTIALS` angenommen, nicht weitergereicht; andere Typen `-EINVAL` |
@@ -443,7 +444,7 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
 - **Grenzen**: Maske, anhängige Signale und Alternativstack je Prozess, nicht je Thread; ein Handler blockiert sein Signal für alle Threads, bis
   rt_sigreturn die Maske des Rahmens zurückschreibt. Echtzeitsignale reihen sich nicht mehrfach ein. Kein Zustellen in einer Rechenschleife ohne
   Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3) und keine Handler für Ausnahmen (SIGSEGV/SIGFPE aus einem Fehler im
-  Ring 3 beenden weiter). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigpending`, `rt_sigtimedwait` und
+  Ring 3 beenden weiter). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigtimedwait` und
   `signalfd` fehlen.
 
 ## Harte Startlücken: ppoll, prctl, close_range, /proc/self/fd, execve (V19)

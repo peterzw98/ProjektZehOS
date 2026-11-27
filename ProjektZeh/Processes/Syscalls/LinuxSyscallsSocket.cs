@@ -72,9 +72,14 @@ internal static partial class LinuxSyscalls
             return -SockErr.EAFNOSUPPORT;
         }
 
-        if (kind != LinuxUnixSocket.SockStream && kind != LinuxUnixSocket.SockSeqpacket)
+        if (kind <= 0 || kind >= 11)
         {
-            return -SockErr.ESOCKTNOSUPPORT; // SOCK_DGRAM fehlt (LINUX_ABI.md)
+            return -SockErr.EINVAL; // SOCK_MAX: Linux prüft den Bereich vor der Familie des Protokolls (Gast unix_fdpass)
+        }
+
+        if (kind != LinuxUnixSocket.SockStream && kind != LinuxUnixSocket.SockSeqpacket && kind != LinuxUnixSocket.SockDgram)
+        {
+            return -SockErr.ESOCKTNOSUPPORT;
         }
 
         if (protocol != 0 && protocol != AfUnix)
@@ -351,7 +356,7 @@ internal static partial class LinuxSyscalls
         taken = false;
         bool nonBlocking = s.NonBlocking || dontWait;
         var abort = p as ILinuxAbort;
-        if (s.Type == LinuxUnixSocket.SockSeqpacket)
+        if (s.IsMessage)
         {
             if (total > LinuxUnixSocket.Capacity)
             {
@@ -440,7 +445,7 @@ internal static partial class LinuxSyscalls
         }
 
         int outFlags = 0;
-        if (s.Type == LinuxUnixSocket.SockSeqpacket && full > r)
+        if (s.IsMessage && full > r)
         {
             outFlags |= MsgTrunc;
         }
@@ -485,7 +490,7 @@ internal static partial class LinuxSyscalls
             return -SockErr.EFAULT;
         }
 
-        return s.Type == LinuxUnixSocket.SockSeqpacket && (flags & MsgTrunc) != 0 ? full : r;
+        return s.IsMessage && (flags & MsgTrunc) != 0 ? full : r;
     }
 
     /// <summary>
@@ -632,7 +637,7 @@ internal static partial class LinuxSyscalls
             }
         }
 
-        return s.Type == LinuxUnixSocket.SockSeqpacket && (flags & MsgTrunc) != 0 ? full : r;
+        return s.IsMessage && (flags & MsgTrunc) != 0 ? full : r;
     }
 
     private static long DoShutdown(ILinuxProcess p, int fd, int how)

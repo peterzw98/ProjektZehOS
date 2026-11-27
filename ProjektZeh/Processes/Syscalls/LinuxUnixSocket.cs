@@ -64,10 +64,15 @@ internal sealed class LinuxSocketFds
 /// </summary>
 internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILinuxStatusFlags, ILinuxEdgeSource
 {
-    public const int SockStream = 1, SockSeqpacket = 5;
+    public const int SockStream = 1, SockDgram = 2, SockSeqpacket = 5;
 
     /// <summary>Bytes je Richtung, wie Linux' Vorgabe für SO_SNDBUF (net.core.wmem_default).</summary>
     public const int Capacity = 212992;
+
+    /// <summary>Linux net.unix.max_dgram_qlen: so viele Datagramme warten höchstens beim Empfänger, auch leere (sonst unbegrenzter Kernelspeicher).</summary>
+    public const int MaxDgramQueue = 10;
+
+    private bool DgramQueueFull(Channel ch) => IsDgram && ch.Records.Count >= MaxDgramQueue;
 
     /// <summary>SCM_MAX_FD: höchstens so viele Dateien je Nachricht.</summary>
     public const int MaxFds = 253;
@@ -87,7 +92,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
 
     public LinuxUnixSocket(int type, bool nonBlocking, int creatorPid = 0)
     {
-        if (type != SockStream && type != SockSeqpacket)
+        if (type != SockStream && type != SockSeqpacket && type != SockDgram)
         {
             throw new ArgumentOutOfRangeException(nameof(type));
         }
@@ -132,6 +137,16 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     }
 
     private bool IsStream => Type == SockStream;
+
+    // V23: SOCK_DGRAM (nur socketpair, verbunden) ist wie Seqpacket nachrichtenorientiert, kennt aber kein EOF beim close der Gegenseite
+    // (Empfang wartet weiter) und meldet beim Senden dorthin ECONNREFUSED statt EPIPE, ohne ECONNRESET (Linux unix_release_sock/unix_dgram_sendmsg).
+    private bool IsDgram => Type == SockDgram;
+
+    /// <summary>Hat die Gegenseite geschlossen (nicht nur shutdown)? Nur für Datagramm-Sockets von Belang.</summary>
+    private bool PeerClosed => Peer is { } p && Volatile.Read(ref p._closed) != 0;
+
+    /// <summary>Nachrichtenorientiert (Seqpacket, Dgram): ein Lesen ist genau eine Nachricht.</summary>
+    public bool IsMessage => Type != SockStream;
 
     /// <summary>Beim letzten close vor dem Schließen der Kanäle; ohne Umsetzung entfällt der Aufruf.</summary>
     partial void OnLastClose();
@@ -212,7 +227,17 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
                     return -err;
                 }
 
-                if (ch.WriteClosed || ch.ReadClosed)
+                if (ch.WriteClosed)
+                {
+                    return done > 0 ? done : -EPIPE; // eigenes SHUT_WR geht vor ECONNREFUSED (Linux: sk_shutdown & SEND_SHUTDOWN zuerst)
+                }
+
+                if (IsDgram && PeerClosed)
+                {
+                    return -ECONNREFUSED;
+                }
+
+                if (ch.ReadClosed)
                 {
                     return done > 0 ? done : -EPIPE;
                 }
@@ -224,7 +249,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
 
                 int space = Capacity - ch.Bytes;
                 int want = data.Length - done;
-                if (IsStream ? space > 0 : space >= want)
+                if (IsStream ? space > 0 : space >= want && !DgramQueueFull(ch))
                 {
                     int take = Math.Min(space, want);
                     ch.Records.Enqueue(new Record(data.Slice(done, take).ToArray(), fdsTaken ? null : fds));
@@ -301,7 +326,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
                     return -err;
                 }
 
-                if (ch.WriteClosed || ch.ReadClosed)
+                if ((ch.WriteClosed || ch.ReadClosed) && !(IsDgram && PeerClosed && !ch.ReadClosed))
                 {
                     return got;
                 }
@@ -433,7 +458,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             Outgoing(l).WriteClosed = true;
             Outgoing(l).Seq++;
             incoming.ReadClosed = true;
-            if (incoming.Records.Count > 0 && Peer != null)
+            if (!IsDgram && incoming.Records.Count > 0 && Peer != null)
             {
                 Peer._pendingError = ECONNRESET; // wie unix_release_sock: Ungelesenes verworfen, die Gegenseite erfährt es einmal
             }
@@ -508,7 +533,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     {
         Channel inc = Incoming(l);
         Channel outc = Outgoing(l);
-        bool rcvShut = inc.WriteClosed || inc.ReadClosed;
+        bool rcvShut = (inc.WriteClosed && !(IsDgram && PeerClosed)) || inc.ReadClosed;
         bool sndShut = outc.WriteClosed || outc.ReadClosed;
         short r = _pendingError != 0 ? LinuxPipe.PollErr : (short)0;
         if (inc.Records.Count > 0 || rcvShut)
@@ -527,7 +552,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         }
 
         // Linux: schreibbereit, solange höchstens ein Viertel des Sendepuffers belegt ist; nach dem Ende der Gegenseite auch (write: EPIPE).
-        if (sndShut || outc.Bytes * 4L <= Capacity)
+        if (sndShut || (outc.Bytes * 4L <= Capacity && !DgramQueueFull(outc)))
         {
             r |= (short)(events & LinuxPipe.PollOut);
         }

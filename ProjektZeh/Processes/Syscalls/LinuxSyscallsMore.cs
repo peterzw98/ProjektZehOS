@@ -48,7 +48,7 @@ internal sealed class LinuxSignalState
 internal static partial class LinuxSyscalls
 {
     public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
-        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99;
+        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99, RtSigpending = 127;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
 
@@ -69,6 +69,7 @@ internal static partial class LinuxSyscalls
             case Uname: return DoUname(p, a.A0);
             case Sysinfo: return DoSysinfo(p, a.A0);
             case RtSigaction: return DoSigaction(p, (int)a.A0, a.A1, a.A2, a.A3);
+            case RtSigpending: return DoSigpending(p, a.A0, a.A1);
             case RtSigprocmask: return DoSigprocmask(p, (int)a.A0, a.A1, a.A2, a.A3);
             case Sigaltstack: return DoSigaltstack(p, a.A0, a.A1);
             case SchedYield: return 0;
@@ -317,6 +318,34 @@ internal static partial class LinuxSyscalls
 
             // Ein freigegebenes anhängiges Signal (tgkill während der Blockade) folgt jetzt seiner Standardaktion.
             (p as ILinuxThreads)?.SignalStateChanged();
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// rt_sigpending (V23): anhängige und blockierte Signale (Linux: pending &amp; blocked; ein freigegebenes wird ohnehin zugestellt). Es gibt
+    /// nur eine Menge je Prozess (keine je Thread, LINUX_ABI.md); Echtzeitsignale gibt es nicht.
+    /// </summary>
+    private static long DoSigpending(ILinuxProcess p, ulong set, ulong sigsetsize)
+    {
+        if (sigsetsize > 128)
+        {
+            return -EINVAL; // Linux: größer als sizeof(sigset_t) -EINVAL; kleiner schneidet ab
+        }
+
+        if (p is not ILinuxThreads threads)
+        {
+            return -ENOSYS;
+        }
+
+        ulong value = threads.PendingSignals & Signals(p).Blocked;
+        Span<byte> b = stackalloc byte[8];
+        BitConverter.TryWriteBytes(b, value);
+        int n = (int)Math.Min(sigsetsize, 8UL);
+        if (!p.Memory.TryWrite(set, b.Slice(0, n)))
+        {
+            return -EFAULT;
         }
 
         return 0;

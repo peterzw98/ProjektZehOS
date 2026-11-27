@@ -62,6 +62,9 @@ internal interface ILinuxThreads
 
     /// <summary>Nach sigprocmask und sigaction: anhängige Signale verwerfen oder ihrer Standardaktion folgen (V10-Review P3).</summary>
     void SignalStateChanged();
+
+    /// <summary>Anhängige Signale (Bit = Nummer - 1), für rt_sigpending (V23).</summary>
+    ulong PendingSignals { get; }
 }
 
 /// <summary>
