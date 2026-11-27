@@ -13,7 +13,8 @@ internal static partial class LinuxSyscalls
     private static class FileNr
     {
         public const long Read = 0, Open = 2, Close = 3, Lseek = 8, Pread64 = 17, Pwrite64 = 18, Readv = 19, Pipe = 22, Dup = 32, Dup2 = 33, Fcntl = 72,
-            Fsync = 74, Fdatasync = 75, Ftruncate = 77, Getcwd = 79, Chdir = 80, Fchdir = 81, Openat = 257, Dup3 = 292, Pipe2 = 293, Preadv = 295, Pwritev = 296;
+            Fsync = 74, Fdatasync = 75, Ftruncate = 77, Getcwd = 79, Chdir = 80, Fchdir = 81, Openat = 257, Dup3 = 292, Pipe2 = 293, Preadv = 295, Pwritev = 296,
+            MemfdCreate = 319;
     }
 
     private static class FileErr
@@ -25,7 +26,7 @@ internal static partial class LinuxSyscalls
     private const int FileMaxFds = 1024;
     private const int FileOCloexec = 0x80000;
     private const int FdCloexec = 1;
-    private const int FdDupfd = 0, FdGetfd = 1, FdSetfd = 2, FdGetfl = 3, FdSetfl = 4, FdDupfdCloexec = 1030;
+    private const int FdDupfd = 0, FdGetfd = 1, FdSetfd = 2, FdGetfl = 3, FdSetfl = 4, FdDupfdCloexec = 1030, FdAddSeals = 1033, FdGetSeals = 1034;
     private const int FileChunk = 65536;
 
     private static long DispatchFile(ref SyscallArgs a, ILinuxProcess p, ILinuxFiles f)
@@ -61,6 +62,7 @@ internal static partial class LinuxSyscalls
             case FileNr.Fchdir: return DoFchdir(p, f, (int)a.A0);
             case FileNr.Pipe: return DoPipe2(p, f, a.A0, 0);
             case FileNr.Pipe2: return DoPipe2(p, f, a.A0, (int)a.A1);
+            case FileNr.MemfdCreate: return DoMemfdCreate(p, f, a.A0, (uint)a.A1);
             default: return DispatchFileMeta(ref a, p, f);
         }
     }
@@ -516,6 +518,11 @@ internal static partial class LinuxSyscalls
             case FdSetfd:
                 MarkCloseOnExec(f, fd, ((int)arg & FdCloexec) != 0); // Linux kennt nur dieses Bit, der Rest wird ignoriert
                 return 0;
+            case FdAddSeals:
+                // V17: Siegel gibt es nur auf memfd (Linux: -EINVAL für andere Dateien).
+                return p.GetDescriptor(fd) is LinuxMemFile toSeal ? toSeal.AddSeals((int)arg) : -EINVAL;
+            case FdGetSeals:
+                return p.GetDescriptor(fd) is LinuxMemFile sealedFile ? sealedFile.Seals : -EINVAL;
             case FdGetfl when p.GetDescriptor(fd) is ILinuxStatusFlags flagged:
                 return flagged.StatusFlags;
             case FdSetfl when p.GetDescriptor(fd) is ILinuxStatusFlags flagged:
@@ -574,6 +581,48 @@ internal static partial class LinuxSyscalls
         MarkCloseOnExec(f, rfd, cloexec);
         MarkCloseOnExec(f, wfd, cloexec);
         return 0;
+    }
+
+    private const uint MfdCloexec = 1, MfdAllowSealing = 2, MfdHugetlb = 4, MfdNoexecSeal = 8, MfdExec = 0x10;
+
+    /// <summary>
+    /// memfd_create (V17): namenlose Datei im Arbeitsspeicher zum Teilen per MAP_SHARED. Name höchstens 249 Bytes (Linux: 255 mit Präfix
+    /// „memfd:“), sonst -EINVAL; MFD_HUGETLB gibt es nicht (-EINVAL). MFD_NOEXEC_SEAL setzt F_SEAL_EXEC und erlaubt Siegel wie Linux 6.3.
+    /// </summary>
+    private static long DoMemfdCreate(ILinuxProcess p, ILinuxFiles f, ulong namePtr, uint flags)
+    {
+        if ((flags & ~(MfdCloexec | MfdAllowSealing | MfdNoexecSeal | MfdExec)) != 0 || (flags & MfdHugetlb) != 0
+            || (flags & (MfdNoexecSeal | MfdExec)) == (MfdNoexecSeal | MfdExec))
+        {
+            return -EINVAL;
+        }
+
+        if (p is not ILinuxSharedMemory shared)
+        {
+            return -ENOSYS;
+        }
+
+        if (!p.Memory.TryReadCString(namePtr, 249, out string name))
+        {
+            return p.Memory.TryReadCString(namePtr, 4096, out _) ? -EINVAL : -EFAULT;
+        }
+
+        bool sealing = (flags & (MfdAllowSealing | MfdNoexecSeal)) != 0;
+        LinuxMemFile file = shared.CreateMemFile(name, sealing);
+        if ((flags & MfdNoexecSeal) != 0)
+        {
+            file.AddSeals(LinuxMemFile.SealExec);
+        }
+
+        int fd = f.AddDescriptor(file, 0);
+        if (fd < 0)
+        {
+            file.Close();
+            return fd;
+        }
+
+        MarkCloseOnExec(f, fd, (flags & MfdCloexec) != 0);
+        return fd;
     }
 
     /// <summary>V15: setzt FD_CLOEXEC der Nummer, wenn der Prozess Flags führt (Hosttests mit Ersatzprozessen führen keine).</summary>

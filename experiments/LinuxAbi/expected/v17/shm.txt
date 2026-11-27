@@ -1,0 +1,53 @@
+memfd_create=0 errno=0
+ftruncate=0 errno=0
+fstat=0 errno=0
+size=8192 regular=1 mode=777
+mmap=0 errno=0
+pread=6 errno=0
+datei=ELTERN
+pwrite=5 errno=0
+abbildung+4096=Datei
+mmap2=0 errno=0
+zweite=Datei
+socketpair=0 errno=0
+kind schreiben=0 errno=0
+posix_spawn=0 errno=0
+sendmsg=1 errno=0
+close memfd=0 errno=0
+fertig=1 errno=0
+waitpid=0 errno=0
+kind exit=0
+vom kind=ELTEKIND
+munmap=0 errno=0
+zweite nach munmap=Datei
+munmap2=0 errno=0
+seals ohne=1 errno=0
+add ohne=-1 errno=1
+seals=0 errno=0
+ftruncate=0 errno=0
+mmap rw=0 errno=0
+seal write belegt=-1 errno=16
+munmap=0 errno=0
+seal=0 errno=0
+seals=14 errno=0
+write=-1 errno=1
+ftruncate klein=-1 errno=1
+ftruncate gross=-1 errno=1
+mmap rw versiegelt=-1 errno=1
+mmap ro=0 errno=0
+inhalt=S
+ftruncate=0 errno=0
+seal write bei ro=-1 errno=16
+mprotect rw vor siegel=0 errno=0
+seal write bei none=-1 errno=16
+seal write=0 errno=0
+mprotect rw versiegelt=-1 errno=13
+mprotect r versiegelt=0 errno=0
+munmap mitte=0 errno=0
+mprotect rw rest=-1 errno=13
+lseek=0 errno=0
+write ueberlauf=-1 errno=22
+mmap 2^63-4096=-1 errno=75
+mmap 2^63=-1 errno=75
+mmap 2^63-8192=0 errno=0
+ende
