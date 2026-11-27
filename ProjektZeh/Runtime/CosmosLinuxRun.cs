@@ -181,6 +181,12 @@ internal static unsafe class CosmosLinuxRun
 
         /// <summary>V38: Fehlercode, Adresse (CR2) und RIP der Ausnahme; im Handler nur gespeichert, gemeldet nach dem Verlassen des Ring 3.</summary>
         public ulong FaultError, FaultAddress, FaultRip;
+
+        /// <summary>
+        /// V38: Ein Signalhandler des Programms hat die Ausnahme übernommen (etwa der Absturzbericht von Ladybird, der danach mit 128 + Signal
+        /// endet). Die Felder oben tragen sie; der nächste Aufruf dieses Threads meldet sie im Threadkontext (<see cref="ReportFault"/>).
+        /// </summary>
+        public bool FaultReportPending;
     }
 
     /// <summary>Ergebnis eines Laufs: Status wie bei run-linux.py (<c>exit n</c>, <c>signal n</c>) oder ein Fehlertext.</summary>
@@ -1011,6 +1017,12 @@ internal static unsafe class CosmosLinuxRun
         me.Frame = frame;
         try
         {
+            if (me.FaultReportPending)
+            {
+                me.FaultReportPending = false;
+                ReportFault(me.Process, me, handled: true);
+            }
+
             // V18 rt_sigreturn: Register aus dem Signalrahmen statt eines Ergebnisses; danach können weitere Signale warten.
             if (frame->Rax == LinuxSignalFrame.RtSigreturn)
             {
@@ -1442,10 +1454,18 @@ internal static unsafe class CosmosLinuxRun
 
         // V24: Hat der Prozess einen Handler für das Signal, läuft er statt des Prozessendes (Linux force_sig_fault). Nicht im vfork-Kind:
         // Es läuft auf dem Kernelthread und im Speicher des Elternprozesses, ein Handler mit siglongjmp darin bliebe ungeprüft.
+        ulong faultRip = frame->Rip; // DeliverFault setzt den Rahmen auf den Handler
         try
         {
             if (!me.Process.InVfork && DeliverFault(me, frame, vector, error, address, busError))
             {
+                // Nur merken (kein Protokoll im Ausnahmehandler); Fault bleibt false, der Thread läuft im Handler weiter.
+                me.FaultVector = vector;
+                me.FaultSignal = busError ? LinuxFault.SigBus : SignalOf(vector);
+                me.FaultError = error;
+                me.FaultAddress = address;
+                me.FaultRip = faultRip;
+                me.FaultReportPending = true;
                 return 1;
             }
         }
@@ -1504,11 +1524,11 @@ internal static unsafe class CosmosLinuxRun
     /// Threadkontext nach dem Verlassen des Ring 3 (OnFault darf weder allokieren noch protokollieren); der Adressraum lebt noch, denn er
     /// wird erst nach dem letzten Thread des Prozesses freigegeben. Der Hauptprozess des Laufs meldet seine Ausnahme schon über Describe.
     /// </summary>
-    private static void ReportFault(LinuxUserProcess process, Bridge b)
+    private static void ReportFault(LinuxUserProcess process, Bridge b, bool handled = false)
     {
         try
         {
-            Serial("LINUXRUN FAULT pid " + process.Pid + " tid " + b.Linux.Tid + " " + process.ExePath + " signal " + b.FaultSignal
+            Serial((handled ? "LINUXRUN FAULT HANDLER pid " : "LINUXRUN FAULT pid ") + process.Pid + " tid " + b.Linux.Tid + " " + process.ExePath + " signal " + b.FaultSignal
                 + " Ausnahme " + b.FaultVector + " Fehlercode 0x" + b.FaultError.ToString("x") + " Adresse 0x" + b.FaultAddress.ToString("x")
                 + " (" + process.DescribeAddress(b.FaultAddress) + ") RIP 0x" + b.FaultRip.ToString("x") + " (" + process.DescribeAddress(b.FaultRip) + ")");
         }
