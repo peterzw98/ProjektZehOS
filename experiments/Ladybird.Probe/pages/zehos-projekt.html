@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projekt ZehOS</title>
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; color: #e9f4f7; background: #0e1d2a; font: 16px/1.55 system-ui, sans-serif }
+  a { color: #92e9cc; text-underline-offset: .23em }
+  nav, main, footer { max-width: 1080px; margin: auto; padding-inline: clamp(1rem, 5vw, 3rem) }
+  nav { display: flex; gap: 1.1rem; flex-wrap: wrap; align-items: center; padding-block: 1rem; border-bottom: 1px solid #365060 }
+  nav a:first-child { margin-right: auto; color: #f3fbfa; font-weight: 750; text-decoration: none }
+  h1 { margin: 0; max-width: 11ch; font-size: clamp(2.5rem, 6vw, 4.4rem); line-height: .98; letter-spacing: -.035em }
+  h2, h3, p { margin: 0 }
+  p { color: #b5c9d2 }
+  .hero { display: grid; grid-template-columns: .92fr 1.08fr; align-items: center; gap: 1.5rem; padding-block: 2rem }
+  .intro p { margin: 1rem 0 }
+  .link { display: inline-block; padding: .48rem .8rem; border-radius: .4rem; color: #112b2b; background: #8de6c7; font-weight: 750; text-decoration: none }
+  figure { margin: 0 }
+  figure img { display: block; width: 100%; height: auto; border: 1px solid #426172; border-radius: .6rem }
+  figcaption { color: #9bb7c5; font-size: .875rem; margin-top: .4rem }
+  .topics { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem; margin-top: .75rem }
+  article { padding: .8rem 1rem 1rem; background: #172c3b; border: 1px solid #355266; border-radius: .5rem }
+  article h3 { margin-bottom: .3rem; font-size: 1.05rem }
+  article p { font-size: .95rem }
+  footer { color: #a8c0cd; padding-block: 1.5rem; font-size: .9rem }
+  @media (max-width: 610px) {
+    .hero, .topics { grid-template-columns: 1fr }
+  }
+</style>
+<header id="start">
+  <nav aria-label="Hauptnavigation">
+    <a href="#start">ZehOS</a>
+    <a href="#system">System</a>
+    <a href="canvas.html?frame=90">Canvas-Demo</a>
+  </nav>
+</header>
+<main>
+  <section class="hero" aria-labelledby="title">
+    <div class="intro">
+      <h1 id="title">Ein eigener Kernel</h1>
+      <p>ZehOS ist ein in C# entwickeltes x64-Betriebssystem auf Basis von Cosmos Gen3. Es startet mit einem Desktop und bietet eine Textshell.</p>
+      <a class="link" href="#system">System ansehen</a>
+    </div>
+    <figure>
+      <img src="zehos-desktop.png" width="720" height="480" alt="Illustration des ZehOS-Desktops mit einem offenen Terminal">
+      <figcaption>Illustration des ZehOS-Desktops</figcaption>
+    </figure>
+  </section>
+  <section id="system" aria-labelledby="systems-title">
+    <h2 id="systems-title">Das System im Überblick</h2>
+    <div class="topics">
+      <article><h3>Desktop</h3><p>Grafische Arbeitsfläche mit Fenstern für Programme und Terminal.</p></article>
+      <article><h3>Textshell</h3><p>Ein textbasierter Zugang zu Befehlen und Laufwerken.</p></article>
+      <article><h3>Virtuelle Maschinen</h3><p>QEMU und VMware sind die Zielplattformen für Gastläufe.</p></article>
+    </div>
+  </section>
+</main>
+<footer>Projekt ZehOS · lokale Browser-Demo</footer>
+</html>
