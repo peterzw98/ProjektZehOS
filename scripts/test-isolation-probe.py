@@ -2,8 +2,8 @@
 """Gastprobe Roadmap 12.4-I1: CPU-Ausnahmen im Wasm-Worker beenden nur den Lauf, das System bleibt bedienbar.
 
 Braucht ein ISO mit -p:ZehOSIsolationProbe=true (Erwartung: #DE, #PF, #GP und #UD isoliert, GC und ein weiterer Lauf; mit WAMR
-(Standard) danach AOT-Laeufe: ein sauberer, dann drei Runden aus #DE und #PF im AOT-Code und je einem weiteren sauberen
-AOT-Lauf, ohne Speicherverlust (#582); danach Anmeldung und Textshell) oder mit -p:ZehOSIsolationProbeNegative=true und --negative (Erwartung: dieselbe Ausnahme im
+(Standard) danach AOT-Laeufe: ein sauberer, dann zehn Runden aus #DE und #PF im AOT-Code und je einem weiteren sauberen
+AOT-Lauf, ohne Speicherverlust und ohne fallenden Verlauf je Runde (#582); danach Anmeldung und Textshell) oder mit -p:ZehOSIsolationProbeNegative=true und --negative (Erwartung: dieselbe Ausnahme im
 Probe-Thread haelt das System wie bisher an) oder mit -p:ZehOSIsolationProbeNmi=true und --nmi (Erwartung: ein per QMP
 ausgeloester NMI waehrend Gastcode des Workers haelt an, statt isoliert zu werden). Jeder Lauf nutzt eine frische
 Wegwerfplatte unter .tools/isolation-probe/.
@@ -33,11 +33,14 @@ ARENA_MIN_HELD_KIB = 12 * 1024
 VECTORS = {"de": 0, "pf": 14, "gp": 13, "ud": 6}
 # Halber Worker-Stack: weniger als ein liegengebliebener 8-MiB-Stack, mehr als Heapschwankungen zwischen zwei Isolationen.
 REAP_TOLERANCE_KIB = 4 * 1024
-# #582: Runden der AOT-Probe (CosmosIsolationProbe.AotRounds) und erlaubter Rueckgang des freien Speichers ueber alle sechs
+# #582: Runden der AOT-Probe (CosmosIsolationProbe.AotRounds) und erlaubter Rueckgang des freien Speichers ueber alle
 # AOT-Isolationen. Bliebe eine Instanz liegen, fehlte schon ihr Wasm-Stack (1 MiB, WasmRuntime.WasmStackBytes), dazu
-# linearer Speicher und Modul; die wasm3-Laeufe oben schwankten um weniger als 200 KiB.
-AOT_ROUNDS = 3
+# linearer Speicher und Modul; gemessen (3 Runden) 0 bis 188 KiB, nur in der ersten Runde.
+AOT_ROUNDS = 10
 AOT_MAX_DROP_KIB = 1024
+# Verlauf (Review #582, P3-2): zwischen dem Wert nach Runde 1 und dem nach der letzten Runde liegen 18 Isolationen; 256 KiB
+# fangen einen Rest ab etwa 15 KiB je Isolation, den die Gesamtgrenze oben uebersaehe.
+AOT_TREND_MAX_DROP_KIB = 256
 AOT_VECTORS = {"de": 0, "pf": 14}
 AOT_LINE = re.compile(r"ISOLATION_PROBE aot kind=(\w+) round=(\d+) status=(\w+) result=(-?\d+) isolated=(\d) vector=(-?\d+) "
                       r"arena_used=(\d+)")
@@ -158,6 +161,12 @@ def evaluate_aot(log: str) -> list[str]:
     released = len(re.findall(r"WASM nativer Lauf nach CPU-Fehler: Aot Released ", log))
     if released != AOT_ROUNDS * len(AOT_VECTORS):
         missing.append(f"aot: {released} statt {AOT_ROUNDS * len(AOT_VECTORS)} Laeufe ueber WAMR abgebaut")
+    rounds = {int(m.group(1)): int(m.group(2)) for m in re.finditer(r"ISOLATION_PROBE aot round=(\d+) frei=(\d+)", log)}
+    if sorted(rounds) != list(range(1, AOT_ROUNDS + 1)):
+        missing.append(f"aot: freier Speicher je Runde fehlt ({len(rounds)} statt {AOT_ROUNDS})")
+    elif rounds[1] - rounds[AOT_ROUNDS] > AOT_TREND_MAX_DROP_KIB:
+        missing.append(f"aot: freier Speicher sinkt von Runde 1 bis {AOT_ROUNDS} um {rounds[1] - rounds[AOT_ROUNDS]} KiB "
+                       "(Rest je Isolation?)")
     before = re.search(r"ISOLATION_PROBE aot frei_vor=(\d+)", log)
     after = re.search(r"ISOLATION_PROBE aot frei_nach=(\d+)", log)
     if not before or not after:

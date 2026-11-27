@@ -171,7 +171,8 @@ internal static class CosmosIsolationProbe
     }
 
 #if ZEHOS_WASM_AOT
-    private const int AotRounds = 3;
+    // Zehn Runden (20 Isolationen): Ein kleiner Rest je Isolation faellt erst ueber viele Runden auf (Review #582, P3-2).
+    private const int AotRounds = 10;
     private const string AotEntry = "ret42";
     private static readonly byte[] NoModule = [];
     // Je am Anfang jeder Funktion des .aot, der Rest des Codes ist ud2: "xor ecx, ecx; div ecx" loest #DE aus,
@@ -180,7 +181,9 @@ internal static class CosmosIsolationProbe
     private static readonly byte[] PageTrigger = [0x31, 0xC0, 0x8B, 0x00];
 
     // Gegen den Lauf vor der ersten Isolation: Bliebe je Isolation die Instanz liegen, fehlte schon ihr 1-MiB-Wasm-Stack
-    // (WasmRuntime.WasmStackBytes); das Skript wertet aus (scripts/test-isolation-probe.py).
+    // (WasmRuntime.WasmStackBytes); das Skript wertet aus (scripts/test-isolation-probe.py). Den Abbau ueber WAMR belegt der
+    // Speicher allein nicht (die Arena gaebe dieselben Bloecke auch ohne ihn frei), sondern "Aot Released" und der saubere
+    // Lauf danach (ohne ausgeglichenen Referenzzaehler und geloeschte Sperre endete er mit LoadFailed).
     private static unsafe void ProbeAot()
     {
         uint size;
@@ -200,6 +203,8 @@ internal static class CosmosIsolationProbe
             RunAot("de", round, divide);
             RunAot("pf", round, page);
             RunAot("ok", round, fixture);
+            // Je Runde: das Skript prueft den Verlauf, nicht nur Anfang und Ende.
+            Log($"ISOLATION_PROBE aot round={round} frei={FreeKib()}");
         }
         Log("ISOLATION_PROBE aot frei_nach=" + FreeKib());
     }

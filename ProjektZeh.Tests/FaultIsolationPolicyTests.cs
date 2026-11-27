@@ -263,7 +263,7 @@ public sealed class FaultIsolationPolicyTests
         // Vor #582 war nach drei Isolationen Schluss, auch wenn jede alles freigab.
         var budget = new IsolationBudget();
         for (int i = 0; i < 100; i++)
-            Assert.IsFalse(budget.Record(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.EndArena)));
+            Assert.IsFalse(budget.Record(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.EndArena, true)));
         Assert.AreEqual(0, budget.Unclean);
     }
 
@@ -282,10 +282,24 @@ public sealed class FaultIsolationPolicyTests
     public void Budget_UnreapedThreadOrKeptMemoryCounts()
     {
         foreach (ReapOutcome reap in new[] { ReapOutcome.NotFound, ReapOutcome.Failed })
-            Assert.IsTrue(IsolationBudget.LeavesResources(reap, NativeReleasePlan.EndArena), reap.ToString());
-        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.KeepArena));
-        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Leaked));
-        Assert.IsFalse(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Freed));
-        Assert.IsFalse(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Nothing));
+            Assert.IsTrue(IsolationBudget.LeavesResources(reap, NativeReleasePlan.EndArena, true), reap.ToString());
+        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.KeepArena, true));
+        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Leaked, true));
+        Assert.IsFalse(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Freed, true));
+        Assert.IsFalse(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Nothing, true));
+    }
+
+    [TestMethod]
+    public void Budget_UncleanRunResourcesCount()
+    {
+        // Review #582, P3-1: Schliessen Dateien oder Sockets nicht sauber, zaehlt die Isolation, auch wenn Thread, Stack und
+        // nativer Speicher frei sind; drei solche Fehler fuehren wie vor #582 in den Ruhestand.
+        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.EndArena, false));
+        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Freed, false));
+        var budget = new IsolationBudget();
+        bool retired = false;
+        for (int i = 0; i < IsolationBudget.MaximumUnclean; i++)
+            retired = budget.Record(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.EndArena, false));
+        Assert.IsTrue(retired);
     }
 }

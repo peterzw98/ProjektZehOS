@@ -182,8 +182,8 @@ internal static class NativeReleasePolicy
 /// <summary>
 /// Begrenzt die Isolationen, die etwas belegt lassen (#582). Bis E6-G kostete jede Isolation Thread, 8-MiB-Stack und den
 /// nativen Speicher des Laufs, deshalb startete nach drei Isolationen kein Worker mehr. Jetzt zaehlen nur noch Isolationen,
-/// nach denen Thread und Stack nicht abgeraeumt sind oder nativer Speicher belegt bleibt; eine saubere Isolation kostet
-/// nichts, was ein Neustart zurueckgaebe. Die Grenze schuetzt nicht vor einem beschaedigten Heap (das kann schon die erste
+/// nach denen Thread und Stack nicht abgeraeumt sind, nativer Speicher belegt bleibt oder die Laufressourcen (App-Speicher,
+/// Netz, Paketdateien) nicht sauber schlossen; eine saubere Isolation kostet nichts, was ein Neustart zurueckgaebe. Die Grenze schuetzt nicht vor einem beschaedigten Heap (das kann schon die erste
 /// Ausnahme), dafuer steht "Neustart empfohlen" in jeder Meldung. Gehoert nur der Hauptschleife, deshalb ohne Sperre.
 /// </summary>
 internal sealed class IsolationBudget
@@ -196,9 +196,13 @@ internal sealed class IsolationBudget
     /// <summary>Bisher gezaehlte Isolationen mit Rest.</summary>
     public int Unclean => unclean;
 
-    /// <summary>true, wenn nach dieser Isolation etwas belegt bleibt.</summary>
-    public static bool LeavesResources(ReapOutcome reap, NativeReleasePlan native) =>
-        reap != ReapOutcome.Reaped || NativeReleasePolicy.LeavesNativeMemory(native);
+    /// <summary>
+    /// true, wenn nach dieser Isolation etwas belegt bleibt. <paramref name="runResourcesClean"/> ist das Ergebnis von
+    /// <c>WasmRuntime.ReleaseRunResources</c>: Schloss eine Datei, ein Socket oder der App-Speicher nicht sauber, kann davon
+    /// etwas offen geblieben sein (Review #582, P3-1).
+    /// </summary>
+    public static bool LeavesResources(ReapOutcome reap, NativeReleasePlan native, bool runResourcesClean) =>
+        reap != ReapOutcome.Reaped || NativeReleasePolicy.LeavesNativeMemory(native) || !runResourcesClean;
 
     /// <summary>Zaehlt eine Isolation; true, wenn danach kein Worker mehr starten darf.</summary>
     public bool Record(bool leavesResources)

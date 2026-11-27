@@ -270,7 +270,7 @@ internal static unsafe partial class WasmRuntime
         lock (gate)
         {
             cleaningUp = false;
-            retiredNow = isolationBudget.Record(ProjektZeh.Runtime.IsolationBudget.LeavesResources(reap, native));
+            retiredNow = isolationBudget.Record(ProjektZeh.Runtime.IsolationBudget.LeavesResources(reap, native, clean));
             if (retiredNow)
             {
                 workerRetired = true;

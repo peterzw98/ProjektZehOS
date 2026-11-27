@@ -202,19 +202,26 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
   zum Neustart gesperrt (`wasm3 AOT-Rueckfall: LoadFailed AOT nach CPU-Fehler bis zum Neustart gesperrt`). Ein zweiter
   Aufruf baut einen belassenen Lauf nie nachträglich ab. Das Protokoll der Hauptschleife nennt `nativ frei` oder
   `nativ belegt`, für AOT zusätzlich `WASM nativer Lauf nach CPU-Fehler: Aot <Released|Kept> <Plan>`.
-- **Ruhestand (#582):** Bis zum Neustart zählen nur Isolationen, nach denen Thread und Stack nicht abgeräumt sind oder
-  nativer Speicher belegt bleibt (`IsolationBudget`, `FaultIsolationPolicy.cs`). Nach drei solchen startet kein Worker
+  **Bewusster Tausch:** Der Abbau (WAMR und Arena) läuft auf der Hauptschleife. Hat fehlerhafter AOT-Code vor seiner
+  Ausnahme Instanz, WAMR-Strukturen oder Blockköpfe der Arena überschrieben, kann gerade dieser Abbau selbst eine
+  Ausnahme auslösen; auf der Hauptschleife wird sie nicht isoliert, das System hält an. Vor #582 wurde unter AOT nichts
+  angefasst (unter wasm3 gilt dasselbe Risiko für die Arena seit I2-C). Der Tausch gibt Speicher und AOT zurück und nimmt
+  diesen Halt bei schon beschädigtem Kernelspeicher in Kauf; Speicherschutz gegen solchen Code gibt es im Kernel nicht.
+- **Ruhestand (#582):** Bis zum Neustart zählen nur Isolationen, nach denen Thread und Stack nicht abgeräumt sind,
+  nativer Speicher belegt bleibt oder App-Speicher, Netz bzw. Paketdateien nicht sauber schlossen (`IsolationBudget`,
+  `FaultIsolationPolicy.cs`). Nach drei solchen startet kein Worker
   mehr. Saubere Isolationen zählen nicht; vorher war nach drei Isolationen jeder Art Schluss.
 
 **Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE, #PF, #GP und #UD im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
 `-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
 gemeldeten Vektor mit dem erwarteten (#DE 0, #UD 6, #GP 13, #PF 14). Mit WAMR folgen seit #582 echte AOT-Läufe über
-`WasmRuntime.Run` mit der Fixture `ret42` (`Native/AotProbe`): ein sauberer Lauf (Ok/42), dann drei Runden aus #DE und #PF im
+`WasmRuntime.Run` mit der Fixture `ret42` (`Native/AotProbe`): ein sauberer Lauf (Ok/42), dann zehn Runden aus #DE und #PF im
 AOT-Code (der Code ist umgeschrieben: am Anfang jeder Funktion `div` durch null bzw. ein Lesen von Adresse 0, sonst `ud2`) mit
-je einem sauberen Lauf danach. Verlangt sind „nativ frei“ und `Aot Released` für jede der sechs Isolationen, Arena 0 und
-höchstens 1 MiB Rückgang des freien Speichers. Ergebnis (27. November 2026, Cosmos smp.17, Celeron J3455): KVM `-smp 1`
-3/3 und `-smp 4` 3/3, TCG 1/1, Rückgang 0 bis 188 KiB. Die Gegenprobe
+je einem sauberen Lauf danach. Verlangt sind „nativ frei“ und `Aot Released` für jede der 20 Isolationen, ein sauberer Lauf
+Ok/42 nach jeder Runde (belegt den Abbau über WAMR; der freie Speicher allein nicht, die Arena gäbe dieselben Blöcke auch
+so frei), Arena 0, höchstens 1 MiB Rückgang des freien Speichers insgesamt und höchstens 256 KiB zwischen Runde 1 und 10
+(Verlauf). Ergebnis (27. November 2026, Cosmos smp.17, Celeron J3455, zehn Runden): KVM `-smp 1` 3/3 (Rückgang 0 KiB) und `-smp 4` 3/3 (einmalig 188 KiB in Runde 5, danach gleich); mit drei Runden zuvor zusätzlich TCG 1/1. Die Gegenprobe
 `-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
 das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LINT1 mit Zustellart NMI zu
 (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen

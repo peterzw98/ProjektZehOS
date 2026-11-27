@@ -22,10 +22,11 @@ def aot_log(rounds=3):
                       f'ISOLATION_PROBE aot kind={kind} round={number} status=CpuFault result=0 isolated=1 vector={vector} arena_used=0 '
                       'CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.']
         lines.append(f'ISOLATION_PROBE aot kind=ok round={number} status=Ok result=42 isolated=0 vector=-1 arena_used=0 ')
+        lines.append(f'ISOLATION_PROBE aot round={number} frei={879600 - number}')
     return lines + ['ISOLATION_PROBE aot frei_nach=879500']
 
 
-AOT_LOG = aot_log()
+AOT_LOG = aot_log(isolation.AOT_ROUNDS)
 
 PASS_LOG = '\n'.join([
     'ISOLATION_PROBE start',
@@ -168,7 +169,7 @@ class AotTests(unittest.TestCase):
         log = PASS_LOG.replace('Aot Released EndArena', 'Aot Kept KeepArena', 1).replace('nativ frei', 'nativ belegt', 1)
         missing = isolation.evaluate(log, negative=False)
         self.assertIn('aot: Isolation ohne Freigabe von Stack oder nativem Lauf', missing)
-        self.assertIn('aot: 5 statt 6 Laeufe ueber WAMR abgebaut', missing)
+        self.assertIn('aot: 19 statt 20 Laeufe ueber WAMR abgebaut', missing)
 
     def test_leaked_memory_fails(self):
         log = PASS_LOG.replace('aot frei_nach=879500', 'aot frei_nach=872000')
@@ -176,6 +177,18 @@ class AotTests(unittest.TestCase):
                          isolation.evaluate(log, negative=False))
         at_limit = PASS_LOG.replace('aot frei_nach=879500', 'aot frei_nach=878976')
         self.assertEqual([], isolation.evaluate(at_limit, negative=False))
+
+    def test_falling_trend_fails_even_within_total_limit(self):
+        # Review #582, P3-2: 30 KiB je Runde bleiben unter der Gesamtgrenze, der Verlauf faellt aber um 270 KiB.
+        log = PASS_LOG
+        for number in range(1, isolation.AOT_ROUNDS + 1):
+            log = log.replace(f'aot round={number} frei={879600 - number}', f'aot round={number} frei={879600 - 30 * number}')
+        self.assertEqual(['aot: freier Speicher sinkt von Runde 1 bis 10 um 270 KiB (Rest je Isolation?)'],
+                         isolation.evaluate(log, negative=False))
+
+    def test_missing_round_memory_fails(self):
+        log = PASS_LOG.replace('ISOLATION_PROBE aot round=4 frei=879596\n', '')
+        self.assertEqual(['aot: freier Speicher je Runde fehlt (9 statt 10)'], isolation.evaluate(log, negative=False))
 
     def test_wrong_vector_and_missing_round_fail(self):
         log = PASS_LOG.replace('kind=pf round=2 status=CpuFault result=0 isolated=1 vector=14',
