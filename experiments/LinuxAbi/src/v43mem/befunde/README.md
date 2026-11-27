@@ -9,35 +9,38 @@ Die Logs sind gekürzt: Timer- und Scheduler-Zeilen sind entfernt, LINUXRUN OUT 
 
 Häufigkeit auf c95ab059: 2 Halts in etwa 13 Bootvorgängen mit Socketlast bei vollem Speicher.
 
-## Stand d1d06dc0 (V43+V45, Pin 053fb42), Läufe laufen noch
-| Datei | Lauf | Art |
-|---|---|---|
-| `halt-d1d06dc0-sockloop-smp1-oom.txt` | 512M smp1, sockloop:150, 1. Wiederholung, Runde 51 | **anderer Halt:** unbehandelte OutOfMemoryException, `[FAILFAST] Unhandled exception`, "System halting" |
+## Stand d1d06dc0 (V43+V45, Pin 053fb42): Gesamttabelle (512M, KVM, je Zeile ein Boot)
+| Läufe | Szenario | Halts | Art |
+|---|---|---|---|
+| s smp1 ×4 | sockloop:150 | 4/4 | Kernel-OOM: unbehandelte OutOfMemoryException, FAILFAST, Runde 51 (Wdh. 1); davor `Mark stack overflow` |
+| s smp4 ×3 | sockloop:150 | 3/3 | wie oben |
+| s smp4-4 | sockloop:150 | 1/1 | **Nullzugriff CR2=0x0 in GCHandleManager.AllocateHandler**, Runde 45, vorher keine einzige Sammlung (siehe unten) |
+| t smp1 ×5 / smp4 ×5 | sockloop:40 | 0/5 / **1/5** | t-smp4-2: **Gate-Halt** (Wdh. 2, Runde 30), 1 Sammlung vorher, keine Warnung |
+| f smp1 ×2 / smp4 ×2 | kheap, mapsfrei, maps, sockloop:40 | 0/2 / **1/2** | f-smp4-1: **Gate-Halt** in sockloop (Wdh. 2, Runde 32), 5 Sammlungen vorher, keine Warnung. smp1: mapsfrei kam auf 10^6 Abbildungen, munmap hing (B3), sockloop lief nicht |
+| p smp1 ×2 / smp4 ×2 | pipeloop:40 | 0/4 | Gegenprobe ohne Sockets: kein Halt |
+| a smp1 ×2, **altes ISO c95ab059** | sockloop:150 | 2/2 | Kernel-OOM wie auf d1d06dc0: keine Regression durch V45 oder den Pin |
 
-Vor diesem Halt meldet die GC `Mark stack overflow` und `finalizer queue cannot grow`. Danach liefen zwei weitere Sammlungen, die kaum etwas freigaben (17 Objekte).
-Der Mark-Stapel wird ohne Reserve geholt (`PageAllocator.AllocPages` ohne `aKeepFree`). Scheitert das, war auch die Kernel-Reserve aufgebraucht. Der Kernel-Heap hat
-also mehr als die 64 MiB gebraucht: Das ist der offene V43-Restpunkt "Kernel-Heap über der Reserve". Der gemeldete Ausnahmeort 0xFFFFFFFF803FBA2B liegt in
-`FrozenObjectHeapManager.FrozenObjectSegment..ctor` (nm dieses Baus). Welcher Kernelthread die Ausnahme ohne Fänger warf, ist nicht ermittelt.
+Weitere FAILs ohne Halt kommen nur von `aussen.speicher_gesamt` (Kernel-Heap gibt erst bei der nächsten Sammlung zurück).
 
-## Stapel (beide Halts identisch; Symbole mit `nm -n` aus dem ELF des Baus, `ProjektZeh.elf` im ISO unter `boot/`)
-```
-#PF CR2=0x14, RDI=0   ip 0xFFFFFFFF803CA733  System.Threading.Monitor.Enter      (lock auf null)
-[0] 0xFFFFFFFF80359E26  LinuxUnixSocket.Close          LinuxUnixSocket.cs:474  lock (l.Gate)
-[1] 0xFFFFFFFF8034143C  LinuxSyscalls.ReleaseIfUnused
-[2] 0xFFFFFFFF803469BE  LinuxSyscalls.DispatchFileGated (close)
-[3] 0xFFFFFFFF8030DC4B  CosmosLinuxRun.OnSyscall
-[4] 0xFFFFFFFF8023EF45  __managed__user_syscall
-[5] 0xFFFFFFFF800241A2  _native_x64_user_syscall
-```
-Die Disassemblierung von Close zeigt: `_link` (Feld 0x10) ist nicht null, `Link.Gate` (Feld 0x08) ist null. `Gate` ist eine Get-only-Eigenschaft, die der Konstruktor
-setzt (LinuxUnixSocket.cs:704), und eine fehlgeschlagene Allokation wirft. Null kann deshalb nur von einem beschädigten Kernel-Heap kommen. Im smp4-Lauf lief etwa 19 Runden vor
-dem Halt die erste GC-Sammlung. Die Adressen gelten nur für den jeweiligen Bau.
+**Gate-Halt insgesamt: 4** (c95ab059: 2, d1d06dc0: 2, alle mit Socketlast bei vollem Speicher, keiner mit GC-Warnung davor). Die d1d06dc0-Halts fielen beide auf smp4.
+Gegen das d1d06dc0-Abbild symbolisiert (nm, dieser Bau): derselbe Pfad wie auf c95ab059. Monitor.Enter (ip 0xFFFFFFFF803CA793, RDI=0, CR2=0x14) ← LinuxUnixSocket.Close
+(0xFFFFFFFF80359E86) ← LinuxSyscalls.ReleaseIfUnused ← DispatchFileGated ← CosmosLinuxRun.OnSyscall. Die Disassemblierung vor der Rücksprungadresse zeigt
+`mov 0x8(%r15),%rdi`: Es ist `Link.Gate`, wie auf c95ab059.
 
-## Nachfahren
-```sh
-CC=musl-gcc sh experiments/LinuxAbi/build.sh v43mem
-python3 scripts/test-linux-mem.py <iso -p:ZehOSLinuxRun=true> <neuer-ordner> 4 512M sockloop:150
-```
+| Datei | Lauf |
+|---|---|
+| `halt-d1d06dc0-sockloop-smp1-oom.txt` | s-smp1-1, Kernel-OOM (stellvertretend für die 9 OOM-Halts) |
+| `halt-d1d06dc0-sockloop150-smp4-gchandle.txt` | s-smp4-4, Nullzugriff in GCHandleManager |
+| `halt-d1d06dc0-sockloop40-smp4.txt` | t-smp4-2, Gate-Halt |
+| `halt-d1d06dc0-maps-folge-smp4.txt` | f-smp4-1, Gate-Halt |
+
+### s-smp4-4: Nullzugriff statt OOM-Ausnahme
+Stapel: GCHandleManager.AllocateHandler (ip 0xFFFFFFFF80239F72, CR2=0x0) ← GarbageCollector.AllocateHandler ← RuntimeImports.RhHandleAllocDependent ←
+ConditionalWeakTable.Container.CreateEntryNoResize ← ConditionalWeakTable.GetOrAdd ← Monitor.PulseAll ← LinuxUnixSocket.OnLastClose ← LinuxUnixSocket.Close ←
+ReleaseIfUnused. Quelltext Pin 053fb42: `GCHandleSegmentStore.AllocateHandle` (GCHandleManager.cs:68) liefert null, wenn kein neues Segment kommt.
+`AllocateHandler` schreibt dann ohne Prüfung `handle->Object = obj` (GCHandleManager.cs:280). Erschöpfter Speicher wird so zum Kernel-Halt statt zu einer
+OutOfMemoryException. Nebenbei sichtbar: Monitor legt für jedes gesperrte Objekt (etwa `Link.Gate`) einen Eintrag in einer ConditionalWeakTable mit
+abhängigem GC-Handle an. Ob das mit Gate==null zusammenhängt, ist nicht geprüft (nur ein Hinweis).
 
 ## GC-Warnungen und Pinstände (Quelltext)
 - Beide Warnungen gibt es schon im Pin 9ff7e86 (c95ab059): `[GC] WARNING: Mark stack overflow` (GarbageCollector.Mark.cs:551, wenn

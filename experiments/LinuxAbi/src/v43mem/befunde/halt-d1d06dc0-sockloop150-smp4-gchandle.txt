@@ -1,0 +1,93 @@
+# gekuerztes serielles Protokoll, Stand d1d06dc0, Lauf halt-d1d06dc0-sockloop150-smp4-gchandle
+# (Timer/Scheduler-Zeilen entfernt, LINUXRUN OUT dekodiert)
+  CosmosOS v3.0.97-zehos.0.g9ff7e86 (gen3)
+[linux-run] Kernel-Reserve 64 MiB, frei 429 von 474 MiB
+## GC-Zeilen im ganzen Lauf (Zeilennummer im Original)
+134: [GC] Initializing with free list allocator
+135: [GC] Initialization complete
+141: [GC] Registered frozen segment at 0xFFFFFFFF806C7998, size: 702064
+## ab dem letzten LINUXRUN BEGIN (Zeile 589)
+LINUXRUN BEGIN bin/memprobe
+ bytes
+OUT START sockloop gesamt=474 frei=424 grenze=150
+OUT PROG 2 stage 1
+OUT PROG 2 stage 2
+OUT PROG 2 stage 3
+OUT PROG 2 stage 4
+OUT PROG 2 stage 5
+OUT PROG 2 stage 6
+OUT PROG 2 stage 7
+OUT PROG 2 stage 8
+OUT PROG 2 stage 9
+OUT PROG 2 stage 10
+OUT PROG 2 stage 11
+OUT PROG 2 stage 12
+OUT PROG 2 stage 13
+OUT PROG 2 stage 14
+OUT PROG 2 stage 15
+OUT PROG 2 stage 16
+OUT PROG 2 stage 17
+OUT PROG 2 stage 18
+OUT PROG 2 stage 19
+OUT PROG 2 stage 20
+OUT PROG 2 stage 21
+OUT PROG 2 stage 22
+OUT PROG 2 stage 23
+OUT PROG 2 stage 24
+OUT PROG 2 stage 25
+OUT PROG 2 stage 26
+OUT PROG 2 stage 27
+OUT PROG 2 stage 28
+OUT PROG 2 stage 29
+OUT PROG 2 stage 30
+OUT PROG 2 stage 31
+OUT PROG 2 stage 32
+OUT PROG 2 stage 33
+OUT PROG 2 stage 34
+OUT PROG 2 stage 35
+OUT PROG 2 stage 36
+OUT PROG 2 stage 37
+OUT PROG 2 stage 38
+OUT PROG 2 stage 39
+OUT PROG 2 stage 40
+OUT PROG 2 stage 41
+OUT PROG 2 stage 42
+OUT PROG 2 stage 43
+OUT PROG 2 stage 44
+OUT PROG 2 stage 45
+ZehOS: Thread 21, Wasm-Worker 17, Gastcode 0, IF 1
+========================================
+CPU EXCEPTION: Page Fault (#PF)
+========================================
+Interrupt Vector: 14
+CPU Flags (ESR): 0x10286
+Registers:
+  RAX: 0x0  RBX: 0x6
+  RCX: 0xFFFF80001DBA7AA8  RDX: 0xFFFFFFFF8087D4B0
+  RSI: 0x1  RDI: 0x246
+  RBP: 0xFFFF80001B734680  R8:  0xEBE37E3B5E920000
+  R9:  0xB01DBF4C1BE7EAEC  R10: 0xFFFF800000DB3F38
+  R11: 0x2E  R12: 0x1C932
+  R13: 0xEDFA6  R14: 0xFFFF80001AE549F8
+  R15: 0xFFFF80001AB6ABC8
+  RIP: 0xFFFFFFFF80239F72  RSP: 0xFFFF80001B734660
+  RFL: 0x10286
+  CR2: 0x0
+Stack trace (raw return addresses, symbolicate with nm):
+  ip:  0xFFFFFFFF80239F72
+  sp0: 0xFFFFFFFF80780138 (return address if ip is a frameless leaf)
+  [0]  0xFFFFFFFF802375F0
+  [1]  0xFFFFFFFF803F00AD
+  [2]  0xFFFFFFFF8045FCF2
+  [3]  0xFFFFFFFF8045F8BD
+  [4]  0xFFFFFFFF8045F7EC
+  [5]  0xFFFFFFFF803CADAD
+  [6]  0xFFFFFFFF80358EF0
+  [7]  0xFFFFFFFF80359E64
+  [8]  0xFFFFFFFF8034149C
+  [9]  0xFFFFFFFF80346A1E
+  [10]  0xFFFFFFFF8030DCAB
+  [11]  0xFFFFFFFF8023EFA5
+  [12]  0xFFFFFFFF800241A2
+========================================
+System halted.

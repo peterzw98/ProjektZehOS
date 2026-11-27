@@ -1,0 +1,119 @@
+# gekuerztes serielles Protokoll, Stand d1d06dc0, Lauf halt-d1d06dc0-sockloop40-smp4
+# (Timer/Scheduler-Zeilen entfernt, LINUXRUN OUT dekodiert)
+  CosmosOS v3.0.97-zehos.0.g9ff7e86 (gen3)
+[linux-run] Kernel-Reserve 64 MiB, frei 429 von 474 MiB
+## GC-Zeilen im ganzen Lauf (Zeilennummer im Original)
+134: [GC] Initializing with free list allocator
+135: [GC] Initialization complete
+141: [GC] Registered frozen segment at 0xFFFFFFFF806C7998, size: 702064
+683: [GC] Collection #1, refills since the last: 10684
+684: [GC] Freed 926559 objects
+## ab dem letzten LINUXRUN BEGIN (Zeile 589)
+LINUXRUN BEGIN bin/memprobe
+ bytes
+OUT START sockloop gesamt=474 frei=424 grenze=40
+OUT PROG 2 stage 1
+OUT PROG 2 stage 2
+OUT PROG 2 stage 3
+OUT PROG 2 stage 4
+OUT PROG 2 stage 5
+OUT PROG 2 stage 6
+OUT PROG 2 stage 7
+OUT PROG 2 stage 8
+OUT PROG 2 stage 9
+OUT PROG 2 stage 10
+OUT PROG 2 stage 11
+OUT PROG 2 stage 12
+OUT PROG 2 stage 13
+OUT PROG 2 stage 14
+OUT PROG 2 stage 15
+OUT PROG 2 stage 16
+OUT PROG 2 stage 17
+OUT PROG 2 stage 18
+OUT PROG 2 stage 19
+OUT PROG 2 stage 20
+OUT PROG 2 stage 21
+OUT PROG 2 stage 22
+OUT PROG 2 stage 23
+OUT PROG 2 stage 24
+OUT PROG 2 stage 25
+OUT PROG 2 stage 26
+OUT PROG 2 stage 27
+OUT PROG 2 stage 28
+OUT PROG 2 stage 29
+OUT PROG 2 stage 30
+OUT PROG 2 stage 31
+OUT PROG 2 stage 32
+OUT PROG 2 stage 33
+OUT PROG 2 stage 34
+OUT PROG 2 stage 35
+OUT PROG 2 stage 36
+OUT PROG 2 stage 37
+OUT PROG 2 stage 38
+OUT PROG 2 stage 39
+OUT PROG 2 stage 40
+OUT PASS sockloop.1.ende pid=2 exit=0 sig=0 timeout=0 runden=40 objekte=20360 err=24 fillerr=28 mib=347
+OUT PASS sockloop.1.fork_danach pid=3 status=0x700 errno=0
+OUT PASS sockloop.1.spawn_danach ret=0 status=0x0
+OUT INFO sockloop.1.frei vorher=424 nachher=354
+OUT PROG 5 stage 1
+OUT PROG 5 stage 2
+OUT PROG 5 stage 3
+OUT PROG 5 stage 4
+OUT PROG 5 stage 5
+OUT PROG 5 stage 6
+OUT PROG 5 stage 7
+OUT PROG 5 stage 8
+OUT PROG 5 stage 9
+OUT PROG 5 stage 10
+OUT PROG 5 stage 11
+[GC] Collection #1, refills since the last: 10684
+[GC] Freed 926559 objects
+OUT PROG 5 stage 12
+OUT PROG 5 stage 13
+OUT PROG 5 stage 14
+OUT PROG 5 stage 15
+OUT PROG 5 stage 16
+OUT PROG 5 stage 17
+OUT PROG 5 stage 18
+OUT PROG 5 stage 19
+OUT PROG 5 stage 20
+OUT PROG 5 stage 21
+OUT PROG 5 stage 22
+OUT PROG 5 stage 23
+OUT PROG 5 stage 24
+OUT PROG 5 stage 25
+OUT PROG 5 stage 26
+OUT PROG 5 stage 27
+OUT PROG 5 stage 28
+OUT PROG 5 stage 29
+OUT PROG 5 stage 30
+ZehOS: Thread 24, Wasm-Worker 17, Gastcode 0, IF 1
+========================================
+CPU EXCEPTION: Page Fault (#PF)
+========================================
+Interrupt Vector: 14
+CPU Flags (ESR): 0x10206
+Registers:
+  RAX: 0xFFFF80001AEF4048  RBX: 0xFFFF800000275E08
+  RCX: 0x445  RDX: 0xFFFFFFFF80785A90
+  RSI: 0x4  RDI: 0x0
+  RBP: 0xFFFF80001B734800  R8:  0x210000
+  R9:  0x77A93789E6EC69E7  R10: 0xFFFF800000EF30D0
+  R11: 0x1F  R12: 0x4176C8
+  R13: 0x1  R14: 0x0
+  R15: 0x15
+  RIP: 0xFFFFFFFF803CA793  RSP: 0xFFFF80001B7347E0
+  RFL: 0x10206
+  CR2: 0x14
+Stack trace (raw return addresses, symbolicate with nm):
+  ip:  0xFFFFFFFF803CA793
+  sp0: 0x8000445002879A0 (return address if ip is a frameless leaf)
+  [0]  0xFFFFFFFF80359E86
+  [1]  0xFFFFFFFF8034149C
+  [2]  0xFFFFFFFF80346A1E
+  [3]  0xFFFFFFFF8030DCAB
+  [4]  0xFFFFFFFF8023EFA5
+  [5]  0xFFFFFFFF800241A2
+========================================
+System halted.
