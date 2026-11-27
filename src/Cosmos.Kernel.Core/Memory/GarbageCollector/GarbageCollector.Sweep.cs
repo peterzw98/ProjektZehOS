@@ -167,7 +167,7 @@ internal static unsafe partial class GarbageCollector
     private static void ClearDeadObjectHeader(byte* obj)
     {
         // ZehOS patch gc-header-clear, see PATCHES.md
-        *(uint*)(obj - sizeof(uint)) = 0;
+        // Gegenprobe: kein Loeschen
     }
 
     /// <summary>
