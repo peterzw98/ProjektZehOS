@@ -6,9 +6,8 @@ namespace ProjektZeh.Processes.Vfs;
 
 /// <summary>
 /// V40: Lese-Cache für Dateiseiten eines Laufs (Seitenfehler von PT_LOAD und mmap, auch MAP_SHARED-Ablagen), geteilt von allen Prozessen.
-/// Startet derselbe Prozess mehrfach (Ladybird: drei WebContent), liest nur der erste von der Platte; jeder Fehlschlag liest gleich einen
-/// ganzen Block von <see cref="BlockBytes"/> (Vorauslesen), statt 4 KiB je Seitenfehler. Messung V39: 4-KiB-Lesungen kosten im Mittel 179 µs,
-/// unabhängig von der Länge überwiegend Aufwand je Aufruf (Sperre, Position, FAT-Kette).
+/// Startet derselbe Prozess mehrfach (Ladybird: drei WebContent), liest nur der erste eine Seite von der Platte (V39: 62 % der Lesungen von
+/// WebContent waren Wiederholungen).
 /// <para>
 /// Der Cache kopiert Daten in die Frames der Prozesse, er teilt keine Frames: Jeder Prozess behält eigene, beschreibbare Seiten wie bisher
 /// (MAP_PRIVATE braucht so kein Copy-on-Write). Der Preis ist doppelter Speicher für zwischengespeicherte Blöcke, begrenzt durch
@@ -28,11 +27,14 @@ namespace ProjektZeh.Processes.Vfs;
 /// </summary>
 internal sealed class LinuxReadCache
 {
-    /// <summary>Blockgröße: 16 Seiten je Plattenzugriff.</summary>
-    public const int BlockBytes = 64 * 1024;
+    /// <summary>
+    /// Blockgröße: eine Seite. Vorauslesen (64 KiB je Fehlschlag) war im Gast langsamer (V40, KVM smp1): Die Platte kostet je Byte
+    /// (~2 ms je 64 KiB, ~0,18 ms je 4 KiB), und Ladybird greift verstreut zu; 64-KiB-Blöcke lasen 362 MB statt 80 MB.
+    /// </summary>
+    public const int BlockBytes = 4096;
 
-    /// <summary>Standardgrenze im Kernel (Gast mit 512 MiB): 512 Blöcke.</summary>
-    public const long DefaultMaxBytes = 32L << 20;
+    /// <summary>Standardgrenze im Kernel (Gast mit 512 MiB): 16384 Seiten. WebContent allein berührt ~8300 verschiedene Seiten (V39).</summary>
+    public const long DefaultMaxBytes = 64L << 20;
 
     private readonly record struct Key(LinuxFileNode Node, long Generation, long Block);
 
