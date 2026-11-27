@@ -36,7 +36,8 @@ internal static partial class LinuxSyscalls
 
         if (count == 0)
         {
-            return 0;
+            // V20: eventfd und inotify prüfen die Länge selbst (Linux: unter 8 bzw. 16 Bytes -EINVAL, auch 0).
+            return d is ILinuxAnonFile and ILinuxPollable anon ? anon.ReadAs([], p as ILinuxAbort) : 0;
         }
 
         // Erst prüfen, ob der Puffer beschreibbar ist, dann warten: sonst ginge eine Eingabezeile an einen ungültigen Zeiger verloren.

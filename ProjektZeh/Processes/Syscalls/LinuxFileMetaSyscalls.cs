@@ -51,7 +51,7 @@ internal static partial class LinuxSyscalls
             case MetaNr.Renameat2: return (uint)a.A4 != 0 ? -MetaErr.EINVAL : DoRename(p, f, (int)a.A0, a.A1, (int)a.A2, a.A3); // NOREPLACE/EXCHANGE nicht umgesetzt
             case MetaNr.Symlink: return DoSymlink(p, f, a.A0, MetaAtFdcwd, a.A1);
             case MetaNr.Symlinkat: return DoSymlink(p, f, a.A0, (int)a.A1, a.A2);
-            default: return -MetaErr.ENOSYS;
+            default: return DispatchSoft(ref a, p, f); // V20: eventfd, statfs, inotify; sonst -ENOSYS
         }
     }
 
@@ -109,6 +109,11 @@ internal static partial class LinuxSyscalls
         {
             // V16: Socket (S_IFSOCK, 0777 wie Linux bei socketpair), Größe 0.
             st = new LinuxStat { Mode = 0xC000 | 0x1FF, Nlink = 1, BlockSize = 4096 };
+        }
+        else if (d is ILinuxAnonFile)
+        {
+            // V20: eventfd und inotify sind bei Linux anon_inode-Dateien: Modus 0600 ohne Dateityp, Größe 0.
+            st = new LinuxStat { Mode = 0x180, Nlink = 1, BlockSize = 4096 };
         }
         else if (d is LinuxPipeEnd)
         {

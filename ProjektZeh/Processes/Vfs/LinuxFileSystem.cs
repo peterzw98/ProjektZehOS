@@ -23,7 +23,7 @@ namespace ProjektZeh.Processes.Vfs;
 /// -errno (<see cref="LinuxErrno"/>) und tragen keinen Text, also auch keine Pfade aus dem Programm.
 /// </para>
 /// </summary>
-internal sealed class LinuxFileSystem : ILinuxFileSystem
+internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
 {
     /// <summary>Wie Linux PATH_MAX: ein Pfad hat höchstens 4095 Bytes (UTF-8) ohne NUL.</summary>
     public const int PathMax = 4096;
@@ -80,6 +80,31 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem
     public int OpenFiles { get; private set; }
 
     internal ILinuxFileStore Store => _store;
+
+    /// <summary>
+    /// statfs (V20): Platte als vfat mit dem Kontingent als Größe (frei = Kontingent minus Nettowachstum), Arbeitsspeicher als tmpfs mit seinen
+    /// Grenzen. Das ganze Verzeichnis meldet dieselben Werte, auch das virtuelle /dev; der freie Platz der Platte selbst ist nicht berücksichtigt.
+    /// </summary>
+    public LinuxFsStats FsStats
+    {
+        get
+        {
+            const long Block = 4096;
+            switch (_store)
+            {
+                case DirectoryFileStore disk:
+                    long quota = disk.QuotaBytes / Block;
+                    return new LinuxFsStats(LinuxSyscalls.MsdosSuperMagic, Block, quota,
+                        Math.Clamp((disk.QuotaBytes - disk.GrownBytes) / Block, 0, quota), 0, 0);
+                case MemoryFileStore mem:
+                    long total = mem.MaxTotalBytes / Block;
+                    return new LinuxFsStats(LinuxSyscalls.TmpfsMagic, Block, total, Math.Clamp((mem.MaxTotalBytes - mem.TotalBytes) / Block, 0, total),
+                        mem.MaxNodes, Math.Max(0, mem.MaxNodes - mem.NodeCount));
+                default:
+                    return new LinuxFsStats(LinuxSyscalls.TmpfsMagic, Block, 0, 0, 0, 0);
+            }
+        }
+    }
 
     internal ILinuxDescriptor Terminal => _terminal;
 
