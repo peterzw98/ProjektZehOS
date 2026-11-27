@@ -133,3 +133,19 @@ Grenzen: `v7bquota` setzt voraus, dass vorher im selben Gastlauf höchstens 24 M
 nur lesend offen, Verzeichnis, `/dev/null`, stdout), `fsync`/`fdatasync` (Datei, nur lesend offen, Verzeichnis, `/dev/null`, stdout). Erwartung mit `--update` auf
 Linux `6.12.117+deb13-amd64` erzeugt (musl 1.2.5), drei weitere Läufe ohne Abweichung; `strace` war dabei nicht installiert (keine Aufrufliste). stdout ist unter
 `run-linux.py` eine Pipe, im Gast das Terminal; beide liefern für `pwrite` `ESPIPE` und für `ftruncate`/`fsync` `EINVAL`.
+
+## Satz V43mem (Speicherdruck, nur Gast)
+
+`src/v43mem/memprobe` ist kein Vergleichsprogramm (die Zahlen hängen vom Speicher ab, keine Erwartung unter `expected/`). Es steuert die Wege aus V43/V43b
+einzeln an: `anon` (mmap und anfassen bis SIGKILL), `memfd` (write bis `ENOSPC`), `memfdmap` (MAP_SHARED-Seitenfehler bis SIGKILL), `threads` und `forkmany`
+(bis `EAGAIN`), `slotfull` (Speicher bis 32 Seiten über der Kernel-Reserve voll, dann `pthread_create`, `fork`, `posix_spawn`), `concurrent` und `concmix`
+(mehrere Lasten gleichzeitig), `kheap`/`kheapfrei` (Pipes, Socketpaare, memfds, 65530 Abbildungen mit und ohne vollen Speicher), `maps`/`mapsfrei` (eine Million
+Abbildungen), `execchain` (Budget über execve, für 2G gedacht). Die Last läuft in Kindprozessen; jedes Szenario läuft zweimal, danach prüft der Elternprozess
+fork, posix_spawn und den freien Speicher. Ausgabe `PASS|FAIL|INFO <szenario>.<lauf>.<prüfung> k=v`, Schluss `SUMMARY`.
+
+```sh
+CC=musl-gcc sh experiments/LinuxAbi/build.sh v43mem
+python3 scripts/test-linux-mem.py <iso -p:ZehOSLinuxRun=true> <neuer-arbeitsordner> [smp] [speicher, Standard 512M] [szenario[:grenze-mib] ...]
+```
+
+Auf dem Host nur mit Grenze starten (`memprobe anon 64`): ohne Grenze füllen die Szenarien den Speicher des Rechners.
