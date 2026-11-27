@@ -554,6 +554,7 @@ public sealed class ElfLoaderTests
         Rejected(Dynamic().Build(), Static().Build());            // Interpreter ET_EXEC
         Rejected(Dynamic().Build(), Dynamic().Build());           // Interpreter mit eigenem PT_INTERP
         Rejected(Dynamic().Build(), [1, 2, 3]);                   // kein ELF
+        Rejected(Dynamic().Build(), []);                          // leere Datei: ungültiges Abbild (ENOEXEC), kein Speicherfehler
         ElfBuilder outside = Dynamic();
         outside.Headers[^1] = (ElfProgramHeader.Interpreter, R, 0x10_0000, 0, 10, 10);
         Rejected(outside.Build(), interp);                        // außerhalb der Datei
@@ -566,6 +567,29 @@ public sealed class ElfLoaderTests
         // Programm und Interpreter zusammen über MaxImageSize.
         var small = new ElfLoadOptions { Random = FixedRandom, StackSize = 64 * 1024, MaxImageSize = 5 * Page, ReadInterpreter = DynOptions(interp).ReadInterpreter };
         Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(Dynamic().Build(), ["p"], [], small));
+    }
+
+    [TestMethod]
+    public void DynamicExecutableOverlappingInterpreterBaseIsRejected()
+    {
+        // ET_EXEC mit PT_INTERP, dessen Segment auf der festen Interpreter-Basis 0x7F00_0000_0000 liegt: Überschneidung, kein stilles Überlagern.
+        ElfBuilder b = Static();
+        byte[] path = Encoding.UTF8.GetBytes(Ldso);
+        path.CopyTo(b.Body, 0x300);
+        b.Body[0x300 + path.Length] = 0;
+        b.Add(ElfProgramHeader.Interpreter, R, 0x300, 0x300, (ulong)path.Length + 1, (ulong)path.Length + 1);
+        b.Add(ElfProgramHeader.Load, R, 0, ElfLoader.InterpreterBase + 0x1000, 0x10, 0x10);
+        var e = Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(b.Build(), ["p"], [], DynOptions(Interp())));
+        Assert.AreEqual(ElfLoadError.Invalid, e.Kind);
+        Assert.IsTrue(e.Message.Contains("überschneiden", StringComparison.Ordinal), e.Message);
+
+        // Dasselbe Programm ohne das Segment auf der Basis lädt.
+        ElfBuilder ok = Static();
+        path.CopyTo(ok.Body, 0x300);
+        ok.Body[0x300 + path.Length] = 0;
+        ok.Add(ElfProgramHeader.Interpreter, R, 0x300, 0x300, (ulong)path.Length + 1, (ulong)path.Length + 1);
+        UserImage image = ElfLoader.Load(ok.Build(), ["p"], [], DynOptions(Interp()));
+        Assert.AreEqual(ElfLoader.InterpreterBase, image.InterpreterBias);
     }
 
     [TestMethod]

@@ -436,15 +436,17 @@ internal static unsafe class CosmosLinuxRun
     {
         content = [];
         const long ENOENT = 2, EACCES = 13, ENOMEM = 12;
+        // Je Komponente: ".." aus der Wurzel heraus ist nie erlaubt, auch nicht mitten im Pfad (/lib/../../x) oder hinter "//".
         foreach (string part in path.Split('/'))
         {
             if (part == "..")
             {
-                return -EACCES; // nie aus der Wurzel heraus
+                return -EACCES;
             }
         }
 
         string full = root + path;
+        bool tooLarge = false;
         byte[]? bytes = StorageLock.Run(() =>
         {
             if (!File.Exists(full))
@@ -452,19 +454,25 @@ internal static unsafe class CosmosLinuxRun
                 return null;
             }
 
-            long length = new FileInfo(full).Length;
-            return length > LinuxUserProcess.MaxExecFileSize ? [] : File.ReadAllBytes(full);
+            if (new FileInfo(full).Length > LinuxUserProcess.MaxExecFileSize)
+            {
+                tooLarge = true;
+                return [];
+            }
+
+            return File.ReadAllBytes(full);
         });
         if (bytes == null)
         {
             return -ENOENT;
         }
 
-        if (bytes.Length == 0)
+        if (tooLarge)
         {
-            return -ENOMEM;
+            return -ENOMEM; // wie ReadExecutable bei Größe über MaxExecFileSize
         }
 
+        // Eine leere Datei ist kein ELF-Abbild: der Lader meldet ENOEXEC (wie Linux), nicht ENOMEM.
         content = bytes;
         return 0;
     }
