@@ -305,7 +305,7 @@ Umsetzung und Grenzen:
   Speicher vor `UserPageTable` vor `PageAllocator`). Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.
 - Ein Absturz in einem Thread (Ausnahme, ungültige Register, Fehler der Brücke) beendet den ganzen Prozess wie bei Linux. `pthread_exit` in `main` lässt die
   anderen weiterlaufen; der Prozess endet mit dem letzten Thread.
-- Signalmaske, anhängige Signale und Alternativstack sind noch je Prozess, nicht je Thread (V18 stellt zu, siehe dort); `rt_sigsuspend` fehlt; `rt_sigpending` (V23) meldet anhängig und blockiert der einen Prozessmenge (Echtzeitsignale gibt es nicht).
+- Signalmaske, anhängige Signale und Alternativstack sind noch je Prozess, nicht je Thread (V18 stellt zu, siehe dort); `rt_sigsuspend` gibt es seit v46 (Wartemaske wie ppoll, immer -EINTR); `rt_sigpending` (V23) meldet anhängig und blockiert der einen Prozessmenge (Echtzeitsignale gibt es nicht).
 - Dateien (V11): Deskriptortabelle, Arbeitsverzeichnis, `LinuxFileSystem` und die offenen Dateien schützt eine Sperre je Prozess (`ILinuxFiles.FileGate`). Jeder Datei- und Pfadaufruf läuft ganz unter ihr, auch `pread` (Position sichern, lesen, zurücksetzen) ist dadurch atomar; Dateiaufrufe verschiedener Threads laufen nacheinander, auch während einer langsamen Platte. Schreiben auf das Terminal und Lesen von fd 0 halten sie nicht (Lesen wartet auf Eingabe). Reihenfolge: Dateisperre vor Speichersperre und vor `StorageLock`, nie zusammen mit der futex-Tabelle. Grenze: Ersetzt ein Thread fd 0 per `dup2`, während ein anderer `read` darauf beginnt, kann dieser `-EBADF` sehen (die Art des Deskriptors wird vor der Sperre bestimmt).
 - Ein Thread, der in `read` auf fd 0 wartet, endet beim Prozessende über das Dateiende der Sitzung; ohne Sitzung (Gastprobe) liest fd 0 ohnehin leer.
 
@@ -490,7 +490,7 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
 - **SIGPIPE** nach `-EPIPE` aus write, writev, pwrite, sendto, sendmsg (nicht mit `MSG_NOSIGNAL`); Standardaktion beendet den Prozess wie Linux.
 - **Grenzen**: Maske, anhängige Signale und Alternativstack je Prozess, nicht je Thread; ein Handler blockiert sein Signal für alle Threads, bis
   rt_sigreturn die Maske des Rahmens zurückschreibt. Echtzeitsignale reihen sich nicht mehrfach ein. Kein Zustellen in einer Rechenschleife ohne
-  Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3); Handler für Ausnahmen seit V24 (eigener Abschnitt). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigtimedwait` und
+  Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3); Handler für Ausnahmen seit V24 (eigener Abschnitt). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigtimedwait` und
   `signalfd` fehlen.
 
 ## Harte Startlücken: ppoll, prctl, close_range, /proc/self/fd, execve (V19)
