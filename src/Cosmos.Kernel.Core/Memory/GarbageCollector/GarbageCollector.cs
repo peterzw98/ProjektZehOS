@@ -469,6 +469,13 @@ internal static unsafe partial class GarbageCollector
         // Clear the resurrection-tracking weak and the dependent GC handles whose targets died
         s_gCHandleManager.ClearLongWeakHandles();
 
+        // DIAG dep-handle: Eintraege/Segmente der Dependent-Handles je GC (nie mergen)
+        Serial.WriteString("[GC] DEPH count=");
+        Serial.WriteNumber((uint)s_gCHandleManager.DependentHandleStore.Count);
+        Serial.WriteString(" seg=");
+        Serial.WriteNumber((uint)s_gCHandleManager.DependentHandleStore.SegmentCount);
+        Serial.WriteString("\n");
+
         // Sweep and rebuild free lists
         freedCount = SweepPhase();
 
