@@ -16,7 +16,8 @@ spec = importlib.util.spec_from_file_location("t", R / "scripts/test-wasm-doom-d
 
 # kheap und maps zuletzt: Dort liegt der offene Restpunkt (Kernel-Heap ueber die Reserve), ein Halt dort soll die anderen nicht verdecken.
 DEFAULT = ["anon", "memfd", "memfdmap", "threads", "forkmany", "slotfull", "concurrent", "concmix", "kheapfrei", "kheap", "mapsfrei", "maps"]
-HALT = re.compile(r"PANIC|System halting|FAILFAST|FailFast|OutOfMemory|Unhandled exception|KERNEL PANIC", re.I)
+HALT = re.compile(r"PANIC|System halt|CPU EXCEPTION|FAILFAST|FailFast|OutOfMemory|Unhandled exception", re.I)
+FREE_SLACK = 48  # MiB, die der Kernel-Heap ueber alle Szenarien behalten darf
 RUN_TIMEOUT = 2 * 240 + 120  # memprobe: zwei Laeufe mit je hoechstens DEADLINE_S, plus Auswertung
 
 iso, work = Path(sys.argv[1]), Path(sys.argv[2])
@@ -25,12 +26,14 @@ scenarios = sys.argv[5:] or DEFAULT
 work.mkdir()
 os.environ["ZEHOS_QEMU_SMP"] = smp
 d = work / "appdir"; d.mkdir(); (d / "t" / "bin").mkdir(parents=True)
-shutil.copy2(R / "experiments/LinuxAbi/out/v43mem/memprobe", d / "t" / "bin" / "memprobe")
+# ZEHOS_MEMPROBE: anderes memprobe (etwa ein Zwischenstand neben einer laufenden Messreihe)
+shutil.copy2(os.environ.get("ZEHOS_MEMPROBE") or R / "experiments/LinuxAbi/out/v43mem/memprobe", d / "t" / "bin" / "memprobe")
 disk = work / "app.qcow2"; t.create_disk(d, disk)
 port = t.free_port()
 p = t.start_qemu(iso, disk, work, port, "kvm", None, memory)
 ok = []
 lines_out = []
+frees = []  # freier Speicher (MiB) aus jedem ping
 
 
 def serial(mark=0):
@@ -56,7 +59,7 @@ def wait_end(mark, timeout):
     while time.monotonic() < deadline:
         e = end_since(mark)
         if e is not None: return e
-        if p.poll() is not None: return None
+        if p.poll() is not None or HALT.search(serial(mark)): return None  # angehalten: nicht bis zum Zeitlimit warten
         time.sleep(1)
     return None
 
@@ -80,6 +83,7 @@ try:
     m = g.mark(); g.qmp.line("run bin/memprobe ping")
     e = wait_end(m, 120)
     pong = re.search(r"PONG frei=(\d+) gesamt=(\d+)", out_since(m))
+    if pong: frees.append(int(pong.group(1)))
     check("aussen.ping", e == "exit 0" and pong is not None, f"end={e!r} " + (pong.group(0) if pong else ""))
     dead = None
     for item in scenarios:
@@ -111,8 +115,12 @@ try:
         m = g.mark(); g.qmp.line("run bin/memprobe ping")
         e2 = wait_end(m, 120)
         pong = re.search(r"PONG frei=(\d+) gesamt=(\d+)", out_since(m))
+        if pong: frees.append(int(pong.group(1)))
         check(f"aussen.{name}.ping_danach", e2 == "exit 0" and pong is not None, f"end={e2!r} " + (pong.group(0) if pong else ""))
         if e2 is None: dead = "ping ohne Ende"
+    if not dead and len(frees) >= 2:
+        # Speicher nach allen Szenarien wieder frei: letzter gegen ersten ping (Kernel-Heap darf FREE_SLACK behalten)
+        check("aussen.speicher_gesamt", frees[-1] >= frees[0] - FREE_SLACK, f"erster={frees[0]} letzter={frees[-1]} MiB")
     if not dead:
         try: g.qmp.line("shutdown")
         except Exception: pass

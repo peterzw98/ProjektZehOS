@@ -140,7 +140,7 @@ Linux `6.12.117+deb13-amd64` erzeugt (musl 1.2.5), drei weitere Läufe ohne Abwe
 einzeln an: `anon` (mmap und anfassen bis SIGKILL), `memfd` (write bis `ENOSPC`), `memfdmap` (MAP_SHARED-Seitenfehler bis SIGKILL), `threads` und `forkmany`
 (bis `EAGAIN`), `slotfull` (Speicher bis 32 Seiten über der Kernel-Reserve voll, dann `pthread_create`, `fork`, `posix_spawn`), `concurrent` und `concmix`
 (mehrere Lasten gleichzeitig), `kheap`/`kheapfrei` (Pipes, Socketpaare, memfds, 65530 Abbildungen mit und ohne vollen Speicher), `maps`/`mapsfrei` (eine Million
-Abbildungen), `execchain` (Budget über execve, für 2G gedacht). Die Last läuft in Kindprozessen; jedes Szenario läuft zweimal, danach prüft der Elternprozess
+Abbildungen), `sockloop`/`pipeloop` (Socketpaare bzw. Pipes in Runden bei vollem Speicher), `execchain` (Budget über execve, für 2G gedacht). Die Last läuft in Kindprozessen; jedes Szenario läuft zweimal, danach prüft der Elternprozess
 fork, posix_spawn und den freien Speicher. Ausgabe `PASS|FAIL|INFO <szenario>.<lauf>.<prüfung> k=v`, Schluss `SUMMARY`.
 
 ```sh
