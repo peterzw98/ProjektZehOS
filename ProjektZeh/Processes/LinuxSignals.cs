@@ -49,7 +49,10 @@ internal readonly record struct LinuxSignalDelivery(int Signal, ulong Handler, u
 /// </summary>
 internal readonly record struct LinuxFault(int Signal, int Code, ulong Address, ulong Vector, ulong Error, ulong Cr2)
 {
-    public const int SiKernel = 0x80, SegvMaperr = 1, SegvAccerr = 2, IllIllopn = 2, FpeIntdiv = 1, BusAdraln = 1, TrapTrace = 2;
+    public const int SiKernel = 0x80, SegvMaperr = 1, SegvAccerr = 2, IllIllopn = 2, FpeIntdiv = 1, BusAdraln = 1, BusAdrerr = 2, TrapTrace = 2;
+
+    /// <summary>V30-P3: Signal einer Dateiseite, die sich im Seitenfehler nicht lesen lässt.</summary>
+    public const int SigBus = 7;
     private const int FpeFltdiv = 3, FpeFltovf = 4, FpeFltund = 5, FpeFltres = 6, FpeFltinv = 7;
 
     /// <summary>Signal der Ausnahme <paramref name="vector"/> (auch für den Wartestatus, wenn kein Handler sie nimmt).</summary>
@@ -65,9 +68,16 @@ internal readonly record struct LinuxFault(int Signal, int Code, ulong Address, 
     /// <summary>
     /// Beschreibt die Ausnahme. <paramref name="mapped"/>: Liegt die Fehleradresse eines Seitenfehlers in einem Bereich (auch PROT_NONE)?
     /// Dann SEGV_ACCERR, sonst SEGV_MAPERR. <paramref name="fpu"/> ist das fxsave-Abbild beim Fehler (für den si_code von #MF und #XM).
+    /// <paramref name="busError"/> (V30-P3): Der Seitenfehler traf eine Dateiseite, die sich nicht lesen ließ (Lesefehler, ganz hinter dem
+    /// Dateiende); Linux meldet dann SIGBUS mit BUS_ADRERR und der Fehleradresse (<c>mm_fault_error</c> bei VM_FAULT_SIGBUS).
     /// </summary>
-    public static LinuxFault Of(ulong vector, ulong error, ulong address, ulong rip, bool mapped, ReadOnlySpan<byte> fpu)
+    public static LinuxFault Of(ulong vector, ulong error, ulong address, ulong rip, bool mapped, ReadOnlySpan<byte> fpu, bool busError = false)
     {
+        if (vector == 14 && busError)
+        {
+            return new LinuxFault(SigBus, BusAdrerr, address, vector, error, address);
+        }
+
         int signal = SignalOf(vector);
         return vector switch
         {

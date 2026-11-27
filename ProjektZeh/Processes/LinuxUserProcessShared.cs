@@ -114,9 +114,10 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
     }
 
     /// <summary>Holt den geteilten Frame, wenn <paramref name="page"/> in einem geteilten Bereich liegt; 0 sonst oder ohne Frame.</summary>
-    private ulong PopulateShared(ulong page, MapAccess access, out bool isShared)
+    private ulong PopulateShared(ulong page, MapAccess access, out bool isShared, out bool busError)
     {
         isShared = false;
+        busError = false;
         foreach (SharedRegion r in _regions)
         {
             if (page < r.Start || page >= r.End)
@@ -133,7 +134,8 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
             LinuxSharedFrame? f = r.Mem.Acquire(r.FirstIndex + (long)((page - r.Start) / Page));
             if (f == null)
             {
-                return 0; // hinter dem Dateiende: Linux gibt SIGBUS, hier endet der Zugriff wie ein Seitenfehler ohne Bereich
+                busError = true; // hinter dem Dateiende: Linux gibt SIGBUS (V30-P3)
+                return 0;
             }
 
             if (!_pages.Map(page, f.Frame, access))

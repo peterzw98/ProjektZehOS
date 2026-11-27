@@ -867,16 +867,22 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// Ein Seitenfehler im Ring 3. true: die Seite ist jetzt abgebildet und der Befehl läuft noch einmal. false: Schutzverletzung,
     /// unbelegte Adresse oder kein Speicher mehr; der Prozess wird abgebrochen.
     /// </summary>
-    public bool HandlePageFault(ulong address, ulong error)
+    public bool HandlePageFault(ulong address, ulong error) => HandlePageFault(address, error, out _);
+
+    /// <summary>
+    /// Wie <see cref="HandlePageFault(ulong, ulong)"/>; <paramref name="busError"/> (V30-P3) meldet bei false, dass eine Dateiseite sich nicht
+    /// lesen ließ (Lesefehler oder Seite ganz hinter dem Dateiende): Linux schickt dann SIGBUS statt SIGSEGV.
+    /// </summary>
+    public bool HandlePageFault(ulong address, ulong error, out bool busError)
     {
         if (_vforkOf != null)
         {
-            return _vforkOf.HandlePageFault(address, error);
+            return _vforkOf.HandlePageFault(address, error, out busError);
         }
 
         lock (_memGate)
         {
-            return HandlePageFaultLocked(address, error);
+            return HandlePageFaultLocked(address, error, out busError);
         }
     }
 
@@ -897,8 +903,9 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         }
     }
 
-    private bool HandlePageFaultLocked(ulong address, ulong error)
+    private bool HandlePageFaultLocked(ulong address, ulong error, out bool busError)
     {
+        busError = false;
         if ((error & FaultPresent) != 0 || address >= ElfLoader.UserEnd)
         {
             return false;
@@ -922,7 +929,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             return _pages.Map(page, held, access);
         }
 
-        return Populate(page, access) != 0;
+        return Populate(page, access, out busError) != 0;
     }
 
     public bool TrySetBrk(ulong newBrk)
@@ -1262,7 +1269,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             if (!_frames.TryGetValue(page, out ulong frame))
             {
                 _map.TryFind(page, out MapAccess access);
-                frame = Populate(page, access);
+                frame = Populate(page, access, out _); // Kernelzugriff: Lesefehler einer Dateiseite ist -EFAULT wie bei Linux
                 if (frame == 0)
                 {
                     return false;
@@ -1300,9 +1307,10 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         return true;
     }
 
-    private ulong Populate(ulong page, MapAccess access)
+    // busError (V30-P3): 0, weil sich eine Dateiseite nicht lesen ließ (Linux: SIGBUS); sonst false.
+    private ulong Populate(ulong page, MapAccess access, out bool busError)
     {
-        ulong shared = PopulateShared(page, access, out bool isShared);
+        ulong shared = PopulateShared(page, access, out bool isShared, out busError);
         if (isShared)
         {
             return shared;
@@ -1315,10 +1323,12 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         }
 
         // V30: Seiten aus einer Datei werden jetzt gelesen, vor dem Abbilden: Kein anderer Thread sieht die Seite halb gefüllt. Gelesen
-        // wird unter _memGate ohne FileGate (ILinuxPageSource); die Platte nimmt darin StorageLock. Ein Lesefehler endet wie ohne Speicher.
+        // wird unter _memGate ohne FileGate (ILinuxPageSource); die Platte nimmt darin StorageLock. Lesefehler und eine Seite ganz hinter
+        // dem Dateiende (auch nach ftruncate) enden wie bei Linux mit SIGBUS.
         if (_fileExtents.Covers(page) && !_fileExtents.Fill(page, _pages.Frame(frame)))
         {
             _pages.FreeFrame(frame);
+            busError = true;
             return 0;
         }
 
