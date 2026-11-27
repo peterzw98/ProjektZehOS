@@ -412,12 +412,73 @@ public sealed class AddressSpaceMapTests
             Assert.IsTrue(r.IsOK(), $"Abbildung {i}");
         }
 
-        Assert.IsFalse(map.Reserve(0, Page, MapAccess.ReadWrite, Placement.Hint).IsOK());
-        Assert.IsFalse(map.Reserve(Top - Page, Page, MapAccess.ReadWrite, Placement.FixedNoReplace).IsOK());
-        Assert.IsFalse(map.Protect(Base, Page, MapAccess.Read).IsOK());
+        // Anderer Zugriff als die Nachbarn: keine Verschmelzung, die Abbildung wäre die 65531. (Gleicher Zugriff verschmölze und ginge, V48-Review.)
+        Assert.IsFalse(map.Reserve(0, Page, MapAccess.Read, Placement.Hint).IsOK());
+        Assert.IsFalse(map.Reserve(Top - Page, Page, MapAccess.Read, Placement.FixedNoReplace).IsOK());
+        Assert.IsTrue(map.Protect(Base, Page, MapAccess.Read).IsOK(), "V48-Review: ersetzt eine Region durch eine, kein Zuwachs");
 
         Assert.IsTrue(map.Release(Base, Page).IsOK());
         Assert.IsTrue(map.Reserve(0, Page, MapAccess.ReadWrite, Placement.Hint).IsOK());
+    }
+
+    // Füllt die Karte bis genau MaxRegions Bereiche; die erste Region ist 3 Seiten lang (Mitte teilbar), danach je eine Seite mit Lücke.
+    private static AddressSpaceMap CreateFull(out ulong bigStart)
+    {
+        AddressSpaceMap map = Create();
+        bigStart = Base;
+        Assert.IsTrue(map.Reserve(Base, 3 * Page, MapAccess.ReadWrite, Placement.FixedReplace).IsOK());
+        ulong next = Base + 4 * Page;
+        for (int i = 1; i < AddressSpaceMap.MaxRegions; i++)
+        {
+            Assert.IsTrue(map.Reserve(next, Page, MapAccess.ReadWrite, Placement.FixedReplace).IsOK());
+            next += 2 * Page;
+        }
+
+        return map;
+    }
+
+    [TestMethod]
+    public void FreigabeInDerMitteAmLimitScheitertRandFreigabeNicht()
+    {
+        AddressSpaceMap map = CreateFull(out ulong big);
+        Assert.IsFalse(map.Release(big + Page, Page).IsOK(), "Mittelteilung würde +1 ergeben");
+        Assert.IsTrue(map.IsMapped(big, 3 * Page), "unverändert");
+        Assert.IsTrue(map.Release(big, Page).IsOK(), "Randfreigabe teilt nicht");
+        Assert.IsFalse(map.IsMapped(big, Page));
+    }
+
+    [TestMethod]
+    public void ProtectAmLimitNurBeiWachstumAbgelehnt()
+    {
+        AddressSpaceMap map = CreateFull(out ulong big);
+        Assert.IsFalse(map.Protect(big + Page, Page, MapAccess.Read).IsOK(), "Mitte: +2");
+        Assert.IsTrue(map.TryFind(big + Page, out MapAccess a) && a == MapAccess.ReadWrite);
+        Assert.IsFalse(map.Protect(big, Page, MapAccess.Read).IsOK(), "Rand: +1");
+        Assert.IsTrue(map.Protect(big, 3 * Page, MapAccess.Read).IsOK(), "ganze Region ersetzen: kein Zuwachs");
+        Assert.IsTrue(map.Protect(big, Page, MapAccess.Read).IsOK(), "gleicher Zugriff: keine Änderung");
+    }
+
+    [TestMethod]
+    public void FixedReplaceAmLimitErsetztOhneZuwachsAberNichtMitTeilung()
+    {
+        AddressSpaceMap map = CreateFull(out ulong big);
+        Assert.IsFalse(map.Reserve(big + Page, Page, MapAccess.Read, Placement.FixedReplace).IsOK(), "Mitte teilt: +2");
+        Assert.IsTrue(map.TryFind(big + Page, out MapAccess a) && a == MapAccess.ReadWrite, "unverändert");
+        Assert.IsTrue(map.Reserve(big, 3 * Page, MapAccess.Read, Placement.FixedReplace).IsOK(), "ganze Region ersetzt");
+        Assert.IsTrue(map.Reserve(Base + 3 * Page, Page, MapAccess.ReadWrite, Placement.FixedReplace).IsOK(), "Lücke verschmilzt");
+    }
+
+    [TestMethod]
+    public void ZuruecksetzenOhneGrenzpruefungGelingtAmLimit()
+    {
+        AddressSpaceMap map = CreateFull(out ulong big);
+        Assert.IsTrue(map.Release(Base + 4 * Page, Page).IsOK());
+        Assert.IsTrue(map.Release(Base + 6 * Page, Page).IsOK());
+        Assert.IsTrue(map.Protect(big + Page, Page, MapAccess.Read).IsOK(), "Mitte: +2 genau bis zur Grenze");
+        // Jetzt am Limit: Zurücksetzen der Seite teilt nicht wieder weiter, auch eine teilende Rückgabe darf nicht scheitern.
+        Assert.IsTrue(map.Protect(big + Page, Page, MapAccess.ReadWrite, enforceLimit: false).IsOK());
+        Assert.IsTrue(map.Protect(big, Page, MapAccess.Read, enforceLimit: false).IsOK());
+        Assert.IsTrue(map.TryFind(big, out MapAccess a) && a == MapAccess.Read);
     }
 
     private static int FindRun(MapAccess?[] model, int from, int count)

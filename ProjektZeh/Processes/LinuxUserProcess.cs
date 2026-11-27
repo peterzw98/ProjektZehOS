@@ -1210,7 +1210,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             // Neu abbilden statt umschreiben: IUserPages kennt nur Map und Unmap, der Frame und sein Inhalt bleiben.
             if (!_pages.Unmap(page))
             {
-                _map.Protect(page, Page, before[i]);
+                _map.Protect(page, Page, before[i], enforceLimit: false); // Zurücksetzen darf am Limit nicht scheitern (V48-Review)
                 ok = false;
                 continue;
             }
