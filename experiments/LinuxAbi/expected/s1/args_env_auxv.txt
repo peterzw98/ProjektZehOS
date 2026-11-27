@@ -5,7 +5,10 @@ env=ZEHOS_ABI=1
 env=LANG=C
 env=PATH=/usr/bin:/bin
 env=HOME=/
-envc=4
+env=TMPDIR=/tmp
+env=XDG_RUNTIME_DIR=/tmp/xdg-runtime
+env=XDG_CACHE_HOME=/.cache
+envc=7
 AT_PAGESZ=4096
 AT_PHENT=56
 AT_PHNUM>0=1

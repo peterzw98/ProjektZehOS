@@ -55,8 +55,9 @@ internal static unsafe class CosmosLinuxRun
     /// <summary>
     /// Umgebung wie <c>experiments/LinuxAbi/run-linux.py</c>, damit die Ausgaben mit <c>expected/</c> vergleichbar sind. V28b: HOME ist die
     /// Prozesswurzel; Ladybird und fontconfig legen Profil und Cache darunter an (<c>$HOME/.local</c>, <c>$HOME/.cache</c>) und warnen sonst.
+    /// V37: dazu TMPDIR, XDG_RUNTIME_DIR und XDG_CACHE_HOME (<see cref="LinuxRunEnvironment.Defaults"/>), vor dem Start angelegt.
     /// </summary>
-    public static readonly string[] Environment = ["ZEHOS_ABI=1", "LANG=C", "PATH=/usr/bin:/bin", "HOME=/"];
+    public static readonly string[] Environment = LinuxRunEnvironment.Defaults;
 
     private static int busy;
     private static bool initialized;
@@ -71,6 +72,9 @@ internal static unsafe class CosmosLinuxRun
 
         /// <summary>Prozesswurzel auf der Datenplatte (Kernelpfad) oder null für ein leeres Dateisystem im Arbeitsspeicher (V8).</summary>
         public string? Root;
+
+        /// <summary>V37: Umgebung des Programms; ihre Standardordner legt <see cref="Execute"/> vor dem Start an.</summary>
+        public string[] Envp = [];
 
         /// <summary>Anfängliches Arbeitsverzeichnis im Prozess (wird angelegt) oder null für "/"; nur die Gastprobe setzt es.</summary>
         public string? StartCwd;
@@ -167,18 +171,24 @@ internal static unsafe class CosmosLinuxRun
     private static extern ulong ToPhysical([UnsafeAccessorType("Cosmos.Kernel.Core.Memory.PageAllocator, Cosmos.Kernel.Core")] object? owner, ulong address);
 
     /// <summary>
-    /// Shell: <c>run &lt;datei&gt; [argumente...]</c>. argv[0] ist der Pfad wie angegeben. Mit <paramref name="shell"/> läuft das
+    /// Shell: <c>run [NAME=WERT...] &lt;datei&gt; [argumente...]</c>; die Zuweisungen ergänzen oder ersetzen <see cref="Environment"/> (V37). argv[0] ist der Pfad wie angegeben. Mit <paramref name="shell"/> läuft das
     /// Programm neben der Ereignisschleife (V3 stdin): Der Befehl kehrt sofort zurück, die Shell holt die Ausgabe in
     /// <see cref="ShellService.Poll"/>, Enter-Zeilen gehen an fd 0, Strg+C oder Esc bricht ab; ohne Zeitlimit.
     /// Dateien (V8): Das aktuelle Verzeichnis der Shell ist die Prozesswurzel "/" und das Arbeitsverzeichnis des Programms
     /// (etwa <c>cd /data/s1</c>, dann <c>run files</c>); in "/" oder direkt auf einem Laufwerk bekommt es ein leeres Dateisystem im Arbeitsspeicher.
     /// Eine Wurzel auf der Platte braucht Schreib- und Verwaltungsrecht des angemeldeten Nutzers (<see cref="FileService.AuthorizeProcessRoot"/>).
     /// </summary>
-    public static ResultErr RunFile(FileService files, string[] arguments, ITextOutput output, ShellService? shell)
+    public static ResultErr RunFile(FileService files, string[] words, ITextOutput output, ShellService? shell)
     {
-        if (arguments.Length == 0)
+        if (words.Length == 0)
         {
-            return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: run <datei> [argumente...]");
+            return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: run [NAME=WERT...] <datei> [argumente...]");
+        }
+
+        // V37: führende NAME=WERT-Wörter setzen die Umgebung wie env; der Rest ist der Programmaufruf.
+        if (!LinuxRunEnvironment.Split(words, out string[] envp, out string[] arguments, out string envError))
+        {
+            return ResultErr.CreateFailure(ResultCode.InvalidArgument, "run: " + envError);
         }
 
         ResultObject<byte[]> file = files.ReadExecutable(arguments[0], MaxFileSize);
@@ -202,12 +212,12 @@ internal static unsafe class CosmosLinuxRun
         string? exe = LinuxPath.InsideRoot(System.IO.Path.GetFullPath(arguments[0], files.CurrentDirectory), root);
         if (shell != null)
         {
-            return StartForeground(file.Value!, arguments, shell, root, exe);
+            return StartForeground(file.Value!, arguments, envp, shell, root, exe);
         }
 
         // Spiegel ins serielle Protokoll für scripts/test-linux-abi.py (V5): rohe Bytes als Hex, Status wie run-linux.py.
         Serial("LINUXRUN BEGIN " + arguments[0]);
-        Outcome outcome = Run(file.Value!, arguments, Environment, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)), root,
+        Outcome outcome = Run(file.Value!, arguments, envp, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)), root,
             exePath: exe);
         Serial("LINUXRUN END " + (outcome.Ran ? outcome.Status : "notrun " + outcome.Detail));
         if (!outcome.Ran)
@@ -262,7 +272,7 @@ internal static unsafe class CosmosLinuxRun
         return LinuxPath.Normalize(argv[0][0] == '/' ? argv[0] : (cwd ?? "/") + "/" + argv[0]);
     }
 
-    private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell, string? root, string? exePath)
+    private static ResultErr StartForeground(byte[] elf, string[] arguments, string[] envp, ShellService shell, string? root, string? exePath)
     {
         if (shell.HasForeground)
         {
@@ -278,7 +288,7 @@ internal static unsafe class CosmosLinuxRun
         bool started = false;
         try
         {
-            if (!Prepare(elf, arguments, Environment, root, out UserImage? image, out string why))
+            if (!Prepare(elf, arguments, envp, root, out UserImage? image, out string why))
             {
                 return ResultErr.CreateFailure(ResultCode.Failure, "run: " + why);
             }
@@ -289,6 +299,7 @@ internal static unsafe class CosmosLinuxRun
             {
                 Session = session,
                 Root = root,
+                Envp = envp,
                 ExePath = exePath,
                 StartPath = StartPathOf(arguments, null, exePath),
 
@@ -505,7 +516,7 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, why);
             }
 
-            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd, ExePath = exePath, StartPath = StartPathOf(argv, cwd, exePath) };
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, Envp = envp, StartCwd = cwd, ExePath = exePath, StartPath = StartPathOf(argv, cwd, exePath) };
             var thread = new Thread(() => Body(started, image!, elf));
             thread.Start();
             run = started;
@@ -657,6 +668,18 @@ internal static unsafe class CosmosLinuxRun
         run.Threads[0] = main;
         run.KernelThreads = 1;
         run.Process = process;
+
+        // V37: Standardordner der Umgebung (TMPDIR, XDG_*) beschreibbar anlegen; ein vorhandener Ordner bleibt, wie er ist.
+        foreach ((string path, uint mode) in LinuxRunEnvironment.DirectoriesFor(run.Envp))
+        {
+            long made = process.FileSystem.Mkdir(path, mode);
+            if (made < 0 && made != -LinuxErrno.EEXIST)
+            {
+                run.Error = "Ordner " + path + ": errno " + (-made);
+                return;
+            }
+        }
+
         if (run.StartCwd != null)
         {
             // Wie run-linux.py, das in einem Unterordner startet: "/" zeigte sonst /dev und getcwd hätte keinen Ordnernamen.

@@ -15,7 +15,8 @@ python3 experiments/LinuxAbi/run-linux.py --bin experiments/LinuxAbi/out/s1 --ex
 python3 -m unittest discover -s experiments/LinuxAbi      # Tests des Vergleichers (ohne musl und strace)
 ```
 
-`run-linux.py` startet jedes Programm in `--bin` mit den Argumenten `a1`, `b 2`, der Umgebung `ZEHOS_ABI=1 LANG=C PATH=/usr/bin:/bin`, leerem stdin,
+`run-linux.py` startet jedes Programm in `--bin` mit den Argumenten `a1`, `b 2`, der Umgebung `ZEHOS_ABI=1 LANG=C PATH=/usr/bin:/bin HOME=/ TMPDIR=/tmp XDG_RUNTIME_DIR=/tmp/xdg-runtime XDG_CACHE_HOME=/.cache`
+(wie `run` in ZehOS), leerem stdin,
 `umask 022` und einem frischen leeren Arbeitsverzeichnis. Verglichen werden stdout und stderr (zusammen, Bytes) und der Status (`exit <n>` oder
 `signal <n>`). Danach läuft jedes Programm ein zweites Mal unter `strace -f -c`; der JSON-Bericht (`--json`) nennt je Programm die Aufrufe
 und insgesamt ihre Anzahl, ohne dass sie in den Vergleich eingehen. Exit 0: alles gleich. Exit 1: Abweichung, auch bei fehlender Erwartung, fehlendem

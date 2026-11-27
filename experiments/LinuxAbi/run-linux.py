@@ -26,7 +26,9 @@ import sys
 import tempfile
 
 ARGS = ["a1", "b 2"]
-ENV = {"ZEHOS_ABI": "1", "LANG": "C", "PATH": "/usr/bin:/bin", "HOME": "/"}
+# Wie CosmosLinuxRun.Environment (LinuxRunEnvironment.Defaults); die XDG-Pfade legt nur ZehOS in der Prozesswurzel an.
+ENV = {"ZEHOS_ABI": "1", "LANG": "C", "PATH": "/usr/bin:/bin", "HOME": "/",
+       "TMPDIR": "/tmp", "XDG_RUNTIME_DIR": "/tmp/xdg-runtime", "XDG_CACHE_HOME": "/.cache"}
 TIMEOUT = 60
 STRACE_PROBLEMS = []  # Meldungen, wenn strace nichts liefert; landen im Bericht (kein Vergleichsfehler)
 
