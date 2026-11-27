@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title description">
+  <title id="title">Ladybird vom Start zum ersten Gast-Screenshot</title>
+  <desc id="description">Am 27. November wurden SQLite-Dateimapping, Prozessgruppen, Schriften und Thread-Plätze adressiert. Ein KVM-Gast mit einer CPU erzeugte von static.html einen vollständigen Screenshot mit 798 mal 4087 Pixeln.</desc>
+  <rect width="1600" height="900" fill="#0b1723"/>
+  <g font-family="Arial, sans-serif">
+    <text x="64" y="69" fill="#79dfbc" font-size="22" font-weight="700" letter-spacing="2">LADYBIRD · 27. NOVEMBER 2026</text>
+    <text x="64" y="139" fill="#f3f9fc" font-size="51" font-weight="700">Vom Start zum ersten Gast-Screenshot</text>
+    <text x="64" y="194" fill="#b7cfdc" font-size="25">Fünf Stationen auf dem Weg zu einer vollständig gerenderten Seite</text>
+
+    <path d="M200 266H1400" stroke="#5d9d9e" stroke-width="3"/>
+    <g fill="#85e9c9">
+      <circle cx="200" cy="266" r="8"/>
+      <circle cx="500" cy="266" r="8"/>
+      <circle cx="800" cy="266" r="8"/>
+      <circle cx="1100" cy="266" r="8"/>
+      <circle cx="1400" cy="266" r="10"/>
+    </g>
+
+    <g stroke="#3e6274" stroke-width="2" fill="#152b3b">
+      <rect x="64" y="304" width="272" height="260" rx="15"/>
+      <rect x="364" y="304" width="272" height="260" rx="15"/>
+      <rect x="664" y="304" width="272" height="260" rx="15"/>
+      <rect x="964" y="304" width="272" height="260" rx="15"/>
+    </g>
+    <rect x="1264" y="304" width="272" height="260" rx="15" stroke="#72cfad" stroke-width="2" fill="#1d4148"/>
+
+    <g fill="#9ae5cf" font-size="19" font-weight="700" letter-spacing="1.4">
+      <text x="86" y="347">V32</text>
+      <text x="386" y="347">V35</text>
+      <text x="686" y="347">BÜNDEL</text>
+      <text x="986" y="347">V36</text>
+      <text x="1286" y="347">KVM · 1 CPU</text>
+    </g>
+    <g fill="#f3f9fc" font-size="29" font-weight="700">
+      <text x="86" y="397">SQLite</text>
+      <text x="386" y="397">setpgid</text>
+      <text x="686" y="397">Schriften</text>
+      <text x="986" y="397">Threads</text>
+      <text x="1286" y="397">static.html</text>
+    </g>
+    <g fill="#c3d9e3" font-size="21">
+      <text x="86" y="440"><tspan x="86">WAL-Index in .shm</tspan><tspan x="86" dy="31">braucht beschreibbares</tspan><tspan x="86" dy="31">MAP_SHARED.</tspan></text>
+      <text x="386" y="440"><tspan x="386">Linux-ABI um</tspan><tspan x="386" dy="31">Prozessgruppen</tspan><tspan x="386" dy="31">ergänzt.</tspan></text>
+      <text x="686" y="440"><tspan x="686">fonts.conf und conf.d</tspan><tspan x="686" dy="31">im musl-Bündel.</tspan></text>
+      <text x="986" y="440"><tspan x="986">Mehr Thread-Plätze</tspan><tspan x="986" dy="31">für die Browser-</tspan><tspan x="986" dy="31">Prozesse.</tspan></text>
+      <text x="1286" y="440"><tspan x="1286">Screenshot nach</tspan><tspan x="1286" dy="31">30 s Wartezeit.</tspan></text>
+    </g>
+
+    <rect x="64" y="619" width="1472" height="172" rx="20" fill="#162f3b" stroke="#426a77" stroke-width="2"/>
+    <text x="95" y="670" fill="#9cebd4" font-size="21" font-weight="700" letter-spacing="1.5">VOLLSTÄNDIGER GAST-SCREENSHOT</text>
+    <text x="95" y="743" fill="#f1fbfa" font-size="54" font-weight="700">798 × 4087 px</text>
+    <line x1="560" y1="657" x2="560" y2="753" stroke="#426a77" stroke-width="2"/>
+    <text x="602" y="706" fill="#e2eff6" font-size="30" font-weight="700">50 Absätze und eine Tabelle · cbcdb6bb</text>
+    <text x="602" y="748" fill="#b7cfdc" font-size="22">KVM 3/3 (1 CPU), 3/3 (4 CPUs), TCG 3/3 nach V38 (4c8f73e3)</text>
+    <text x="64" y="863" fill="#a0b9c8" font-size="18">Quellen · LADYBIRD_FEASIBILITY (Stand D nach GO) · V31 strace-Abgleich (§ Lücken nach Wirkung)</text>
+  </g>
+</svg>
