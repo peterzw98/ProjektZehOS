@@ -29,7 +29,7 @@
 <script>
 const canvas = document.querySelector("#scope");
 const context = canvas.getContext("2d");
-const status = document.querySelector("#frame");
+const readout = document.querySelector("#frame");
 const button = document.querySelector("#play");
 const initialFrame = new URLSearchParams(location.search).get("frame");
 const trails = [
@@ -85,7 +85,7 @@ function draw() {
   context.beginPath();
   context.arc(centerX, centerY, 4, 0, Math.PI * 2);
   context.fill();
-  status.textContent = "Frame " + frame;
+  readout.textContent = "Frame " + frame;
 }
 
 function update(now) {

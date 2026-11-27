@@ -18,6 +18,30 @@ wählt die Projektseite aus. `-u 'file:///share/zehos-probe/canvas.html?frame=90
 wählt das Canvas-Standbild aus. Für `img.html` und `zehos-projekt.html` muss das
 Ladybird-Bündel den Dienst `ImageDecoder` enthalten.
 
-Texte, Seitencode und die beiden PNG-Illustrationen wurden für ZehOS erstellt
-und stehen unter der [Projektlizenz GNU GPL v3](../../../LICENSE). Für die
-mitgelieferten DejaVu-Schriften gilt die [DejaVu-Lizenz](fonts/LICENSE-DejaVu.txt).
+Texte, Seitencode, Desktop-Illustration und Testverlauf wurden für ZehOS
+erstellt und stehen unter der [Projektlizenz GNU GPL v3](../../../LICENSE).
+Für die mitgelieferten DejaVu-Schriften gilt die [DejaVu-Lizenz](fonts/LICENSE-DejaVu.txt).
+
+`probe.png` wurde im [Erstellungscommit 89d389776](https://github.com/peterzw98/ProjektZehOS/commit/89d38977658e453e8ca97d5b8d8d9eee42a3b645)
+als selbst erzeugter Verlauf aufgenommen. Das folgende Python-Skript erzeugt
+eine bytegleiche Kopie zum Vergleich.
+
+```python
+import struct
+import zlib
+from pathlib import Path
+
+def chunk(kind, data):
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+rows = bytearray()
+for y in range(64):
+    rows.append(0)  # Jede Zeile wird ungefiltert gespeichert.
+    for x in range(96):
+        rows.extend((255 * x // 95, 255 * y // 63, 128))
+
+header = struct.pack(">IIBBBBB", 96, 64, 8, 2, 0, 0, 0)
+png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+png += chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b"")
+Path("probe-vergleich.png").write_bytes(png)
+```
