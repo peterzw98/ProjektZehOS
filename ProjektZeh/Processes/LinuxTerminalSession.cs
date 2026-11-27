@@ -207,6 +207,18 @@ internal sealed class LinuxTerminalSession : ITextOutput, IShellForeground
         }
     }
 
+    /// <summary>Bytes, die <see cref="ReadInput"/> jetzt ohne Warten liefert.</summary>
+    public int InputBytes
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _input.Count;
+            }
+        }
+    }
+
     public bool InputReady
     {
         get
