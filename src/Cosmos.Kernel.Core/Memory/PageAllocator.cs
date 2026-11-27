@@ -45,6 +45,7 @@ internal static unsafe class PageAllocator
     /// Number of pages which are currently not in use
     /// </summary>
     public static ulong FreePageCount { get; private set; }
+    private static ulong s_diagRefused, s_diagFailed; // DIAG V43
 
     /// <summary>
     /// Pointer to the RAT.
@@ -593,6 +594,13 @@ internal static unsafe class PageAllocator
             // ZehOS patch user-frame-reserve, see PATCHES.md
             if (aKeepFree != 0 && (FreePageCount < aPageCount || FreePageCount - aPageCount < aKeepFree))
             {
+                // DIAG V43, nie committen
+                if (++s_diagRefused <= 4 || (s_diagRefused & 1023) == 0)
+                {
+                    Serial.WriteString("[V43DIAG] Frame verweigert #"); Serial.WriteNumber(s_diagRefused);
+                    Serial.WriteString(" frei="); Serial.WriteNumber(FreePageCount);
+                    Serial.WriteString(" reserve="); Serial.WriteNumber(aKeepFree); Serial.WriteString("\n");
+                }
                 return null;
             }
 
@@ -633,6 +641,22 @@ internal static unsafe class PageAllocator
 
             if (startPage == null)
             {
+                // DIAG V43, nie committen
+                if (++s_diagFailed <= 8)
+                {
+                    ulong largest = 0, run = 0;
+                    for (ulong i = 0; i < TotalPageCount; i++)
+                    {
+                        if (s_mRAT[i] == (byte)PageType.Empty) { if (++run > largest) largest = run; } else { run = 0; }
+                    }
+                    Serial.WriteString("[V43DIAG] AllocPages null typ="); Serial.WriteNumber((ulong)aType);
+                    Serial.WriteString(" seiten="); Serial.WriteNumber(aPageCount);
+                    Serial.WriteString(" frei="); Serial.WriteNumber(FreePageCount);
+                    Serial.WriteString(" groesster_lauf="); Serial.WriteNumber(largest);
+                    Serial.WriteString(" verweigert="); Serial.WriteNumber(s_diagRefused);
+                    Serial.WriteString(" reserve="); Serial.WriteNumber(aKeepFree); Serial.WriteString("\n");
+                    DumpPageCounts();
+                }
                 return null;
             }
 

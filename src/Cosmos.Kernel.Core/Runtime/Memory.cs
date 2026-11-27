@@ -305,6 +305,9 @@ internal static unsafe class Memory
             GCObject* allocated = GarbageCollector.AllocObject((nint)size, pMT, length, flags);
             if (allocated == null)
             {
+                // DIAG V43, nie committen
+                Serial.WriteString("[V43DIAG] GC AllocObject null groesse="); Serial.WriteNumber(size);
+                Serial.WriteString(" frei="); Serial.WriteNumber(PageAllocator.FreePageCount); Serial.WriteString("\n");
                 ThrowOutOfMemory();
             }
 
