@@ -44,7 +44,15 @@ internal static partial class LinuxSyscalls
             case Shutdown: return DoShutdown(p, (int)a.A0, (int)a.A1);
             case Getsockopt: return DoGetsockopt(p, (int)a.A0, (int)a.A1, (int)a.A2, a.A3, a.A4);
             case Setsockopt: return DoSetsockopt(p, (int)a.A0, (int)a.A1, (int)a.A2);
-            default: return -ENOSYS; // socket/bind/listen/connect/accept/getsockname/getpeername: V16 Teil senior2
+            case Socket: return DoSocket(p, f, (int)a.A0, (int)a.A1, (int)a.A2);
+            case Bind: return DoBind(p, f, (int)a.A0, a.A1, (uint)a.A2);
+            case Listen: return DoListen(p, (int)a.A0, (int)a.A1);
+            case Connect: return DoConnect(p, f, (int)a.A0, a.A1, (uint)a.A2);
+            case Accept: return DoAccept(p, f, (int)a.A0, a.A1, a.A2, 0);
+            case Accept4: return DoAccept(p, f, (int)a.A0, a.A1, a.A2, (int)a.A3);
+            case Getsockname: return DoGetName(p, (int)a.A0, a.A1, a.A2, peer: false);
+            case Getpeername: return DoGetName(p, (int)a.A0, a.A1, a.A2, peer: true);
+            default: return -ENOSYS;
         }
     }
 
@@ -457,10 +465,17 @@ internal static partial class LinuxSyscalls
             }
         }
 
-        // msg_namelen: Linux setzt 0, solange die Gegenseite keinen Namen hat (socketpair); die Namen gebundener Sockets: V16 senior2.
-        if (BitConverter.ToUInt64(h, 0) != 0)
+        // msg_namelen: Name des Senders (unix_copy_addr), 0 bei unbenanntem Sender wie nach socketpair.
+        ulong namePtr = BitConverter.ToUInt64(h, 0);
+        if (namePtr != 0)
         {
-            BitConverter.TryWriteBytes(h.AsSpan(MsgNamelenAt, 4), 0);
+            long nl = WriteSenderName(p, s, namePtr, BitConverter.ToInt32(h, MsgNamelenAt));
+            if (nl < 0)
+            {
+                return nl;
+            }
+
+            BitConverter.TryWriteBytes(h.AsSpan(MsgNamelenAt, 4), (int)nl);
         }
 
         BitConverter.TryWriteBytes(h.AsSpan(MsgControllenAt, 8), controlOut);
@@ -602,9 +617,19 @@ internal static partial class LinuxSyscalls
             return -SockErr.EFAULT;
         }
 
-        if (addr != 0 && addrLenPtr != 0 && !p.Memory.TryWrite(addrLenPtr, BitConverter.GetBytes(0)))
+        if (addr != 0 && addrLenPtr != 0)
         {
-            return -SockErr.EFAULT;
+            Span<byte> lb = stackalloc byte[4];
+            if (!p.Memory.TryRead(addrLenPtr, lb))
+            {
+                return -SockErr.EFAULT;
+            }
+
+            long nl = WriteSenderName(p, s, addr, BitConverter.ToInt32(lb));
+            if (nl < 0 || !p.Memory.TryWrite(addrLenPtr, BitConverter.GetBytes((int)nl)))
+            {
+                return -SockErr.EFAULT;
+            }
         }
 
         return s.Type == LinuxUnixSocket.SockSeqpacket && (flags & MsgTrunc) != 0 ? full : r;
@@ -654,8 +679,8 @@ internal static partial class LinuxSyscalls
             case SoError: BitConverter.TryWriteBytes(v, s.TakeError()); break;
             case SoSndbuf:
             case SoRcvbuf: BitConverter.TryWriteBytes(v, LinuxUnixSocket.Capacity); break;
+            case SoAcceptconn: BitConverter.TryWriteBytes(v, s.IsListening ? 1 : 0); break;
             case SoPasscred:
-            case SoAcceptconn:
             case SoProtocol: BitConverter.TryWriteBytes(v, 0); break;
             case SoDomain: BitConverter.TryWriteBytes(v, AfUnix); break;
             case SoPeercred:
