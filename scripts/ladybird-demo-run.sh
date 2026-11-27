@@ -54,8 +54,15 @@ if [ -z "$DISK" ]; then
       -e 's#<dir prefix="relative">share/Lagom/fonts</dir>#<dir>/share/Lagom/fonts</dir><cachedir>/tmp/fontconfig</cachedir>#' > "$OUT/fonts.conf"
   grep -q '<dir>/share/fonts/dejavu</dir>' "$OUT/fonts.conf" || die "fonts.conf: relative <dir> nicht gefunden (Buendel geaendert?)"
   : > "$OUT/keep"
+  # conf.d (sans-serif-Alias, 45-generic/49-sansserif ...): fonts.conf hat <include>conf.d</include>, relativ -> /etc/fonts/conf.d. Ohne sie
+  # fehlt "DejaVu Sans" fuer sans-serif, FontPlugin::default_font liefert null (Befund senior 10:54). Nur regulaere Dateien (--add kennt keine Links).
+  rm -rf "$OUT/confd"; mkdir -p "$OUT/confd"
+  tar -xzf "$BUNDLE" -C "$OUT/confd" --wildcards './conf.d/*.conf' --strip-components=2 || die "conf.d aus Buendel"
+  CONFD_ADD=()
+  for f in "$OUT"/confd/*.conf; do [ -f "$f" ] && [ ! -L "$f" ] && CONFD_ADD+=(--add "/etc/fonts/conf.d/$(basename "$f")=$f"); done
+  [ ${#CONFD_ADD[@]} -gt 0 ] || die "conf.d leer"
   timed platte python3 scripts/linux-root-disk.py "$BUNDLE" "$DISK" --dest lb --skip-dangling \
-    --add /etc/fonts/fonts.conf="$OUT/fonts.conf" --add /tmp/keep="$OUT/keep" || die "linux-root-disk.py"
+    --add /etc/fonts/fonts.conf="$OUT/fonts.conf" --add /tmp/keep="$OUT/keep" "${CONFD_ADD[@]}" || die "linux-root-disk.py"
 fi
 RUN="bin/Hub --headless=screenshot --disable-sandbox --force-cpu-painting --window-width 798 --window-height 519 --screenshot-delay $DELAY --screenshot-path /shot.png $URL"
 step "Gastlauf: $RUN"
