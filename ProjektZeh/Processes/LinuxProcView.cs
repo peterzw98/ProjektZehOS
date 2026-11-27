@@ -111,6 +111,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcView
             Uid = Uid,
             Gid = Gid,
             Threads = threads,
+            CpuNanos = ProcessCpuNanos,
             SigPending = pending,
             SigBlocked = Signals.Blocked,
             SigIgnored = ignored,

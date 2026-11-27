@@ -86,6 +86,13 @@ public sealed class LinuxThreadsTests
             return BitConverter.ToInt32(b);
         }
 
+        public long Read64(ulong addr)
+        {
+            Span<byte> b = stackalloc byte[8];
+            Assert.IsTrue(P.TryRead(addr, b));
+            return BitConverter.ToInt64(b);
+        }
+
         public void Write32(ulong addr, int value)
         {
             Assert.IsTrue(P.TryWrite(addr, BitConverter.GetBytes(value)));
@@ -851,5 +858,65 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(HandlerAddr + 0x40, r.Rip, "SIGUSR1 oben");
         Assert.AreEqual(HandlerAddr, Read64(f, r.Rdx + 40 + 128), "darunter der SIGSEGV-Handler");
         Assert.IsFalse(f.P.SignalWaiting);
+    }
+
+    [TestMethod]
+    public void CpuZeitJeThreadUndSummeBeendeterThreads()
+    {
+        var f = new Fixture();
+        long mainNs = 1_500_000_000, childNs = 2_250_000_000;
+        f.P.MainThread.CpuNanosSource = () => mainNs;
+        LinuxThread child = f.Clone(f.Mem, f.Mem + 4);
+        child.CpuNanosSource = () => childNs;
+
+        const ulong Ts = 0x100, Ru = 0x200;
+        Assert.AreEqual(0L, f.Call(LinuxSyscalls.ClockGettime, 3, f.Mem + Ts));
+        Assert.AreEqual(1L, f.Read64(f.Mem + Ts));
+        Assert.AreEqual(500_000_000L, f.Read64(f.Mem + Ts + 8), "CLOCK_THREAD_CPUTIME_ID: Hauptthread");
+        Assert.AreEqual(0L, f.Call(LinuxSyscalls.ClockGettime, 2, f.Mem + Ts));
+        Assert.AreEqual(3L, f.Read64(f.Mem + Ts));
+        Assert.AreEqual(750_000_000L, f.Read64(f.Mem + Ts + 8), "CLOCK_PROCESS_CPUTIME_ID: Summe 3,75 s");
+
+        Assert.AreEqual(0L, f.Call(LinuxSyscalls.Getrusage, 0, f.Mem + Ru));
+        Assert.AreEqual(3L, f.Read64(f.Mem + Ru));
+        Assert.AreEqual(750_000L, f.Read64(f.Mem + Ru + 8));
+        Assert.AreEqual(0L, f.Read64(f.Mem + Ru + 16), "ru_stime 0");
+        Assert.AreEqual(0L, f.Call(LinuxSyscalls.Getrusage, 1, f.Mem + Ru));
+        Assert.AreEqual(1L, f.Read64(f.Mem + Ru), "RUSAGE_THREAD");
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, f.Call(LinuxSyscalls.Getrusage, 5, f.Mem + Ru));
+
+        // Kindthread endet: sein Endwert bleibt in der Summe, auch wenn die Quelle weiterläuft oder weg ist.
+        Fixture.RunAs(child, () => f.Call(LinuxSyscalls.Exit, 0)).Join();
+        childNs = 9_000_000_000;
+        Assert.AreEqual(3_750_000_000L, f.P.ProcessCpuNanos);
+        mainNs = 2_000_000_000;
+        Assert.AreEqual(4_250_000_000L, f.P.ProcessCpuNanos);
+    }
+
+    [TestMethod]
+    public void CpuZeitThreadGoneFriertEndwertEin()
+    {
+        var f = new Fixture();
+        long childNs = 1_000_000_000;
+        LinuxThread child = f.Clone(f.Mem, f.Mem + 4);
+        child.CpuNanosSource = () => childNs;
+        f.P.ThreadGone(child); // Brücke räumt einen abgebrochenen Kernelthread auf
+        childNs = 5_000_000_000;
+        Assert.AreEqual(1_000_000_000L, f.P.ProcessCpuNanos, "Endwert zählt einmal, spätere Quelle nicht");
+        f.P.ThreadGone(child); // zweiter Aufruf ändert nichts
+        Assert.AreEqual(1_000_000_000L, f.P.ProcessCpuNanos);
+    }
+
+    [TestMethod]
+    public void GetrusageFehlerfaelleEfaultUndChildren()
+    {
+        var f = new Fixture();
+        f.P.MainThread.CpuNanosSource = () => 2_000_000_000;
+        const ulong Ru = 0x200;
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, f.Call(LinuxSyscalls.Getrusage, 0, 0xFFFF_0000_0000UL), "RUSAGE_SELF, ungültiger Zeiger");
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, f.Call(LinuxSyscalls.Getrusage, 1, 0xFFFF_0000_0000UL), "RUSAGE_THREAD, ungültiger Zeiger");
+        Assert.AreEqual(0L, f.Call(LinuxSyscalls.Getrusage, unchecked((ulong)-1L), f.Mem + Ru), "RUSAGE_CHILDREN");
+        Assert.AreEqual(0L, f.Read64(f.Mem + Ru), "ru_utime.tv_sec 0");
+        Assert.AreEqual(0L, f.Read64(f.Mem + Ru + 8), "ru_utime.tv_usec 0");
     }
 }

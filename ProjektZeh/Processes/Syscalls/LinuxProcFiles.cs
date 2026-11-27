@@ -33,6 +33,9 @@ internal sealed class LinuxProcSnapshot
 
     public int Threads { get; init; } = 1;
 
+    /// <summary>V29c: CPU-Zeit des Prozesses in Nanosekunden (utime in /proc/&lt;pid&gt;/stat; stime bleibt 0).</summary>
+    public long CpuNanos { get; init; }
+
     public ulong SigPending { get; init; }
 
     public ulong SigBlocked { get; init; }
@@ -86,7 +89,7 @@ internal interface ILinuxProcView
 /// &lt;pid&gt; ist jeder Prozess desselben Laufs (auch Kinder: Ladybirds Prozessmanager liest die Dateien seiner Helfer). Inhalt entsteht wie
 /// bei Linux (seq_file) bei jedem Lesen ab Position 0 neu; Ladybird liest /proc/stat mit seek(0) wiederholt aus derselben Datei.
 /// <para>
-/// Abweichungen: CPU-Zeiten je Prozess zählt der Kernel nicht (utime/stime 0; /proc/stat zählt alle Zeit als idle einer CPU, passend zu
+/// Abweichungen: CPU-Zeit je Prozess: utime aus der Laufzeit der Kernelthreads (V29c), stime/cutime/cstime 0; /proc/stat zählt alle Zeit als idle einer CPU, passend zu
 /// sched_getaffinity); keine Unterverzeichnisse <c>task</c>, kein <c>/proc/self/mem</c> (Ladybirds Absturzbehandler kommt ohne aus),
 /// kein Auflisten von /proc. Alle Dateien sind nur lesbar (Modus 0444, Größe 0 wie Linux).
 /// </para>
@@ -569,7 +572,7 @@ internal static class LinuxProcFiles
             "0", "-1", // tty_nr, tpgid
             "4194304", // flags (PF_RANDOMIZE wie ein gewöhnlicher Prozess)
             "0", "0", "0", "0", // minflt, cminflt, majflt, cmajflt
-            "0", "0", "0", "0", // utime, stime, cutime, cstime (nicht gezählt)
+            (s.CpuNanos / 10_000_000).ToString(CultureInfo.InvariantCulture), "0", "0", "0", // utime (CLK_TCK 100), stime, cutime, cstime (nicht gezählt)
             "20", "0", // priority, nice
             s.Threads.ToString(CultureInfo.InvariantCulture),
             "0", "0", // itrealvalue, starttime
