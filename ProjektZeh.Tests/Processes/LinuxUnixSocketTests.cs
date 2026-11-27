@@ -313,6 +313,27 @@ public sealed class LinuxUnixSocketTests
     }
 
     [TestMethod]
+    [DataRow(Seqpacket)]
+    [DataRow(Stream)]
+    public void EinByteNachrichtenZaehlenMitVerwaltungsaufschlag(int type)
+    {
+        // P2-2: ohne Aufschlag nähmen 212992 Nachrichten zu je 1 Byte an (rund 19 MiB Heap); Linux knapp 300.
+        var f = new Fixture();
+        var (a, b) = f.SocketPair(type | SockNonblock);
+        int accepted = 0;
+        while (f.SendMsg(a, B("x")) == 1)
+        {
+            accepted++;
+            Assert.IsTrue(accepted < 1000, "Aufschlag fehlt: Warteschlange unbegrenzt");
+        }
+
+        Assert.AreEqual(LinuxUnixSocket.Capacity / (LinuxUnixSocket.MessageOverhead + 1), accepted, "Nachrichten bis zur Puffergrenze");
+        Assert.AreEqual(1, f.RecvMsg(b, 1, 0, out _, out _, out _));
+        Assert.AreEqual(1, f.SendMsg(a, B("x")), "nach dem Lesen wieder Platz (Aufschlag freigegeben)");
+        Assert.AreEqual(-EAGAIN, f.SendMsg(a, B("x")));
+    }
+
+    [TestMethod]
     public void SeqpacketLeereNachrichtenSindAnzahlBegrenzt()
     {
         var f = new Fixture();
