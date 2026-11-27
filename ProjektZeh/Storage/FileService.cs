@@ -180,6 +180,40 @@ internal sealed class FileService
 
     public ResultObject<byte[]> ReadBytes(string? path, int maximumLength) => StorageLock.Run(() => ReadBytesStorageLocked(path, maximumLength));
 
+    /// <summary>
+    /// V28: liest von einem ELF-Programm nur den Teil, den der Lader braucht (<see cref="Processes.ElfFile.LoadedLength"/>); die Grenze
+    /// gilt für diesen Teil. Ladybirds WebContent (175 MB, davon 117 MB ladbar) passt so unter 128 MiB, ohne die Debugabschnitte zu lesen.
+    /// </summary>
+    public ResultObject<byte[]> ReadExecutable(string? path, int maximumLength) => StorageLock.Run(() => ReadExecutableStorageLocked(path, maximumLength));
+
+    private ResultObject<byte[]> ReadExecutableStorageLocked(string? path, int maximumLength)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumLength);
+        var resolved = ResolvePath(path);
+        if (!resolved.IsOK()) return ResultObjectFactory.CreateFailure<byte[]>(resolved.Status);
+        try
+        {
+            AuthorizeStorageLocked(resolved.Value!, FilePermission.Read);
+            using var stream = new FileStream(resolved.Value!, FileMode.Open, FileAccess.Read, FileShare.Read);
+            long ReadAt(long offset, Span<byte> dst)
+            {
+                stream.Position = offset;
+                return stream.Read(dst);
+            }
+
+            _ = Processes.ElfFile.LoadedLength(stream.Length, ReadAt, out long needed);
+            if (needed < 0 || needed > maximumLength)
+                return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.InvalidArgument, "Das Programm ist zu gross (ladbarer Teil ueber " + maximumLength + " Bytes).");
+            if (AllocateBuffer((int)needed) is not { } data) return OutOfMemory<byte[]>();
+            long read = Processes.ElfFile.ReadFull(ReadAt, 0, data);
+            return ResultObjectFactory.CreateSuccess(read == data.Length ? data : data.AsSpan(0, (int)read).ToArray());
+        }
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
+        {
+            return ResultObjectFactory.CreateFromException<byte[]>(exception);
+        }
+    }
+
     private ResultObject<byte[]> ReadBytesStorageLocked(string? path, int maximumLength)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumLength);

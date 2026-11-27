@@ -101,7 +101,8 @@ internal interface ILinuxSpawn
 /// </summary>
 internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 {
-    /// <summary>Größte Datei, die execve lädt (wie <c>CosmosLinuxRun.MaxFileSize</c>).</summary>
+    /// <summary>Größter ladbarer Teil einer Datei, den execve liest (V28: Kopf bis Ende des letzten Segments, ohne Debugabschnitte;
+    /// wie <c>CosmosLinuxRun.MaxFileSize</c>). Der Teil liegt beim Laden zweimal im Speicher (Puffer und Seiten).</summary>
     public const int MaxExecFileSize = 128 << 20;
 
     private const int ORdOnly = 0;
@@ -142,6 +143,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         _uid = parent._uid;
         _gid = parent._gid;
         ExePath = parent.ExePath;
+        StartPath = parent.StartPath;
         HwCap = parent.HwCap;
         CopySignals(parent.Signals, Signals, resetHandlers: false);
         InheritFiles(parent);
@@ -307,6 +309,17 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         }
 
         long read = ReadExecutable(path, out byte[] elf);
+        bool startsSelf = ExePath != null && string.Equals(LinuxPath.Normalize(path), ExePath, StringComparison.OrdinalIgnoreCase);
+        if (read == -LinuxErrno.ENOENT && ExePath != null && StartPath != null
+            && string.Equals(LinuxPath.Normalize(path), StartPath, StringComparison.OrdinalIgnoreCase))
+        {
+            // V26: argv[0] ist der Pfad, unter dem der Starter das Programm kennt (Gastprobe: "exec" im Arbeitsverzeichnis, Shell:
+            // Kernelpfad außerhalb der Prozesswurzel). Ein Programm, das sich damit selbst startet, findet es unter seinem Pfad in der Wurzel.
+            path = ExePath;
+            startsSelf = true;
+            read = ReadExecutable(path, out elf);
+        }
+
         if (read < 0)
         {
             return read;
@@ -321,7 +334,16 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         UserImage image;
         try
         {
-            image = ElfLoader.Load(elf, argv, envp, new ElfLoadOptions { Random = random, HwCap = HwCap, ExecFn = path, Uid = _uid, Gid = _gid });
+            // V25: Der Interpreter (PT_INTERP) kommt wie das Programm aus dem Dateisystem des Prozesses.
+            image = ElfLoader.Load(elf, argv, envp, new ElfLoadOptions
+            {
+                Random = random,
+                HwCap = HwCap,
+                ExecFn = path,
+                Uid = _uid,
+                Gid = _gid,
+                ReadInterpreter = ReadExecutable,
+            });
         }
         catch (ElfLoadException exception)
         {
@@ -329,6 +351,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             {
                 ElfLoadError.ArgumentsTooLong => -E2Big,
                 ElfLoadError.InvalidArgument => -LinuxSyscalls.EINVAL,
+                ElfLoadError.InterpreterUnavailable => -exception.Errno,
                 _ => -ENoExec,
             };
         }
@@ -343,6 +366,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         {
             HwCap = HwCap,
             ExePath = path,
+            // V26: Nur ein Neustart des eigenen Programms behält den Startpfad; ein anderes Programm hat keinen (sonst würde ein späteres
+            // execve auf argv[0] fälschlich das ursprüngliche Programm statt ENOENT starten).
+            StartPath = startsSelf ? StartPath : null,
         };
         if (!next.Load(image, elf).IsOK())
         {
@@ -372,7 +398,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         return 0;
     }
 
-    /// <summary>Liest das Programm über das Dateisystem des Prozesses (nur reguläre Dateien bis <see cref="MaxExecFileSize"/>).</summary>
+    /// <summary>Liest den ladbaren Teil des Programms über das Dateisystem des Prozesses (reguläre Dateien, Teil bis <see cref="MaxExecFileSize"/>).</summary>
     private long ReadExecutable(string path, out byte[] elf)
     {
         elf = [];
@@ -397,30 +423,44 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                     return -LinuxSyscalls.EACCES;
                 }
 
-                if (st.Size > MaxExecFileSize || st.Size < 0)
+                // Kein Ausführrecht in keinem der drei Teile: -EACCES (Linux), vor der Größen- und ELF-Prüfung.
+                if ((st.Mode & 0x49) == 0)
+                {
+                    return -LinuxSyscalls.EACCES;
+                }
+
+                if (st.Size < 0)
                 {
                     return -LinuxSyscalls.ENOMEM;
                 }
 
-                byte[] bytes = new byte[st.Size];
-                int done = 0;
-                while (done < bytes.Length)
+                // V28: nur Kopf, Programmköpfe und Segmente; die Grenze gilt für diesen Teil, nicht für Debugabschnitte dahinter.
+                ILinuxFile f = file;
+                long ReadAt(long offset, Span<byte> dst)
                 {
-                    long n = file.Read(bytes.AsSpan(done));
-                    if (n < 0)
-                    {
-                        return n;
-                    }
-
-                    if (n == 0)
-                    {
-                        break;
-                    }
-
-                    done += (int)n;
+                    long at = f.Seek(offset, 0);
+                    return at < 0 ? at : f.Read(dst);
                 }
 
-                elf = done == bytes.Length ? bytes : bytes.AsSpan(0, done).ToArray();
+                r = ElfFile.LoadedLength(st.Size, ReadAt, out long needed);
+                if (r < 0)
+                {
+                    return r;
+                }
+
+                if (needed > MaxExecFileSize)
+                {
+                    return -LinuxSyscalls.ENOMEM;
+                }
+
+                byte[] bytes = new byte[needed];
+                r = ElfFile.ReadFull(ReadAt, 0, bytes);
+                if (r < 0)
+                {
+                    return r;
+                }
+
+                elf = r == bytes.Length ? bytes : bytes.AsSpan(0, (int)r).ToArray();
                 return 0;
             }
             finally

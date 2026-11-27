@@ -113,6 +113,9 @@ internal sealed class LinuxUnixNames
     private readonly Dictionary<string, object> _paths = new(StringComparer.Ordinal);
     private int _autobind;
 
+    /// <summary>V27: Ports von AF_INET-Sockets (nur Loopback) desselben Laufs.</summary>
+    public LinuxInetPorts Ports { get; } = new();
+
     /// <summary>Bytes eins zu eins in Zeichen (ohne Encoding.Latin1, das im Kernel nicht belegt ist).</summary>
     public static string KeyOf(ReadOnlySpan<byte> name)
     {
@@ -223,7 +226,10 @@ internal sealed class LinuxUnixNames
         return 0;
     }
 
-    /// <summary>Gibt alle Namen von <paramref name="owner"/> frei (letztes close des Sockets); die Datei eines Pfadnamens bleibt.</summary>
+    /// <summary>
+    /// Gibt alle Unix-Namen von <paramref name="owner"/> frei (letztes close des Sockets); die Datei eines Pfadnamens bleibt. Ports von AF_INET
+    /// gibt das Socket selbst über <see cref="LinuxInetPorts.Release"/> frei (V27b, ohne Durchsuchen der Porttabellen).
+    /// </summary>
     public void Release(object owner)
     {
         lock (_gate)

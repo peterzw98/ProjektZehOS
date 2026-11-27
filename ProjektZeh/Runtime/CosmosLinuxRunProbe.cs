@@ -22,6 +22,10 @@ namespace ProjektZeh.Runtime;
 /// Image), sonst ein leeres Dateisystem im Arbeitsspeicher. Die Zeile <c>LINUX_RUN root</c> nennt, welches. Arbeitsverzeichnis ist
 /// <see cref="ProbeCwd"/> darin.
 /// </para>
+/// <para>
+/// V25: Einträge, deren Name mit "/" beginnt (<c>bundle --file /lib/ld-musl-x86_64.so.1=…</c>), sind keine Programme, sondern Dateien,
+/// die vor jedem Programm an diesen Pfad seiner Wurzel kommen (Interpreter und Bibliotheken dynamisch gelinkter Programme).
+/// </para>
 /// </summary>
 internal static unsafe partial class CosmosLinuxRunProbe
 {
@@ -64,17 +68,31 @@ internal static unsafe partial class CosmosLinuxRunProbe
             }
 
             uint entries = BinaryPrimitives.ReadUInt32LittleEndian(bundle.Slice(4));
+            var files = new System.Collections.Generic.List<(string Path, byte[] Content)>();
+            var programs = new System.Collections.Generic.List<(string Name, byte[] Elf)>();
             int at = 8;
             for (uint i = 0; i < entries; i++)
             {
                 // Eintrag: Namenslänge (u32), Name (UTF-8), Größe (u32), Inhalt.
                 int nameLength = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bundle.Slice(at)));
-                string name = Encoding.UTF8.GetString(bundle.Slice(at + 4, nameLength));
+                string entryName = Encoding.UTF8.GetString(bundle.Slice(at + 4, nameLength));
                 at += 4 + nameLength;
-                int size = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bundle.Slice(at)));
-                byte[] elf = bundle.Slice(at + 4, size).ToArray();
-                at += 4 + size;
+                int entrySize = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(bundle.Slice(at)));
+                byte[] content = bundle.Slice(at + 4, entrySize).ToArray();
+                at += 4 + entrySize;
+                if (entryName.StartsWith('/'))
+                {
+                    files.Add((entryName, content));
+                }
+                else
+                {
+                    programs.Add((entryName, content));
+                }
+            }
 
+            foreach ((string name, byte[] elf) in programs)
+            {
+                int size = elf.Length;
                 Write("begin " + name + " size=" + size);
                 string? root = StorageLock.Run(() => VfsManager.TryGetMount("/data", out _)) ? RootBase + "/" + name : null;
                 Write("root " + name + " " + (root ?? "memory"));
@@ -92,6 +110,16 @@ internal static unsafe partial class CosmosLinuxRunProbe
                         return true;
                     });
                     exePath = "/bin/" + name;
+                    foreach ((string path, byte[] content) in files)
+                    {
+                        string target = root + path;
+                        StorageLock.Run(() =>
+                        {
+                            Directory.CreateDirectory(target.Substring(0, target.LastIndexOf('/')));
+                            File.WriteAllBytes(target, content);
+                            return true;
+                        });
+                    }
                 }
 
                 CosmosLinuxRun.Outcome outcome = CosmosLinuxRun.Run(elf, [name, "a1", "b 2"], CosmosLinuxRun.Environment, new SerialOutput(), TimeoutSeconds,

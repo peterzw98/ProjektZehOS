@@ -87,7 +87,10 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     /// </summary>
     public const long DefaultQuotaBytes = 64L << 20;
 
-    private const uint DirectoryMode = 0x1ED, FileMode = 0x1A4, ReadOnlyFileMode = 0x124;
+    // FAT kennt keine Modi: Vorhandene Dateien gelten als ausführbar (0755, schreibgeschützt 0555), damit execve sie startet. Dateien,
+    // die der Prozess selbst anlegt, behalten den Modus aus open (V26: execve einer 0644-Datei ist -EACCES wie unter Linux).
+    private const uint DirectoryMode = 0x1ED, FileMode = 0x1ED, ReadOnlyFileMode = 0x16D;
+    private readonly Dictionary<string, uint> _createdModes = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _root;
     private readonly ILinuxDiskLinks _links;
 
@@ -304,6 +307,11 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             case LinuxNodeKind.File:
                 var info = new FileInfo(Full(path));
                 uint mode = (info.Attributes & FileAttributes.ReadOnly) != 0 ? ReadOnlyFileMode : FileMode;
+                if (_createdModes.TryGetValue(path, out uint created))
+                {
+                    mode = (info.Attributes & FileAttributes.ReadOnly) != 0 ? created & ~0x92u : created;
+                }
+
                 return new LinuxStoreNode(kind, info.Length, mode, ToNanos(info.LastWriteTimeUtc));
             case LinuxNodeKind.Directory:
                 return new LinuxStoreNode(kind, 4096, DirectoryMode, 0);
@@ -456,6 +464,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
 
                 var stream = new FileStream(Full(path), System.IO.FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, 1);
                 file = new DiskFile(this, stream, AttachStorageLocked(path));
+                _createdModes[path] = mode & LinuxMode.PermissionMask;
                 return 0;
             }
         }
@@ -527,6 +536,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
+                _createdModes.Remove(path);
                 LinuxNodeKind kind = KindStorageLocked(path);
                 if (kind == LinuxNodeKind.Missing)
                 {
@@ -598,12 +608,50 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         {
             using (StorageLock.Enter())
             {
-                return RenameStorageLocked(from, to);
+                bool had = _createdModes.Remove(from, out uint movedMode);
+                _createdModes.Remove(to);
+                long renamed = RenameStorageLocked(from, to);
+                if (had)
+                {
+                    _createdModes[renamed == 0 ? to : from] = movedMode;
+                }
+
+                if (renamed == 0)
+                {
+                    MoveCreatedModesUnder(from, to);
+                }
+
+                return renamed;
             }
         }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return Errno(exception);
+        }
+    }
+
+    /// <summary>Wird ein Verzeichnis umbenannt, wandern die gemerkten Anlegemodi der Dateien darunter mit (Schlüssel sind Pfade).</summary>
+    private void MoveCreatedModesUnder(string from, string to)
+    {
+        string prefix = from.TrimEnd('/') + "/";
+        List<KeyValuePair<string, uint>>? moved = null;
+        foreach (KeyValuePair<string, uint> entry in _createdModes)
+        {
+            if (entry.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                (moved ??= new()).Add(entry);
+            }
+        }
+
+        if (moved == null)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<string, uint> entry in moved)
+        {
+            _createdModes.Remove(entry.Key);
+            _createdModes[string.Concat(to.TrimEnd('/'), "/", entry.Key.AsSpan(prefix.Length))] = entry.Value;
         }
     }
 

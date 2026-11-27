@@ -850,24 +850,93 @@ public sealed class LinuxUserProcessTests
     }
 
     [TestMethod]
-    public void MmapDateiFixedAbgelehntAltbestandBleibt()
+    public void MmapDateiFixedNurZumSchreibenOffenAltbestandBleibt()
     {
-        // Review Stufe c: Datei-MAP_FIXED darf den alten Bereich nicht entfernen, auch nicht bei einem Fehler wie O_WRONLY.
-        const ulong MapFixedFlag = 0x10;
+        // Review Stufe c, seit V25 mit Datei-MAP_FIXED: Ein Fehler, den Linux vorab erkennt (O_WRONLY), lässt den alten Bereich stehen.
         var (process, _) = StartWithFile(100);
-        long ro = OpenIcu(process, LinuxFileSystem.ORdOnly);
         long wo = OpenIcu(process, LinuxFileSystem.OWrOnly);
         ulong old = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, 2 * Page, ProtRW, MapAnon, ulong.MaxValue, 0);
         Assert.IsTrue(process.TryWrite(old, "alt"u8));
         Assert.IsTrue(process.TryWrite(old + Page, "zwei"u8));
-        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, old, 2 * Page, ProtR, MapPrivateFlag | MapFixedFlag, (ulong)wo, 0), "nur zum Schreiben offen");
-        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, old, 2 * Page, ProtR, MapPrivateFlag | MapFixedFlag, (ulong)ro, 0), "lesbar");
+        Assert.AreEqual(-LinuxSyscalls.EACCES, Sys(process, LinuxSyscalls.Mmap, old, 2 * Page, ProtR, MapPrivateFlag | MapFixedFlag, (ulong)wo, 0), "nur zum Schreiben offen");
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Sys(process, LinuxSyscalls.Mmap, old + 1, Page, ProtR, MapPrivateFlag | MapFixedFlag, (ulong)wo, 0), "Adresse nicht ausgerichtet");
         byte[] a = new byte[3], b = new byte[4];
         Assert.IsTrue(process.TryRead(old, a));
         Assert.IsTrue(process.TryRead(old + Page, b));
         Assert.AreEqual("alt", System.Text.Encoding.ASCII.GetString(a));
         Assert.AreEqual("zwei", System.Text.Encoding.ASCII.GetString(b));
         Assert.IsTrue(process.TryWrite(old, "neu"u8), "weiter beschreibbar");
+        Assert.AreEqual(0L, Sys(process, 8, (ulong)wo, 0, 1), "Dateiposition unverändert");
+        process.Destroy();
+    }
+
+    private const ulong MapFixedFlag = 0x10, ProtRX = 5;
+
+    [TestMethod]
+    public void MmapDateiFixedErsetztWieMuslLdso()
+    {
+        // V25: wie map_library in musl: erst die ganze Spanne ab Versatz 0 abbilden (mit dem Schutz des ersten Segments), dann jedes
+        // weitere Segment mit MAP_FIXED aus der Datei darüber, .bss anonym MAP_FIXED. Hinter dem Dateiende Nullen.
+        var (process, content) = StartWithFile(3 * (int)Page + 100);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        long span = Sys(process, LinuxSyscalls.Mmap, 0, 6 * Page, ProtR, MapPrivateFlag, (ulong)fd, 0);
+        Assert.IsTrue(span > 0, "Spanne " + span);
+        ulong b = (ulong)span;
+        Assert.IsTrue(process.TryWrite(b, "x"u8) == false, "Spanne nur lesbar");
+
+        // Code: Seite 1 der Datei an Seite 1, lesbar und ausführbar.
+        Assert.AreEqual((long)(b + Page), Sys(process, LinuxSyscalls.Mmap, b + Page, Page, ProtRX, MapPrivateFlag | MapFixedFlag, (ulong)fd, Page));
+        // Daten: Seiten 2 und 3 der Datei an Seite 4 (verschoben wie ein Datensegment), beschreibbar.
+        Assert.AreEqual((long)(b + (4 * Page)), Sys(process, LinuxSyscalls.Mmap, b + (4 * Page), 2 * Page, ProtRW, MapPrivateFlag | MapFixedFlag, (ulong)fd, 2 * Page));
+
+        byte[] got = new byte[Page];
+        Assert.IsTrue(process.TryRead(b + Page, got));
+        CollectionAssert.AreEqual(content.AsSpan((int)Page, (int)Page).ToArray(), got, "Code aus der Datei");
+        Assert.IsTrue(process.TryRead(b + (4 * Page), got));
+        CollectionAssert.AreEqual(content.AsSpan(2 * (int)Page, (int)Page).ToArray(), got, "Daten aus der Datei");
+        Assert.IsTrue(process.TryRead(b + (5 * Page), got));
+        CollectionAssert.AreEqual(content.AsSpan(3 * (int)Page, 100).ToArray(), got.AsSpan(0, 100).ToArray());
+        Assert.IsTrue(got.AsSpan(100).ToArray().All(x => x == 0), "hinter dem Dateiende Nullen");
+        Assert.IsTrue(process.TryWrite(b + (4 * Page), "w"u8), "Datensegment beschreibbar");
+        Assert.IsFalse(process.TryWrite(b + Page, "w"u8), "Code nicht beschreibbar (W^X)");
+        Assert.AreEqual(0L, Sys(process, 8, (ulong)fd, 0, 1), "Dateiposition unverändert");
+
+        // Schreibbar und ausführbar zugleich lehnt ZehOS ab (W^X), bevor der Altbestand weicht.
+        Assert.AreEqual(-LinuxSyscalls.ENOMEM, Sys(process, LinuxSyscalls.Mmap, b + Page, Page, 7, MapPrivateFlag | MapFixedFlag, (ulong)fd, Page), "W^X");
+        Assert.IsTrue(process.TryRead(b + Page, got), "Code bleibt");
+        CollectionAssert.AreEqual(content.AsSpan((int)Page, (int)Page).ToArray(), got);
+        Assert.AreEqual(0L, Sys(process, 3, (ulong)fd));
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MapFixedAnonymousOverProgramAndStackReplacesLikeLinux()
+    {
+        var (process, _, image, _) = Start();
+
+        // Linux: MAP_FIXED ersetzt jeden Bereich, auch Programmcode und Stack; der Inhalt ist danach null, der Schutz der neue.
+        Assert.IsTrue(process.TryRead(Code, new byte[1]));
+        Assert.AreEqual((long)Data, Sys(process, LinuxSyscalls.Mmap, Data, Page, ProtRW, MapAnon | MapFixedFlag, ulong.MaxValue, 0));
+        byte[] got = new byte[16];
+        Assert.IsTrue(process.TryRead(Data, got));
+        Assert.IsTrue(got.All(x => x == 0), "Datenseite ersetzt: Inhalt null");
+
+        Assert.AreEqual((long)Code, Sys(process, LinuxSyscalls.Mmap, Code, Page, ProtRW, MapAnon | MapFixedFlag, ulong.MaxValue, 0));
+        Assert.IsTrue(process.TryWrite(Code, "x"u8), "Codeseite ersetzt: jetzt beschreibbar");
+
+        ulong stackPage = image.StackPointer & ~(Page - 1);
+        Assert.AreEqual((long)stackPage, Sys(process, LinuxSyscalls.Mmap, stackPage, Page, ProtRW, MapAnon | MapFixedFlag, ulong.MaxValue, 0));
+        Assert.IsTrue(process.TryRead(stackPage, got));
+        Assert.IsTrue(got.All(x => x == 0), "Stackseite ersetzt: Argumente weg");
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapOfTerminalIsNoDevWithoutReading()
+    {
+        var (process, _) = StartWithFile(1);
+        Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, 0, 0), "Terminal (nicht suchbar): ENODEV");
+        Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, Code, Page, ProtR, MapPrivateFlag | MapFixedFlag, 0, 0), "mit MAP_FIXED ebenso");
         process.Destroy();
     }
 

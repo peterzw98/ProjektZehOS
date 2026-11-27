@@ -23,7 +23,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 20 | `writev` | höchstens 1024 Einträge, Summe über 0x7ffff000 ergibt `-EINVAL` (Abweichung: Linux kürzt stattdessen), Einträge werden vorab gelesen |
 | 60, 231 | `exit`, `exit_group` | `ILinuxProcess.Exit(code & 0xff)` |
 | 12 | `brk` | wie Linux: bei Fehler der alte Wert, nie ein Fehlercode |
-| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), `MAP_SHARED` einer memfd geteilt (V17), Datei mit `MAP_FIXED` `-EINVAL`; fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
+| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), `MAP_SHARED` einer memfd geteilt (V17), Datei mit `MAP_FIXED` ersetzt den Bereich (V25, siehe unten); fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
 | 11, 10 | `munmap`, `mprotect` | Länge wird auf Seiten aufgerundet; `-EINVAL` bei unausgerichteter Adresse, Länge oder Adresse über 2^47, unbekannten `prot`-Bits, `munmap` mit Länge 0; `mprotect` mit Länge 0 liefert 0; `mprotect` ohne Abdeckung `-ENOMEM` |
 | 158 | `arch_prctl` | `ARCH_SET_FS` (nur Adressen der Benutzerhälfte, sonst `-EPERM`), `ARCH_GET_FS`; sonst `-EINVAL` |
 | 218 | `set_tid_address` | merkt die Adresse je Thread, liefert die Thread-ID (V10) |
@@ -95,7 +95,7 @@ Grenzen (Review V2, bewusst offen):
 - `LinuxUserProcess` (`ProjektZeh/Processes/LinuxUserProcess.cs`, plattformunabhängig, Hosttests `LinuxUserProcessTests`): `AddressSpaceMap` plus `IUserPages`
   (Frames und Abbildung). Beim Laden bekommen nur Seiten mit Dateibytes und der vorbereitete Teil des Stacks einen Frame; alle anderen (.bss, übriger Stack,
   `brk`, `mmap`) entstehen genullt beim ersten Zugriff (Seitenfehler oder Kernelzugriff über `IUserMemory`, der dieselben Rechte prüft und alles oder nichts kopiert).
-  `mprotect` behält Frame und Inhalt (auch über `PROT_NONE`). `PROT_WRITE|PROT_EXEC` scheitert (W^X: `mmap` `-ENOMEM`, `mprotect` `-ENOMEM`).
+  `mprotect` behält Frame und Inhalt (auch über `PROT_NONE`). `PROT_WRITE|PROT_EXEC` scheitert (W^X: `mmap` `-ENOMEM`, `mprotect` `-ENOMEM`; Abweichung von Linux, bewusst: Ladybird läuft ohne JIT, ein Programm mit JIT bräuchte einen Cosmos-Patch).
   Anonyme Abbildungen ab 16 TiB (`MmapBase`), `brk` wächst bis an die nächste Belegung; höchstens 512 MiB Frames je Prozess, darüber Abbruch.
 - Deskriptoren 0–2: `TerminalDescriptor` schreibt zeilenweise ins Terminal (UTF-8 erst am Zeilenende, Zeilen über 4096 Bytes werden geteilt); weitere Nummern sind Dateien (V8).
   Lesen (fd 0) über `LinuxTerminalSession`: Enter-Zeilen des Fensters mit `\n`, Strg+D Eingabeende; ohne Sitzung (Gastprobe) leer wie `/dev/null`.
@@ -120,12 +120,12 @@ Grenzen (Review V2, bewusst offen):
   UTF-16-Einheiten, nicht Zeichenbreiten; Zeichen außerhalb der BMP (Emoji) oder breite CJK-Zeichen verschieben Cursor und `ESC [ 6 n`-Spalte.
   Nicht umgesetzt: VMIN/VTIME (immer wie VMIN 1), mehrzeilige Bearbeitung, Echo im Rohmodus.
   Ohne Sitzung (Gastprobe über die serielle Schnittstelle) bleibt `-ENOTTY`: stdout voll gepuffert wie bei einer Umleitung, die erwarteten Ausgaben bleiben gleich.
-- Brücke im Kernel: `ProjektZeh/Runtime/CosmosLinuxRun.cs`, nur mit `-p:ZehOSLinuxRun=true`; dann gibt es `run <datei> [argumente...]` (ELF bis 128 MiB,
+- Brücke im Kernel: `ProjektZeh/Runtime/CosmosLinuxRun.cs`, nur mit `-p:ZehOSLinuxRun=true`; dann gibt es `run <datei> [argumente...]` (ladbarer Teil des ELF bis 128 MiB,
   ein Programm zugleich, eigener Kernelthread mit eigener `UserPageTable`). Aus der Shell läuft es neben der Ereignisschleife (V3 stdin): der Befehl kehrt
   sofort zurück, die Shell holt die Ausgabe je Bild ab, Enter-Zeilen gehen an fd 0, Strg+C oder Esc bricht ab (`signal 2`), ein zweites Strg+C gibt das
   Fenster frei, falls das Programm nicht endet; ohne Zeitgrenze. Die Gastprobe läuft weiter synchron mit Zeitgrenze (120 s, danach `signal 9`). AT_RANDOM aus `HardwareRandom` (ohne Ersatz),
   AT_HWCAP aus CPUID. Ein Fehler im Ring 3, den der Prozess nicht als Seitenfehler bedient, beendet nur das Programm (Status `signal <n>` wie Linux: #PF/#GP 11,
-  #UD 4, #DE 8); eine Ausnahme in der Brücke ebenso (`signal 9`).
+  #UD 4, #DE 8, #SS/#NP/#AC 7), seit V24 nur noch, wenn kein Handler ihn nimmt (Abschnitt „Ausnahmen als Signal (V24)“); eine Ausnahme in der Brücke ebenso (`signal 9`).
 - Gastprobe: `-p:ZehOSLinuxRunProbe=true -p:ZehOSLinuxRunBundle=<bündel>` startet beim Boot die Programme eines Bündels (`scripts/test-linux-run.py`).
   Pin: `story/ladybird-cosmos` (Patches `user-cr3` u. a.).
 
@@ -208,6 +208,16 @@ Grenzen (Review V2, bewusst offen):
   auf der Platte nur mit angemeldeter Sitzung, Schreibrecht auf die Wurzel und Verwaltungsrecht (Eigentümer oder Administrator) auf die Wurzel und jeden zugeordneten
   Eintrag darunter (höchstens 4096 Einträge). Nie Wurzel: die Verwaltungswurzel selbst, Komponenten mit `.zehos` am Anfang und im Root-Profil alles unter `/etc`, `/var`
   und `/boot`. Sonst `cause='ProcessRootDenied'`. Einträge ohne Rechtezuordnung (vom Programm angelegt) bleiben erlaubt; zwischen Prüfung und Lauf kann sich der Baum ändern.
+- Bündel auf die Platte (V28): `scripts/linux-root-disk.py <buendel.tar[.zst]> <platte.qcow2> --dest lb --strip 1` legt ein tar-Bündel als `/data/lb` auf eine
+  neue FAT32-Platte (MBR, Typ `0x0C`, jeder Name mit langem Eintrag, damit Kleinschreibung erhalten bleibt). FAT kennt keine Links: Symlinks und harte Links werden
+  zu Kopien (absolute Ziele ab der Bündelwurzel wie in der Prozesswurzel), fehlende Ziele, Ordnerkreise, Namen über 255 Zeichen, Pfade ab 4096 Bytes, in FAT
+  verbotene Zeichen, Punkt oder Leerzeichen am Ende, `.zehos`-Teile, Namen, die sich nur in der Schreibweise unterscheiden, Einträge unter einem Link oder
+  einer Datei und Namen, die kein UTF-8 sind, brechen vorher ab; ein Abbruch beim Schreiben lässt kein halbes Image zurück.
+  `scripts/test-linux-root-disk-guest.py` startet ein Programm daraus im Desktop-Terminal (`cd /data/lb`, `run …`). Geprüft (27.11., KVM smp 1, Testbau `ZehOSLinuxRun`):
+  Name mit 199 Zeichen, gemischte und kleine Schreibweise in `readdir`, aufgelöste Datei- und Ordnerlinks, Datei mit 20 MB. Grenzen: Ausführungsrechte gehen
+  verloren (vorhandene Dateien melden 0755, V26). `run` und `execve` lesen vom Programm nur Kopf, Programmköpfe und die Dateibytes von `PT_LOAD` und
+  `PT_INTERP` (`ElfFile.LoadedLength`); die Grenze von 128 MiB gilt für diesen Teil, Debugabschnitte dahinter zählen nicht (Ladybirds `WebContent`:
+  175 MB Datei, 117 MB ladbar). Der Teil liegt beim Laden zweimal im Speicher (Puffer und Seiten); Seiten erst beim Zugriff aus der Datei zu füllen steht aus.
 - Gastprobe: jedes Programm bekommt wie bei `run-linux.py` ein frisches Verzeichnis, `/data/linuxrun/<name>` (wenn `/data` eingehängt ist, sonst Arbeitsspeicher);
   die serielle Zeile `LINUX_RUN root <name> <wurzel|memory>` nennt es. Arbeitsverzeichnis ist der Unterordner `/w` darin (wird angelegt), weil `run-linux.py`
   ebenfalls in einem Unterordner startet: In "/" zeigte `ls .` den virtuellen Ordner `dev`, und `s1/dirs` erwartet vor `/d/e` noch einen Ordnernamen. Das Gastskript startet mit einem frischen Datenimage; ein zweiter Lauf auf demselben Image
@@ -303,14 +313,13 @@ Ladybird sucht seine ICU-Daten (`icudt78l.dat`, 27 MB) über `readlink("/proc/se
 - `readlink`/`readlinkat` auf `/proc/self/exe` oder `/proc/<eigene PID>/exe` (nach Normalisierung) liefern den Programmpfad im Prozess. `run` setzt ihn
   aus dem Pfad der Shell relativ zur Prozesswurzel: `cd /data/app`, `run bin/js` ergibt `/bin/js`. Liegt das Programm außerhalb der Wurzel
   (`run /data/t/js` aus `/data/app`) oder läuft der Prozess ohne Wurzel auf der Platte (Shell in `/` oder direkt auf einem Laufwerk), gibt es den
-  Link nicht (`-ENOENT`). Sonst gibt es kein `/proc`.
+  Link nicht (`-ENOENT`). Seit V29 auch `/proc/<pid>/exe` anderer Prozesse des Laufs; das übrige `/proc` steht im Abschnitt V29.
 - `mmap` mit Datei-fd ist eine **Kopie**: Der Bereich wird anonym belegt, ab dem Versatz (seitenausgerichtet, sonst `-EINVAL`) wie mit `pread` gefüllt,
   hinter dem Dateiende mit Nullen, und erst danach auf den gewünschten Schutz gesetzt. Die Dateiposition bleibt. Das ist `MAP_PRIVATE` bis auf einen
   Punkt: Spätere Änderungen an der Datei sieht die Abbildung nicht. `MAP_SHARED` geht deshalb nur ohne `PROT_WRITE`; beschreibbar geteilt bleibt
   `-ENODEV` (nichts flösse in die Datei zurück). Weitere Fehler: Terminal und Verzeichnis `-ENODEV`, nur zum Schreiben geöffnet `-EACCES`,
   unbekannter fd `-EBADF`. Seiten hinter dem Dateiende lesen sich als Nullen statt `SIGBUS`; über 2 GiB hinaus bleibt der Rest Null.
-- `MAP_FIXED` mit Datei-fd liefert `-EINVAL` (Abweichung; der alte Bereich bleibt unberührt). Nur ein dynamischer Lader bräuchte es, und `PT_INTERP`
-  wird abgelehnt. Scheitert die Kopie mittendrin (Speichermangel `-ENOMEM`, Lesefehler, Abbruch `-EINTR`), gibt `mmap` den Bereich frei und meldet den Fehler;
+- `MAP_FIXED` mit Datei-fd: seit V25 erlaubt (siehe „Dynamisch gelinkte Programme (V25)“). Scheitert die Kopie mittendrin (Speichermangel `-ENOMEM`, Lesefehler, Abbruch `-EINTR`), gibt `mmap` den Bereich frei und meldet den Fehler;
   eine teilweise gefüllte Abbildung bleibt nie zurück.
 - Die Kopie belegt sofort Speicher in voller Länge (ICU: 27 MB von 512 MiB je Programm) und läuft unter der Dateisperre (V11), darin die Speichersperre.
 - Geprüft im Gast (KVM, smp1): `js` findet und lädt die ICU-Daten; der nächste fehlende Aufruf ist `pipe2` (Ereignisschleife, `EventLoopImplementationUnix.cpp:165`).
@@ -347,7 +356,7 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxSpawn.cs`, `LinuxWait.cs`, `L
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
 | 56, 58 | `clone` (vfork-Form), `vfork` | `CLONE_VM|CLONE_VFORK` und Austrittssignal (sonst nichts): das Kind ist ein eigener Prozess (PID aus dem gemeinsamen Namensraum der PIDs und TIDs eines Laufs, Kopie der Deskriptortabelle samt `FD_CLOEXEC`, Handler, Arbeitsverzeichnis) auf dem Speicher und Stack aus `clone` (0: der bisherige) des Elternprozesses; dessen aufrufender Thread wartet, bis das Kind `execve` oder `exit` ruft, und bekommt dann die PID. vfork im vfork-Kind und andere Flags `-ENOSYS`, ohne Mittel `-EAGAIN` |
-| 59 | `execve` | im vfork-Kind; außerhalb davon seit V19 Ersatz des eigenen Abbilds (mit weiteren Threads `-ENOSYS`: kein Austausch des Adressraums unter laufenden Threads); Pfadfehler wie `open`, keine reguläre Datei `-EACCES`, über 128 MiB `-ENOMEM`; argv/envp: Zeichenkette über 128 KiB, mehr als 32768 Einträge oder zusammen über 2 MiB `-E2BIG`; ELF-Fehler `-ENOEXEC` (auch `PT_INTERP` und Segmente mit Schreib- und Ausführrecht, W^X), kaputte Argumente `-EINVAL`. Danach: neuer Adressraum, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` (SIG_IGN und Signalmaske bleiben, der Alternativstack nicht), während vfork gemerkte Signale zugestellt (siehe `kill`, V10) |
+| 59 | `execve` | im vfork-Kind; außerhalb davon seit V19 Ersatz des eigenen Abbilds (mit weiteren Threads `-ENOSYS`: kein Austausch des Adressraums unter laufenden Threads); Pfadfehler wie `open`, keine reguläre Datei oder ohne Ausführrecht (kein `x` in `st_mode`) `-EACCES` (V26), ladbarer Teil (Kopf bis Ende des letzten Segments, V28) über 128 MiB `-ENOMEM`; argv/envp: Zeichenkette über 128 KiB, mehr als 32768 Einträge oder zusammen über 2 MiB `-E2BIG`; ELF-Fehler `-ENOEXEC` (auch Segmente mit Schreib- und Ausführrecht, W^X); fehlt der Interpreter aus `PT_INTERP`, dessen Fehlernummer (meist `-ENOENT`, V25), kaputte Argumente `-EINVAL`. Danach: neuer Adressraum, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` (SIG_IGN und Signalmaske bleiben, der Alternativstack nicht), während vfork gemerkte Signale zugestellt (siehe `kill`, V10) |
 | 61 | `wait4` | `pid > 0`, `-1`, `0` (eigene Gruppe), `< -1` (Gruppe); `WNOHANG` (0 ohne fertiges Kind); `WUNTRACED`/`WCONTINUED` angenommen, warten aber nur auf das Ende (keine gestoppten Prozesse); Status wie Linux (`exit n`: n << 8, Signal: Nummer); rusage Nullen (keine Rechenzeit je Prozess); kein passendes Kind `-ECHILD`, unbekannte Optionen `-EINVAL`, `INT_MIN` `-ESRCH`; `-EFAULT` nach dem Abholen wie Linux |
 | 247 | `waitid` | `P_ALL`, `P_PID`, `P_PGID` (`P_PIDFD` `-EINVAL`: es gibt keine pidfds); `WEXITED` nötig, `WNOWAIT` lässt das Kind stehen; mit `WNOHANG` ohne fertiges Kind Nullen in `si_signo`/`si_pid` |
 | 110 | `getppid` | PID des Elternprozesses, 0 beim ersten Prozess des Laufs; Waisen behalten die tote PID |
@@ -369,13 +378,13 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
-| 41 | `socket` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`, kein Netz), `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` über `socket` weiter `-ESOCKTNOSUPPORT`: nur als `socketpair`, V23), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
+| 41 | `socket` | `AF_UNIX` und seit V27 `AF_INET` nur auf Loopback (Abschnitt unten; `AF_INET6` und andere `-EAFNOSUPPORT`); bei `AF_UNIX` `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` über `socket` weiter `-ESOCKTNOSUPPORT`: nur als `socketpair`, V23), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
 | 49 | `bind` | abstrakte Namen (führendes Nullbyte, binär) und Pfade relativ zum Arbeitsverzeichnis; ein Pfad legt eine leere Datei an (vorhanden: `-EADDRINUSE`), die nach `close` stehen bleibt; Länge 2 bindet automatisch (`\0` und fünf Hexziffern); schon gebunden oder angenommenes Ende `-EINVAL`; Namen gelten je Lauf |
 | 50 | `listen` | unbenannt oder verbunden `-EINVAL`; Rückstand bis 4096, wie Linux wartet eine Verbindung mehr als angegeben |
 | 42 | `connect` | legt das Gegenende sofort an (Senden vor `accept` geht); volle Warteschlange: blockierend warten, sonst `-EAGAIN`; kein Lauschender, gewöhnliche Datei oder anderer Typ unter abstraktem Namen `-ECONNREFUSED`, anderer Typ unter Pfad `-EPROTOTYPE`, fehlender Pfad `-ENOENT` (auch nach `unlink`), verbunden `-EISCONN`, Länge bis 2 `-EINVAL` |
 | 43, 288 | `accept`, `accept4` | älteste Verbindung; nicht lauschend `-EINVAL`, leer mit `O_NONBLOCK` `-EAGAIN`; Name des Verbindenden (unbenannt: Länge 2); `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `close` des Lauschenden beendet nicht angenommene Verbindungen (EOF beim Verbindenden) |
 | 51, 52 | `getsockname`, `getpeername` | Länge wie Linux (Pfad mit Nullbyte, abstrakt genau, unbenannt 2), gekürzt auf den Puffer; das angenommene Ende trägt den Namen des Lauschenden; `getpeername` unverbunden `-ENOTCONN` |
-| 53 | `socketpair` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` seit V23, verbundenes Paar; Typ außerhalb 1..10 `-EINVAL`, andere `-ESOCKTNOSUPPORT`; Dgram: Nachrichtengrenzen, leere Datagramme, SCM_RIGHTS, kein EOF beim close der Gegenseite, dann Senden `-ECONNREFUSED` (eigenes SHUT_WR zuerst `-EPIPE`), Warteschlange höchstens 10 Nachrichten (max_dgram_qlen, auch leere): voll `-EAGAIN` beziehungsweise blockierend, poll ohne POLLOUT), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
+| 53 | `socketpair` | nur `AF_UNIX` (`AF_INET` `-EOPNOTSUPP` wie Linux, andere `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` seit V23, verbundenes Paar; Typ außerhalb 1..10 `-EINVAL`, andere `-ESOCKTNOSUPPORT`; Dgram: Nachrichtengrenzen, leere Datagramme, SCM_RIGHTS, kein EOF beim close der Gegenseite, dann Senden `-ECONNREFUSED` (eigenes SHUT_WR zuerst `-EPIPE`), Warteschlange höchstens 10 Nachrichten (max_dgram_qlen, auch leere): voll `-EAGAIN` beziehungsweise blockierend, poll ohne POLLOUT), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
 | 46, 44 | `sendmsg`, `sendto` | Puffer je Richtung 212992 Bytes (`wmem_default`); Stream blockierend ganz, mit `O_NONBLOCK`/`MSG_DONTWAIT` so viel wie passt; Seqpacket ganz oder `-EAGAIN`, über 212992 Bytes `-EMSGSIZE`; Stream mit Zieladresse `-EISCONN`; `MSG_OOB` `-EOPNOTSUPP`; nach Ende oder `shutdown` `-EPIPE` mit `SIGPIPE`, außer mit `MSG_NOSIGNAL` (V18) |
 | 47, 45 | `recvmsg`, `recvfrom` | Stream fasst Nachrichten zusammen und endet nach der ersten mit Dateien; Seqpacket eine Nachricht, Rest verworfen mit `MSG_TRUNC` (`MSG_TRUNC` im Aufruf liefert die volle Länge); `MSG_PEEK`, `MSG_WAITALL`, `MSG_DONTWAIT`, `MSG_CMSG_CLOEXEC`; `msg_name` ist der Name des Senders, `msg_namelen` 0 bei unbenanntem Sender |
 | 46/47 | `SCM_RIGHTS` | bis 253 Dateien je Nachricht; die Nachricht hält jede Datei wie eine Nummer (`LinuxOpenFiles` des Laufs), also überlebt sie das `close` des Senders und das Ende eines Kindprozesses; zu kleiner Hilfsdatenpuffer oder volle Tabelle: Rest geschlossen, `MSG_CTRUNC`; `MSG_PEEK` gibt zusätzliche Nummern; `read`/`recvfrom` verwerfen mitgeschickte Dateien; `SCM_CREDENTIALS` angenommen, nicht weitergereicht; andere Typen `-EINVAL` |
@@ -392,6 +401,36 @@ Schreibrecht darauf (Linux verlangt `w`); da alle Prozesse eines Laufs eine UID 
 werden als UTF-8 gelesen: ungültige Bytefolgen werden zu U+FFFD, zwei solche Namen können zusammenfallen. Die Socket-Sperre ist eine Blattsperre (Dateisperre vor Socket-Sperre); Senden und Empfangen warten ohne Dateisperre. Pipes und Sockets warten seit V16 mit dem
 Abbruch des aufrufenden Prozesses (`ILinuxPollable.ReadAs`/`WriteAs`/`WaitPoll`): Vorher lieferte eine Pipe, die ein beendetes vfork-Kind angelegt hatte, den
 Eltern nur noch `-EINTR`.
+
+### AF_INET nur auf Loopback (V27)
+
+Plattformunabhängig in `LinuxUnixSocket.Inet.cs`, `LinuxSyscallsInet.cs` und `LinuxInetPorts.cs` (Hosttests `LinuxInetSocketTests`, Gastprogramm
+`experiments/LinuxAbi/src/s3/tcp_echo.c`, Erwartung Linux 6.12 in `expected/s3/tcp_echo.txt`). Es gibt keine Netzwerkkarte und keinen TCP/IP-Stapel: Ein
+TCP-Socket ist ein Unix-Stream-Socket mit Familie `AF_INET` und Adresse statt Namen (dieselben Kanäle, Puffer, `shutdown`-, `close`- und `poll`/`epoll`-Regeln
+wie oben, ohne `SCM_RIGHTS`); UDP hat einen eigenen Eingang je Socket. Ports gelten je Lauf (alle Prozesse eines Laufs teilen das Loopback-Netz).
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 41 | `socket` | `SOCK_STREAM` (Protokoll 0 oder 6) und `SOCK_DGRAM` (0 oder 17); anderes Protokoll `-EPROTONOSUPPORT`, andere Typen `-ESOCKTNOSUPPORT` |
+| 49 | `bind` | `sockaddr_in` ab 16 Bytes (kürzer `-EINVAL`), Familie `AF_INET` (`AF_UNSPEC` nur mit 0.0.0.0, sonst `-EAFNOSUPPORT`); Adresse 0.0.0.0 oder 127.0.0.0/8, sonst `-EADDRNOTAVAIL`; Port 0 vergibt einen aus 32768..60999; belegt `-EADDRINUSE`, schon gebunden `-EINVAL`; TCP und UDP haben getrennte Ports |
+| 50 | `listen` | ungebunden: automatisch 0.0.0.0 mit kurzlebigem Port; UDP `-EOPNOTSUPP` |
+| 42 | `connect` | Länge als `int` (obere Registerbits zählen nicht), negativ oder über 128 `-EINVAL`, unter 2 `-EINVAL`; `AF_UNSPEC` trennt (V27b, siehe unten). TCP: zuerst der Zustand (verbunden, angenommen oder lauschend `-EISCONN`), dann unter 16 Bytes `-EINVAL`, Familie nicht `AF_INET` `-EAFNOSUPPORT`; Ziel 0.0.0.0 gilt als 127.0.0.1, nicht lokal `-ENETUNREACH`; ohne Lauschenden blockierend `-ECONNREFUSED`, mit `O_NONBLOCK` `-EINPROGRESS` und danach `SO_ERROR` 111 einmal, `poll` `POLLOUT|POLLERR|POLLHUP`, das nächste `connect` liefert den Fehler (`-ECONNREFUSED`, schon mit `SO_ERROR` abgeholt `-ECONNABORTED`), das übernächste versucht neu; Erfolg sofort (auch nichtblockierend 0), bei vollem Rückstand nichtblockierend `-EINPROGRESS` (das nächste `connect` 0, danach `-EISCONN`); ungebunden vorher automatischer Port; UDP: bindet automatisch und setzt die Gegenstelle für `send`/`write`/`getpeername`, danach nimmt das Socket nur Datagramme von ihr an |
+| 43, 288 | `accept`, `accept4` | wie oben; Name ist die `sockaddr_in` des Verbindenden (Länge 16); das angenommene Ende trägt den Port des Lauschenden, bei 0.0.0.0 die Adresse 127.0.0.1 |
+| 51, 52 | `getsockname`, `getpeername` | `sockaddr_in`, Länge 16, gekürzt auf den Puffer; ungebunden 0.0.0.0:0; unverbunden `getpeername` `-ENOTCONN` |
+| 44, 46 | `sendto`, `sendmsg` | TCP übergeht Zieladresse und Hilfsdaten; UDP: Adresslänge als `int`, bei `sendto` mit Adresse unter 16 Bytes (auch 0) `-EINVAL`, bei `sendmsg` `msg_namelen` negativ `-EINVAL`, über 128 gekürzt, 0 ohne Ziel; Familie `AF_INET` oder `AF_UNSPEC`; Datagramm bis 65507 Bytes (sonst `-EMSGSIZE`), Zielport 0 `-EINVAL`, ungebunden vorher automatischer Port; ohne Empfänger oder bei vollem Eingang (212992 Bytes) verfällt es still, die Länge zählt; ohne Ziel und Gegenstelle `-EDESTADDRREQ` |
+| 45, 47 | `recvfrom`, `recvmsg` | TCP wie Unix-Stream, `msg_namelen` 0; UDP ein Datagramm, Absender als `sockaddr_in`, Rest verworfen mit `MSG_TRUNC`; `MSG_PEEK`, `MSG_DONTWAIT`; `poll` `POLLIN` mit wartendem Datagramm |
+| 55, 54 | `getsockopt`, `setsockopt` | `SO_REUSEADDR`, `SO_REUSEPORT`, `SO_KEEPALIVE` und `TCP_NODELAY` werden gemerkt und gemeldet (ohne Wirkung), Puffergrößen still angenommen, `SO_TYPE`/`SO_ERROR`/`SO_ACCEPTCONN`/`SO_DOMAIN` (2)/`SO_PROTOCOL` (6, 17) wie oben; `optlen` unter 4 `-EINVAL`; alles andere, auch `IPPROTO_IP`, `-ENOPROTOOPT` |
+
+Grenzen: `SO_REUSEADDR` erlaubt kein zweites `bind` auf einen belegten Port, und es gibt kein `TIME_WAIT` (ein Port ist nach dem `close` sofort frei). Die
+Adresse gehört nicht zum Portschlüssel: 127.0.0.1:P und 127.0.0.2:P schließen sich aus. Ein verbundenes UDP-Socket erfährt nichts von einem fehlenden
+Empfänger (Linux: `ECONNREFUSED` nach ICMP). Kein `SO_LINGER`, `SO_RCVTIMEO`, `TCP_KEEPIDLE`, kein Urgent-Datum; kein `AF_INET6`.
+
+V27b (Review-Nachträge): `connect` mit `AF_UNSPEC` löst bei UDP die Gegenstelle (`udp_disconnect`: ohne `bind` mit Adresse wird sie 0.0.0.0, ohne `bind` mit
+Port ungleich 0 wird der Port frei) und lässt ein unverbundenes TCP-Socket ein verweigertes `connect` vergessen; ein lauschendes oder verbundenes TCP-Socket
+trennt Linux (Rückstand verwerfen, RST), hier `-EOPNOTSUPP`. Ein nichtblockierendes `connect` bei vollem Rückstand wird hier sofort angestellt (früher
+schreibbereit als bei Linux, das das SYN verwirft und wiederholt; kein `ETIMEDOUT`, wenn nie jemand `accept` ruft). `bind`, automatisches Binden und
+UDP-Trennen laufen unter einer Sperre je Socket (kein kurzes `-EINVAL` von `listen` neben einem `bind`); das letzte `close` gibt nur den eigenen Port frei,
+ohne die Porttabellen zu durchsuchen.
 
 ## Geteilter Speicher (V17)
 
@@ -443,8 +482,7 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
 - **SIGPIPE** nach `-EPIPE` aus write, writev, pwrite, sendto, sendmsg (nicht mit `MSG_NOSIGNAL`); Standardaktion beendet den Prozess wie Linux.
 - **Grenzen**: Maske, anhängige Signale und Alternativstack je Prozess, nicht je Thread; ein Handler blockiert sein Signal für alle Threads, bis
   rt_sigreturn die Maske des Rahmens zurückschreibt. Echtzeitsignale reihen sich nicht mehrfach ein. Kein Zustellen in einer Rechenschleife ohne
-  Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3) und keine Handler für Ausnahmen (SIGSEGV/SIGFPE aus einem Fehler im
-  Ring 3 beenden weiter). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigtimedwait` und
+  Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3); Handler für Ausnahmen seit V24 (eigener Abschnitt). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigtimedwait` und
   `signalfd` fehlen.
 
 ## Harte Startlücken: ppoll, prctl, close_range, /proc/self/fd, execve (V19)
@@ -459,13 +497,14 @@ ppoll, setzt im Helferkind `PR_SET_PDEATHSIG` und schließt vor `execve` mit `cl
 | 271 | `ppoll` | wie `poll` mit Frist als `timespec` und Signalmaske; Reihenfolge wie Linux: Frist unlesbar `-EFAULT`, negativ oder `tv_nsec` ≥ 10^9 `-EINVAL`, dann `sigsetsize` ≠ 8 `-EINVAL`, Maske unlesbar `-EFAULT`. Die Maske gilt nur während des Wartens (SIGKILL/SIGSTOP bleiben frei); mit Ergebnis gilt sofort wieder die alte, bei `-EINTR` laufen die Handler unter der Wartemaske und der erste Rahmen trägt die alte (rt_sigreturn stellt sie her). Die Restzeit steht danach in `tmo_p`, auch bei sehr großen Fristen ohne Überlauf; ppoll wird nie neu gestartet |
 | 157 | `prctl` | `PR_SET_PDEATHSIG` (0 bis 64, sonst `-EINVAL`; 0 schaltet ab) und `PR_GET_PDEATHSIG` (int, `-EFAULT`); endet der Elternprozess, bekommt das Kind sein Signal (`SI_USER`, si_pid 0). Bleibt über `execve`, gilt nicht für ein neues vfork-Kind |
 | 436 | `close_range` | schließt alle offenen Nummern von `first` bis `last` (`~0` erlaubt) oder setzt mit `CLOSE_RANGE_CLOEXEC` nur `FD_CLOEXEC`; `CLOSE_RANGE_UNSHARE` ohne Wirkung (es gibt keine geteilten Tabellen); andere Flags oder `first > last` `-EINVAL` |
-| 2, 257 | `open`, `openat` auf `/proc/self/fd` | auch `/proc/<eigene PID>/fd`: Verzeichnis, nur lesen; `O_CREAT|O_EXCL` `-EEXIST`, `O_CREAT` oder Schreibzugriff `-EISDIR`; `fstat` `S_IFDIR`; `getdents64` liefert `.`, `..` und jede offene Nummer (Typ `DT_LNK`). Ein fremder Prozess `-ENOENT`; sonst gibt es kein `/proc` |
+| 2, 257 | `open`, `openat` auf `/proc/self/fd` | auch `/proc/<eigene PID>/fd`: Verzeichnis, nur lesen; `O_CREAT|O_EXCL` `-EEXIST`, `O_CREAT` oder Schreibzugriff `-EISDIR`; `fstat` `S_IFDIR`; `getdents64` liefert `.`, `..` und jede offene Nummer (Typ `DT_LNK`). Ein fremder Prozess `-ENOENT`; weitere `/proc`-Dateien siehe V29 |
 | 59 | `execve` außerhalb eines vfork-Kinds | ersetzt das Abbild des Prozesses unter derselben PID (neue Seitentabelle, FPU im Grundzustand, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` wie V15); Kinder und ihre Waisen gehen an das neue Abbild über, der Elternprozess sieht weiter dieselbe PID. Mit weiteren Threads `-ENOSYS` |
 
 Grenzen: Die Wartemaske gilt wie jede Maske je Prozess, nicht je Thread. Warten mehrere Threads gleichzeitig in ppoll, gilt die zuletzt gesetzte Wartemaske,
 bis der letzte von ihnen zurückkehrt; erst dann gilt wieder die Maske von vor dem ersten (der Prozess zählt die wartenden Threads). `execve` mit weiteren
-Threads fehlt (kein `de_thread`); anhängige Signale gehen beim Ersetzen ohne vfork verloren (Linux behält sie). Ein fehlendes Ausführrecht prüft `execve`
-nicht (Linux `-EACCES`): FAT kennt keine Modi, jede reguläre Datei gilt als ausführbar. `/proc/self/fd/<n>` als Link
+Threads fehlt (kein `de_thread`); anhängige Signale gehen beim Ersetzen ohne vfork verloren (Linux behält sie). Ein fehlendes Ausführrecht ist seit V26 `-EACCES`:
+FAT kennt keine Modi, vorhandene Dateien der Datenplatte gelten als ausführbar (0755), nur im Lauf angelegte Dateien behalten ihren Modus aus `open` (Abweichung: nicht über Neustart oder `chmod`, das es dort nicht gibt).
+`execve` auf den Pfad von argv[0] des Starters (Shell: Kernelpfad außerhalb der Prozesswurzel; Gastprobe: Name im Arbeitsverzeichnis), den die Wurzel nicht kennt, startet das Programm unter seinem Pfad in der Wurzel (Abweichung). `/proc/self/fd/<n>` als Link
 (`readlink`) fehlt.
 
 ## Weiche Lücken: eventfd, statfs, inotify (V20)
@@ -545,7 +584,8 @@ Gastprogramme `experiments/LinuxAbi/src/s3/fork_cow.c` und `futex.c` (Erwartung 
 | 57 | `fork` | wie `clone(SIGCHLD)` |
 | 56 | `clone` ohne `CLONE_VM` | neuer Prozess (PID aus dem gemeinsamen Namensraum) mit **Kopie** des Adressraums: Karte, brk und Stackgröße gleich, jede private Seite mit Frame als neuer Frame mit demselben Inhalt; geteilte Bereiche (memfd, `MAP_SHARED|MAP_ANONYMOUS`) bleiben geteilt. Deskriptoren mit `FD_CLOEXEC` und Arbeitsverzeichnis wie vfork (Zählung, gemeinsamer Dateizeiger), Handler, Maske und Alternativstack bleiben, anhängige Signale und `PR_SET_PDEATHSIG` nicht. Nur der aufrufende Thread läuft im Kind weiter, als Hauptthread (TID = PID), mit dessen Registern und FPU-Zustand, rax 0, Stack aus `clone` (0: derselbe). Erlaubt: `CLONE_SETTLS`, `CLONE_PARENT_SETTID` (Speicher der Eltern), `CLONE_CHILD_SETTID` (Speicher des Kinds), `CLONE_CHILD_CLEARTID`; Austrittssignal nur `SIGCHLD`. `CLONE_FILES`, `CLONE_FS`, `CLONE_PARENT`, `CLONE_VFORK` ohne `CLONE_VM`, andere Signale und Bits `-ENOSYS`; kein Speicher für die Kopie `-ENOMEM`; kein Kernelthread frei `-EAGAIN` |
 | 435 | `clone3` | `clone_args` ab 64 Bytes (darunter `-EINVAL`, über 4096 `-E2BIG`, gesetzte Bytes hinter VER0 `-E2BIG`); `exit_signal` über 64 oder Signal in den Flagbits `-EINVAL`, `stack` und `stack_size` nur zusammen (Stackzeiger `stack + stack_size` wie Linux); sonst wie `clone` |
-| 9 | `mmap` `MAP_SHARED|MAP_ANONYMOUS` | jetzt eine namenlose memfd ohne Deskriptor (vorher privat): über fork geteilt. Mit `MAP_FIXED` weiter privat |
+| 9 | `mmap` `MAP_SHARED|MAP_ANONYMOUS` | jetzt eine namenlose memfd ohne Deskriptor (vorher privat): über fork geteilt. Mit `MAP_FIXED` weiter privat. Seit V24 (Review V21 P3) ist die Länge nicht an den Speicher des Prozesses gebunden: Frames zählen erst beim Zugriff gegen die Grenze, wie privat (1 GiB `MAP_NORESERVE` geht) |
+| 25 | `mremap` auf `MAP_SHARED|MAP_ANONYMOUS` | Vergrößern `-ENOMEM` wie bei allen Bereichen (V9), Verkleinern kürzt den geteilten Bereich wie `munmap` |
 | 202 | `futex` ohne `FUTEX_PRIVATE_FLAG` | `FUTEX_WAIT` liest den Wert nach jeder Scheibe (50 ms) neu und kehrt mit 0 zurück, sobald er sich geändert hat |
 
 Grenzen: **Kein Copy-on-Write** (Abkürzung): fork kopiert sofort alle belegten privaten Seiten; Zeit und Speicher wachsen mit dem belegten Speicher des
@@ -553,3 +593,76 @@ Elternprozesses, und fork scheitert mit `-ENOMEM`, wenn der Rechner nicht genug 
 futex-Tabelle gehört weiter einem Prozess: Ein `FUTEX_WAKE` aus einem anderen Prozess (geteilter Speicher nach fork) weckt nicht sofort, der Wartende
 merkt nur eine Wertänderung nach höchstens einer Scheibe; ein Wecken ohne Wertänderung über Prozesse geht verloren, `FUTEX_REQUEUE` über Prozesse fehlt.
 Threads beginnen weiter mit frischem FPU-Zustand (nur das fork-Kind übernimmt ihn). Signale während fork an die Eltern erreicht das Kind nicht.
+
+## Dynamisch gelinkte Programme (V25)
+
+Ladybirds Prozesse aus dem D2-Bau (WebContent, RequestServer, ImageDecoder) sind dynamisch gegen Alpine-musl gelinkt und brauchen `ld-musl`, `libstdc++` und
+`libgcc_s` (WebContent auch `libdrm`). Der Kern lädt dafür nur den Interpreter; Bibliotheken lädt und verschiebt `ld-musl` selbst im Ring 3.
+
+- **Lader (`ElfLoader`):** Hat das Programm `PT_INTERP` (erster gilt; 2 bis 4096 Bytes mit abschließender Null wie `binfmt_elf`, zusätzlich absoluter Pfad),
+  liest er den Interpreter aus der Prozesswurzel: bei `execve` über das Dateisystem des Prozesses, beim ersten Programm von `run` direkt von der Platte unter der
+  Wurzel (ohne Wurzel auf der Platte `-ENOENT`; `..` wird abgelehnt; Verweisen folgt dieser erste Zugriff nicht). Der Interpreter muss `ET_DYN` ohne eigenes
+  `PT_INTERP` sein und kommt mit seiner niedrigsten Seite an die feste Adresse `0x7F00_0000_0000` (Linux: unter der mmap-Basis, mit Zufall). Für ihn gelten
+  dieselben Prüfungen wie für das Programm (W^X, Überschneidung, Benutzerraum), die Größengrenze zählt beide zusammen; mit dem Programm überschneiden darf er sich nicht.
+- **Einsprung und Hilfsvektor:** RIP ist der Einsprung des Interpreters. `AT_BASE` ist dessen Verschiebung, `AT_PHDR`, `AT_PHNUM` und `AT_ENTRY` beschreiben
+  das Programm (PIE ab `0x5555_5555_4000`). `brk` beginnt hinter dem Programm. Ohne `PT_INTERP` bleibt alles wie zuvor (`AT_BASE` 0).
+- **`mmap` mit Datei und `MAP_FIXED`:** wie `map_library` in musl (Spanne abbilden, dann jedes Segment mit `MAP_FIXED` aus der Datei, auch mit `PROT_EXEC`).
+  Der Altbestand wird ersetzt und die Kopie in die neuen Seiten gelesen. Vorab geprüft, mit stehen bleibendem Altbestand: unausgerichtete Adresse oder über 2^47
+  `-EINVAL`, Datei nur zum Schreiben offen `-EACCES`, Schreiben und Ausführen zugleich `-ENOMEM` (W^X). Scheitert die Kopie danach (Speicher, Lesefehler,
+  Abbruch), bleibt an der Stelle ein Loch, wie bei Linux. `MAP_SHARED|MAP_FIXED` einer memfd bleibt `-EINVAL`.
+- **Grenzen:** kein vDSO (Linux zählt ihn als weiteres Objekt in `dl_iterate_phdr`); Dateiabbildungen bleiben Kopien (jede Bibliothek belegt ihren Speicher je
+  Prozess, nichts wird zwischen Prozessen geteilt); keine Zufallslage (ASLR).
+- **Geprüft im Gast** (KVM, smp1 und smp4, Bündel mit `--file` für `/lib/ld-musl-x86_64.so.1`, `/usr/lib/libstdc++.so.6`, `/usr/lib/libgcc_s.so.1` aus
+  Alpine 3.24): `dyn_hello` (Hilfsvektor, malloc, `dlopen` von `libgcc_s.so.1`) und `dyn_cxx` (iostream, Container, Ausnahme über 20 Rahmen, `std::thread` mit
+  `thread_local`, statische Konstruktoren und Destruktoren) gleich wie unter Linux (`experiments/LinuxAbi/src/v25`, Bau mit `ALPINE_ROOT`). Nicht geprüft:
+  `execve` eines dynamischen Programms aus einem laufenden Programm (gleicher Lader, anderer Dateizugriff), VMware.
+
+## Ausnahmen als Signal (V24)
+
+Plattformunabhängig in `ProjektZeh/Processes/LinuxSignals.cs` (`LinuxFault`, `LinuxSignalFrame.DeliverFault`, Hosttests in `LinuxThreadsTests`), Brücke
+`OnFault` in `ProjektZeh/Runtime/CosmosLinuxRun.cs`; Gastprogramme `experiments/LinuxAbi/src/v24/faultsig.c` (Erwartung Linux 6.12 in `expected/v24`) und
+`s3/sigsegv_status.c`. Anlass: Ladybird und LibJS fangen SIGSEGV (Stapelüberlauf auf dem Alternativstack, Schreibschutz).
+
+- Eine Ausnahme im Ring 3, die kein bedienbarer Seitenfehler ist, geht wie Linux `force_sig_fault` an den Handler: Rahmen wie bei V18 auf dem Stapel oder
+  Alternativstack, siginfo mit `si_addr`, sigcontext mit `err`, `trapno` und `cr2`. Der Handler läuft statt des Befehls; kehrt er per `rt_sigreturn`
+  zurück, läuft der Befehl noch einmal (oder ab dem RIP, den der Handler in den ucontext schrieb).
+- Signal und `si_code`: #PF SIGSEGV mit `SEGV_MAPERR` (kein Bereich) oder `SEGV_ACCERR` (Bereich, auch `PROT_NONE`), `si_addr` = CR2; #GP und der Rest
+  SIGSEGV mit `SI_KERNEL`, `si_addr` 0; #UD SIGILL `ILL_ILLOPN`, #DE SIGFPE `FPE_INTDIV`, #MF/#XM SIGFPE mit Code aus FSW beziehungsweise MXCSR, jeweils
+  `si_addr` = RIP; #NP/#SS SIGBUS `SI_KERNEL`, #AC SIGBUS `BUS_ADRALN`.
+- Ausnahmesignale reihen sich nicht ein und gehen anhängigen vor; danach folgen anhängige Signale mit eigenem Rahmen darüber (sie laufen zuerst), wie Linux.
+- Ist das Signal blockiert oder ignoriert oder hat es keinen Handler, endet der Prozess damit (Linux setzt dann SIG_DFL); ein zweiter Fehler im Handler
+  (Signal dort blockiert) ebenso. Passt der Rahmen nicht, endet er mit SIGSEGV.
+- Grenzen: `int3` (und `int 3`) im Ring 3 ist unter Cosmos ein #GP (das Gate für #BP hat DPL 0) und wird SIGSEGV statt SIGTRAP; #DB kommt nicht vor.
+  Ein Fehler im vfork-Kind vor execve bricht weiter den ganzen Lauf ab. Ein Zugriff hinter das Ende einer geteilten Datei ist SIGSEGV statt SIGBUS.
+  Nur QEMU/KVM geprüft.
+
+## Minimales /proc (V29)
+
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxProcFiles.cs` (Weiche, Formate, Textdatei) und `ProjektZeh/Processes/LinuxProcView.cs`
+(Schnappschuss eines Prozesses im Lauf); Hosttests `LinuxProcFilesTests`, Gastprogramm `experiments/LinuxAbi/src/v29/proc.c` (Erwartung Linux 6.12 in
+`expected/v29`). Anlass: Lesestudie #636 Nr. 11. Ladybird liest `/proc/self/status` (`TracerPid`, `Process::is_being_debugged`), im Prozessmanager
+`/proc/stat` (Zeile `cpu`, dieselbe Datei nach `seek(0)` erneut) sowie `/proc/<pid>/stat` (utime, stime) und `/proc/<pid>/status` (`RssAnon`,
+`RssShmem`, `VmSwap`) **seiner Helferprozesse**. `maps`, `meminfo` und `cpuinfo` liest Ladybird laut Quellen nicht; sie sind für Bibliotheken da.
+Es gibt kein Dateisystem `/proc`: `open`/`openat`, `stat`/`newfstatat`, `access`/`faccessat2` und `readlink` leiten nur diese normalisierten Pfade um.
+
+| Pfad | Inhalt |
+| --- | --- |
+| `/proc/self/status`, `/proc/<pid>/status` | Felder und Reihenfolge wie Linux 6.1 (`Name` = comm, Dateiname des Programms auf 15 Bytes gekürzt, Zeilenumbruch und Backslash als `\n` und `\\` maskiert wie Linux (V29b); `State` R für den Leser selbst, S für andere, Z für nicht abgeholte; `TracerPid` 0; Speicherzeilen in kB mit Tab und Breite 8: `VmSize` Summe der Bereiche, `VmRSS` = `RssAnon` (private Frames) + `RssShmem` (geteilte memfd-Seiten), `VmData` brk, `VmStk` Stackgröße, `VmSwap` 0; bei Zombies ohne Speicherzeilen; `Threads`, `SigPnd`/`SigBlk`/`SigIgn`/`SigCgt` aus dem Signalzustand des Prozesses) |
+| `/proc/self/stat`, `/proc/<pid>/stat` | 52 Felder wie Linux 6.1 (pid, (comm), Zustand, ppid, pgrp, session, …, `num_threads`, `vsize`, `rss` in Seiten, `startstack`, `start_brk`, Signalfelder als untere 32 Bit; comm unmaskiert wie Linux); utime, stime, starttime und Fehlerzähler 0 |
+| `/proc/self/maps`, `/proc/<pid>/maps` | eine Zeile je Bereich der Karte, `start-end rwxp 00000000 00:00 0`, Name ab Spalte 74: `[heap]` (brk), `[stack]` (Hauptstack), geteilte memfd-Bereiche mit `s` und `/memfd:<name> (deleted)`. Ein Zeilenumbruch im Namen erscheint wie Linux als `\012`. Nebeneinanderliegende anonyme Bereiche mit gleichem Schutz stehen in einer Zeile; an den Grenzen von Heap, Stack und memfd wird geteilt (V29b; `[stack]` heißt jeder Teil des Hauptstacks, Linux nur die VMA mit `start_stack`); Programmdatei und Versatz fehlen (Abbild und Datei-`mmap` sind Kopien, V12) |
+| `/proc/self/fd` | Verzeichnis wie V19 (nur der Aufrufer selbst) |
+| `/proc/<pid>/exe` | Link auf den Programmpfad jedes Prozesses im Lauf (V12 nur der eigene) |
+| `/proc/stat` | `cpu` und `cpu0` mit aller Zeit seit dem Start als idle in USER_HZ (100), übrige Felder 0; `btime`, `processes` (laufende Prozesse des Laufs), `procs_running 1` |
+| `/proc/meminfo` | `MemTotal`, `MemFree`, `MemAvailable` aus demselben Wert wie `sysinfo` (V13), übrige Zeilen 0 (kein Swap, kein Cache) |
+| `/proc/cpuinfo` | ein Prozessor (passend zu `sched_getaffinity`), Flags nur aus der x86-64-Grundausstattung (`fpu tsc cx8 cmov mmx fxsr sse sse2 syscall nx lm`) |
+
+`<pid>` ist `self` oder die Dezimalzahl eines Prozesses desselben Laufs (Suche wie bei `kill`, nach `execve` das neue Abbild); andere Prozesse,
+führende Nullen, unbekannte Dateien und `task/` `-ENOENT`. Die Dateien sind nur lesbar: `stat` liefert `S_IFREG|0444` mit Größe 0 wie Linux,
+Schreibzugriff `-EACCES`, `O_CREAT|O_EXCL` `-EEXIST`, `O_DIRECTORY` `-ENOTDIR`; `access` mit `W_OK` oder `X_OK` `-EACCES`. Der Inhalt entsteht wie
+bei Linux (seq_file) bei jedem Lesen ab Position 0 neu und setzt sich ab einer anderen Position aus dem zuletzt erzeugten Text fort; `lseek` mit
+`SEEK_END` `-EINVAL`. Ist der Prozess einer offenen Datei inzwischen abgeholt, liefert das Lesen `-ESRCH`.
+
+Grenzen: CPU-Zeiten zählt der Kernel je Prozess nicht (Ladybirds CPU-Anzeige bleibt 0 %); `/proc/self/mem`, `/proc/self/fd/<n>` als Link, `environ`,
+`cmdline`, `smaps`, `task/` und das Auflisten von `/proc` fehlen. `cpuinfo` nennt keine echte CPU (Modell und Flags erfragen Skia und musl über CPUID).
+Geprüft im Gast (KVM, smp1 und smp4 je 5 Läufe): `proc` (Ladybird-Muster: `TracerPid`, `sscanf` auf `/proc/stat` vor und nach `seek(0)`, `stat` und
+`status` eines Kindes über `posix_spawn`, `exe` des Kindes, ENOENT nach dem Abholen, `maps` mit `[stack]`, `meminfo`, `cpuinfo`, Rechte).

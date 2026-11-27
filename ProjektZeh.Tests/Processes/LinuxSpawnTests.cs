@@ -98,10 +98,10 @@ public sealed class LinuxSpawnTests
             return at;
         }
 
-        public void WriteFile(string path, byte[] content)
+        public void WriteFile(string path, byte[] content, uint mode = 0x1ED)
         {
             var fs = new LinuxFileSystem(Store, new TerminalDescriptor(new Lines()));
-            Assert.AreEqual(0, fs.Open(path, 0x41, 0x1ED, out ILinuxFile? f));
+            Assert.AreEqual(0, fs.Open(path, 0x41, mode, out ILinuxFile? f));
             Assert.AreEqual(content.Length, f!.Write(content));
             Assert.AreEqual(0, f.Close());
         }
@@ -202,6 +202,53 @@ public sealed class LinuxSpawnTests
         next.Destroy();
         Assert.IsTrue(f.Created[0].Destroyed);
         Assert.IsTrue(f.Parent.TryRead(f.Mem, new byte[1]));
+    }
+
+    [TestMethod]
+    public void ExecveOhneAusfuehrrechtIstEacces()
+    {
+        var f = new Fixture();
+        f.WriteFile("/leer", [], 0x1A4);
+        f.WriteFile("/leer-x", []);
+        ulong plain = f.Strings(f.Mem + (2 * Page), "/leer") + 0x100;
+        ulong exec = f.Strings(f.Mem + (3 * Page), "/leer-x") + 0x100;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess child = f.Child!;
+        Assert.AreEqual(-LinuxSyscalls.EACCES, Fixture.Call(child, LinuxSyscalls.Execve, plain, 0, 0));
+        Assert.AreEqual(-8, Fixture.Call(child, LinuxSyscalls.Execve, exec, 0, 0), "mit Recht, aber kein ELF: ENOEXEC");
+    }
+
+    [TestMethod]
+    public void ExecveAufArgv0FindetDasProgrammInDerWurzel()
+    {
+        var f = new Fixture();
+        f.WriteFile("/hello", Elf());
+        f.Parent.ExePath = "/hello";
+        f.Parent.StartPath = "/data/s1/hello"; // Kernelpfad von argv[0], außerhalb der Wurzel
+        ulong outside = f.Strings(f.Mem + (2 * Page), "/data/s1/hello") + 0x100;
+        ulong other = f.Strings(f.Mem + (3 * Page), "/data/s1/anderes") + 0x100;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess child = f.Child!;
+        Assert.AreEqual(-LinuxErrno.ENOENT, Fixture.Call(child, LinuxSyscalls.Execve, other, 0, 0));
+        Assert.AreEqual(0, Fixture.Call(child, LinuxSyscalls.Execve, outside, 0, 0));
+        Assert.AreEqual("/hello", f.Exec!.ExePath);
+        Assert.AreEqual("/data/s1/hello", f.Exec.StartPath);
+    }
+
+    [TestMethod]
+    public void ExecveAufAnderesProgrammVerliertDenStartPfad()
+    {
+        var f = new Fixture();
+        f.WriteFile("/hello", Elf());
+        f.WriteFile("/anderes", Elf());
+        f.Parent.ExePath = "/hello";
+        f.Parent.StartPath = "/data/s1/hello";
+        ulong other = f.Strings(f.Mem + (3 * Page), "/anderes") + 0x100;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess child = f.Child!;
+        Assert.AreEqual(0, Fixture.Call(child, LinuxSyscalls.Execve, other, 0, 0));
+        Assert.AreEqual("/anderes", f.Exec!.ExePath);
+        Assert.IsNull(f.Exec.StartPath);
     }
 
     [TestMethod]

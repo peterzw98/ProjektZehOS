@@ -8,8 +8,9 @@ namespace ProjektZeh.Processes;
 /// <summary>Ein belegter Bereich [Start, End) des Benutzeradressraums, seitenausgerichtet.</summary>
 internal readonly record struct UserRegion(ulong Start, ulong End, MapAccess Access);
 
-/// <summary>Ein ladbares Segment nach Verschiebung: Dateibytes [FileOffset, FileOffset + FileSize) liegen ab Address.</summary>
-internal readonly record struct UserSegment(ulong Address, ulong MemorySize, ulong FileOffset, ulong FileSize, MapAccess Access);
+/// <summary>Ein ladbares Segment nach Verschiebung: Dateibytes [FileOffset, FileOffset + FileSize) liegen ab Address. Mit
+/// <paramref name="Interpreter"/> stammen sie aus dem Interpreter (V25), sonst aus dem Programm.</summary>
+internal readonly record struct UserSegment(ulong Address, ulong MemorySize, ulong FileOffset, ulong FileSize, MapAccess Access, bool Interpreter = false);
 
 /// <summary>
 /// Ergebnis von <see cref="ElfLoader.Load(ReadOnlySpan{byte}, string[], string[], ElfLoadOptions)"/>: wo das Programm liegt, wo es startet und was
@@ -53,6 +54,13 @@ internal sealed class UserImage
         Uid = uid;
         Gid = gid;
     }
+
+    /// <summary>V25: Inhalt des Interpreters (PT_INTERP) oder null bei statischen Programmen. Das Abbild hält ihn, damit
+    /// <see cref="FillPage"/> wie bisher nur die Programmdatei übergeben bekommt.</summary>
+    public byte[]? Interpreter { get; init; }
+
+    /// <summary>V25: Verschiebung des Interpreters (AT_BASE), 0 ohne Interpreter.</summary>
+    public ulong InterpreterBias { get; init; }
 
     /// <summary>Benutzer- und Gruppennummer wie im Hilfsvektor (AT_UID/AT_GID); getuid und getgid liefern dieselben Werte.</summary>
     public ulong Uid { get; }
@@ -113,7 +121,8 @@ internal sealed class UserImage
             {
                 int length = (int)(to - from);
                 int source = checked((int)(segment.FileOffset + (from - segment.Address)));
-                elf.Slice(source, length).CopyTo(page.Slice((int)(from - pageAddress), length));
+                ReadOnlySpan<byte> file = segment.Interpreter ? Interpreter : elf;
+                file.Slice(source, length).CopyTo(page.Slice((int)(from - pageAddress), length));
             }
         }
 

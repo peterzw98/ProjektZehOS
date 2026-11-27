@@ -556,6 +556,39 @@ public sealed class LinuxFileSystemTests
     }
 
     [TestMethod]
+    public void CreatedModeFollowsDirectoryRenameAndIsDroppedOnUnlink()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        string tmp = TempDir();
+        try
+        {
+            var (fs, _) = QuotaDisk(tmp, 4L << 20);
+            Assert.AreEqual(0L, fs.Mkdir("/d", 0x1ED));
+            Assert.AreEqual(0L, OpenOk(fs, "/d/f", Create, 0x180).Close());
+            Assert.AreEqual(0L, fs.Stat("/d/f", true, out LinuxStat st));
+            Assert.AreEqual(0x180u, st.Mode & 0xFFFu);
+
+            Assert.AreEqual(0L, fs.Rename("/d", "/e"));
+            Assert.AreEqual(0L, fs.Stat("/e/f", true, out st));
+            Assert.AreEqual(0x180u, st.Mode & 0xFFFu, "Modus wandert mit dem Verzeichnis");
+
+            // Unlink vergisst den Modus: eine neue Datei gleichen Namens bekommt ihren eigenen.
+            Assert.AreEqual(0L, fs.Unlink("/e/f"));
+            Assert.AreEqual(0L, OpenOk(fs, "/e/f", Create, 0x1A4).Close());
+            Assert.AreEqual(0L, fs.Stat("/e/f", true, out st));
+            Assert.AreEqual(0x1A4u, st.Mode & 0xFFFu);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    [TestMethod]
     public void DeferredCreditHandlesSharedDescriptorsRenameAndReuse()
     {
         if (OperatingSystem.IsWindows())

@@ -90,6 +90,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
     private ulong _uid = 1000;
     private ulong _gid = 1000;
     private ulong _stackSize = 8UL << 20;
+    private ulong _stackTop; // V29: Ende des Hauptstacks für /proc ([stack], startstack); unter _memGate wie _stackSize
 
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
     /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
@@ -608,6 +609,9 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
     /// <summary>Programmpfad im Prozess (V12, /proc/self/exe); setzt der Starter vor dem ersten Befehl, danach nur gelesen.</summary>
     public string? ExePath { get; set; }
 
+    /// <summary>V26: absoluter, normalisierter Pfad von argv[0] des Starters (relativ zum Start-Arbeitsverzeichnis); execve darauf findet <see cref="ExePath"/>.</summary>
+    public string? StartPath { get; set; }
+
     public ILinuxDescriptor? GetDescriptor(int fd) => (uint)fd < MaxDescriptors ? _descriptors[fd] : null;
 
     // ILinuxFiles: Tabelle und Arbeitsverzeichnis; Pfade, dup und close setzt der Verteiler darauf um (V2 Dateien).
@@ -765,6 +769,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         }
 
         _stackSize = image.StackTop - image.StackBottom;
+        _stackTop = image.StackTop;
 
         ulong stackContent = image.StackPointer & ~(Page - 1);
         foreach (UserRegion region in image.Regions)
@@ -823,6 +828,23 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         lock (_memGate)
         {
             return HandlePageFaultLocked(address, error);
+        }
+    }
+
+    /// <summary>
+    /// V24: Liegt <paramref name="address"/> in einem Bereich der Karte, auch PROT_NONE? Für den si_code eines Seitenfehlers: SEGV_ACCERR,
+    /// wenn ja (Zugriff verboten), sonst SEGV_MAPERR.
+    /// </summary>
+    public bool HasMapping(ulong address)
+    {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.HasMapping(address);
+        }
+
+        lock (_memGate)
+        {
+            return address < ElfLoader.UserEnd && _map.TryFind(address & ~(Page - 1), out _);
         }
     }
 

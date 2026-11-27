@@ -1,5 +1,6 @@
 #if ZEHOS_LINUX_RUN
 using System;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
@@ -30,7 +31,7 @@ internal static unsafe class CosmosLinuxRun
     /// <summary>Speicher je Programm (Frames), danach endet ein Seitenfehler mit Abbruch.</summary>
     private const ulong MaxBytes = 512UL << 20;
 
-    /// <summary>Größte ladbare Datei; js aus Ladybird liegt deutlich darunter.</summary>
+    /// <summary>Größter ladbarer Teil eines Programms (V28: ohne Debugabschnitte, <see cref="FileService.ReadExecutable"/>).</summary>
     public const int MaxFileSize = 128 << 20;
 
     /// <summary>Rückgabe von Enter nach einem Abbruch durch den Kernel (Zeitlimit, Ausnahme in der Brücke).</summary>
@@ -73,6 +74,9 @@ internal static unsafe class CosmosLinuxRun
 
         /// <summary>Programmpfad im Prozess für /proc/self/exe (V12) oder null, wenn das Programm außerhalb der Wurzel liegt.</summary>
         public string? ExePath;
+
+        /// <summary>V26: argv[0] als absoluter Pfad im Prozess; execve darauf startet <see cref="ExePath"/> (siehe <see cref="LinuxUserProcess.StartPath"/>).</summary>
+        public string? StartPath;
 
         /// <summary>Gesetzt bei einem Vordergrundprogramm der Shell; dann meldet der Programmthread das Ende selbst.</summary>
         public LinuxTerminalSession? Session;
@@ -170,7 +174,7 @@ internal static unsafe class CosmosLinuxRun
             return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: run <datei> [argumente...]");
         }
 
-        ResultObject<byte[]> file = files.ReadBytes(arguments[0], MaxFileSize);
+        ResultObject<byte[]> file = files.ReadExecutable(arguments[0], MaxFileSize);
         if (!file.IsOK())
         {
             return file.Status;
@@ -240,6 +244,17 @@ internal static unsafe class CosmosLinuxRun
     /// Startet das Programm als Vordergrundprogramm der Shell und kehrt sofort zurück. Das Ende meldet der Programmthread selbst
     /// (Statuszeile in der Sitzung, LINUXRUN END im seriellen Protokoll).
     /// </summary>
+    /// <summary>V26: argv[0] als Pfad im Prozess (relativ zum Start-Arbeitsverzeichnis); null ohne Programmpfad in der Wurzel.</summary>
+    private static string? StartPathOf(string[] argv, string? cwd, string? exePath)
+    {
+        if (exePath == null || argv.Length == 0 || argv[0].Length == 0)
+        {
+            return null;
+        }
+
+        return LinuxPath.Normalize(argv[0][0] == '/' ? argv[0] : (cwd ?? "/") + "/" + argv[0]);
+    }
+
     private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell, string? root, string? exePath)
     {
         if (shell.HasForeground)
@@ -256,7 +271,7 @@ internal static unsafe class CosmosLinuxRun
         bool started = false;
         try
         {
-            if (!Prepare(elf, arguments, Environment, out UserImage? image, out string why))
+            if (!Prepare(elf, arguments, Environment, root, out UserImage? image, out string why))
             {
                 return ResultErr.CreateFailure(ResultCode.Failure, "run: " + why);
             }
@@ -268,6 +283,7 @@ internal static unsafe class CosmosLinuxRun
                 Session = session,
                 Root = root,
                 ExePath = exePath,
+                StartPath = StartPathOf(arguments, null, exePath),
 
                 // Nur der Programmthread gibt busy frei; die Shell wartet nicht auf ihn.
                 Owners = 1,
@@ -378,7 +394,7 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>Initialisiert den Ring 3 und lädt das Abbild (Kernelseite, noch ohne Programmthread).</summary>
-    private static bool Prepare(byte[] elf, string[] argv, string[] envp, out UserImage? image, out string why)
+    private static bool Prepare(byte[] elf, string[] argv, string[] envp, string? root, out UserImage? image, out string why)
     {
         image = null;
         if (!Initialize(out why))
@@ -395,6 +411,7 @@ internal static unsafe class CosmosLinuxRun
             {
                 Random = random,
                 HwCap = (uint)X86Base.CpuId(1, 0).Edx,
+                ReadInterpreter = root == null ? null : (string path, out byte[] content) => ReadFromRoot(root, path, out content),
             });
             return true;
         }
@@ -408,6 +425,56 @@ internal static unsafe class CosmosLinuxRun
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// V25: liest den Interpreter des ersten Programms aus der Prozesswurzel (Kernelpfad). Das Dateisystem des Prozesses gibt es zu
+    /// diesem Zeitpunkt noch nicht; deshalb direkt über die Datenplatte. Grenze: Verweise der Prozesswurzel (CosmosLinuxDiskLinks) folgt
+    /// das nicht; Alpines ld-musl-x86_64.so.1 ist eine gewöhnliche Datei. Spätere execve lesen über das Dateisystem des Prozesses.
+    /// </summary>
+    private static long ReadFromRoot(string root, string path, out byte[] content)
+    {
+        content = [];
+        const long ENOENT = 2, EACCES = 13, ENOMEM = 12;
+        // Je Komponente: ".." aus der Wurzel heraus ist nie erlaubt, auch nicht mitten im Pfad (/lib/../../x) oder hinter "//".
+        foreach (string part in path.Split('/'))
+        {
+            if (part == "..")
+            {
+                return -EACCES;
+            }
+        }
+
+        string full = root + path;
+        bool tooLarge = false;
+        byte[]? bytes = StorageLock.Run(() =>
+        {
+            if (!File.Exists(full))
+            {
+                return null;
+            }
+
+            if (new FileInfo(full).Length > LinuxUserProcess.MaxExecFileSize)
+            {
+                tooLarge = true;
+                return [];
+            }
+
+            return File.ReadAllBytes(full);
+        });
+        if (bytes == null)
+        {
+            return -ENOENT;
+        }
+
+        if (tooLarge)
+        {
+            return -ENOMEM; // wie ReadExecutable bei Größe über MaxExecFileSize
+        }
+
+        // Eine leere Datei ist kein ELF-Abbild: der Lader meldet ENOEXEC (wie Linux), nicht ENOMEM.
+        content = bytes;
+        return 0;
     }
 
     private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
@@ -426,12 +493,12 @@ internal static unsafe class CosmosLinuxRun
         Running? run = null;
         try
         {
-            if (!Prepare(elf, argv, envp, out UserImage? image, out string why))
+            if (!Prepare(elf, argv, envp, root, out UserImage? image, out string why))
             {
                 return new Outcome(false, string.Empty, why);
             }
 
-            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd, ExePath = exePath };
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd, ExePath = exePath, StartPath = StartPathOf(argv, cwd, exePath) };
             var thread = new Thread(() => Body(started, image!, elf));
             thread.Start();
             run = started;
@@ -507,15 +574,8 @@ internal static unsafe class CosmosLinuxRun
         return new Outcome(true, "signal 11", reason);
     }
 
-    /// <summary>Signal, das Linux für die Ausnahme schickte (Status wie bei run-linux.py).</summary>
-    private static int SignalOf(ulong vector) => vector switch
-    {
-        0 or 16 or 19 => 8,   // #DE, #MF, #XM: SIGFPE
-        6 => 4,               // #UD: SIGILL
-        3 or 1 => 5,          // #BP, #DB: SIGTRAP
-        17 => 7,              // #AC: SIGBUS
-        _ => 11,              // #GP, #PF und der Rest: SIGSEGV
-    };
+    /// <summary>Signal, das Linux für die Ausnahme schickte (Status wie bei run-linux.py); Tabelle seit V24 in <see cref="LinuxFault"/>.</summary>
+    private static int SignalOf(ulong vector) => LinuxFault.SignalOf(vector);
 
     private static void Body(Running run, UserImage image, byte[] elf)
     {
@@ -571,6 +631,7 @@ internal static unsafe class CosmosLinuxRun
         var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host, fileSystem)
         {
             ExePath = run.ExePath,
+            StartPath = run.StartPath,
             HwCap = (uint)X86Base.CpuId(1, 0).Edx,
         };
         Wire(run, table, process);
@@ -1293,6 +1354,27 @@ internal static unsafe class CosmosLinuxRun
             run.Error = exception.GetType().Name + ": " + exception.Message;
         }
 
+        // Abbruch (Zeitlimit, Strg+C) während eines Fehlers: kein Handler mehr und keine Ausnahme melden, der Lauf endet als Abbruch (sonst
+        // meldete Describe eine Ausnahme, etwa bei einem Handler, der den Befehl endlos wiederholt).
+        if (run.Cancelled)
+        {
+            return 0;
+        }
+
+        // V24: Hat der Prozess einen Handler für das Signal, läuft er statt des Prozessendes (Linux force_sig_fault). Nicht im vfork-Kind:
+        // Es läuft auf dem Kernelthread und im Speicher des Elternprozesses, ein Handler mit siglongjmp darin bliebe ungeprüft.
+        try
+        {
+            if (!me.Process.InVfork && DeliverFault(me, frame, vector, error, address))
+            {
+                return 1;
+            }
+        }
+        catch (Exception exception)
+        {
+            run.Error ??= exception.GetType().Name + ": " + exception.Message;
+        }
+
         // V15: Eine Ausnahme in einem Kindprozess (nach execve) beendet nur ihn; sein Thread meldet sie nach dem Verlassen.
         // Im vfork-Kind (vor execve) bricht sie den ganzen Lauf ab: Der Thread trägt die Register des blockierten Elternthreads.
         me.Fault = true;
@@ -1308,6 +1390,27 @@ internal static unsafe class CosmosLinuxRun
         run.FaultAddress = address;
         run.FaultRip = frame->Rip;
         return 0;
+    }
+
+    /// <summary>
+    /// V24: Signalrahmen für eine Ausnahme. Das fxsave-Abbild liegt wie beim Aufruf direkt unter dem Frame: Der Interrupt-Stub von Cosmos
+    /// sichert es dort (ThreadContext.Fpu vor R15, Interrupts.s fxsave64/fxrstor64), der Frame ist der IRQContext ab R15. Was hier hineinkommt,
+    /// lädt der Rücksprung des Stubs, ebenso die geänderten Register (UserModeX64.PrepareReturn prüft sie vorher).
+    /// </summary>
+    private static bool DeliverFault(Bridge me, UserFrame* frame, ulong vector, ulong error, ulong address)
+    {
+        LinuxUserProcess process = me.Process;
+        var fpu = new Span<byte>((byte*)frame - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize);
+        bool mapped = vector == PageFault && process.HasMapping(address);
+        LinuxFault fault = LinuxFault.Of(vector, error, address, frame->Rip, mapped, fpu);
+        LinuxUserRegs regs = ToRegs(frame);
+        if (!LinuxSignalFrame.DeliverFault(process, ref regs, fpu, fault))
+        {
+            return false;
+        }
+
+        FromRegs(frame, regs);
+        return true;
     }
 
     private static readonly CosmosLinuxHost Host = new();

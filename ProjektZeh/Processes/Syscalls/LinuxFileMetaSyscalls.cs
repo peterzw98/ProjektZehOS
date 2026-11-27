@@ -154,7 +154,12 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
-        r = f.FileSystem.Stat(path, (flags & MetaAtSymlinkNofollow) == 0, out LinuxStat st);
+        r = LinuxProcFiles.TryStat(p, path, out LinuxStat st); // V29
+        if (r == LinuxProcFiles.NotProc)
+        {
+            r = f.FileSystem.Stat(path, (flags & MetaAtSymlinkNofollow) == 0, out st);
+        }
+
         return r < 0 ? r : WriteStat(p, buf, st);
     }
 
@@ -166,7 +171,13 @@ internal static partial class LinuxSyscalls
         }
 
         long r = LinuxPath.Resolve(p, f, dirfd, pathPtr, out string path);
-        return r < 0 ? r : f.FileSystem.Access(path, mode);
+        if (r < 0)
+        {
+            return r;
+        }
+
+        r = LinuxProcFiles.TryAccess(p, path, mode); // V29
+        return r == LinuxProcFiles.NotProc ? f.FileSystem.Access(path, mode) : r;
     }
 
     private static long DoGetdents(ILinuxProcess p, int fd, ulong buf, ulong count)
@@ -242,11 +253,10 @@ internal static partial class LinuxSyscalls
         }
 
         string target;
-        if (IsProcSelfExe(p, path))
+        // V12/V29: /proc/self/exe und /proc/<pid>/exe eines Prozesses im Lauf; ein /proc-Dateisystem gibt es nicht (Ladybird sucht damit
+        // seine ICU-Daten neben dem Programm). Liegt das Programm außerhalb der Prozesswurzel, fehlt der Link wie ein nicht vorhandener Pfad.
+        if (LinuxProcFiles.TryExeLink(p, path, out string? exe))
         {
-            // V12: ein /proc gibt es nicht; nur dieser eine Link wird nachgebildet (Ladybird sucht damit seine ICU-Daten neben dem
-            // Programm). Liegt das Programm außerhalb der Prozesswurzel, fehlt er wie ein nicht vorhandener Pfad.
-            string? exe = (p as ILinuxExe)?.ExePath;
             if (exe is null)
             {
                 return -MetaErr.ENOENT;
@@ -266,20 +276,6 @@ internal static partial class LinuxSyscalls
         byte[] bytes = Encoding.UTF8.GetBytes(target);
         int n = (int)Math.Min((ulong)bytes.Length, Math.Min(size, (ulong)MaxRw)); // abgeschnitten, ohne NUL (wie Linux)
         return p.Memory.TryWrite(buf, bytes.AsSpan(0, n)) ? n : -MetaErr.EFAULT;
-    }
-
-    /// <summary>"/proc/self/exe" oder "/proc/&lt;eigene PID&gt;/exe" (normalisierter Pfad).</summary>
-    private static bool IsProcSelfExe(ILinuxProcess p, string path)
-    {
-        const string Prefix = "/proc/", Suffix = "/exe";
-        if (!path.StartsWith(Prefix, StringComparison.Ordinal) || !path.EndsWith(Suffix, StringComparison.Ordinal)
-            || path.Length <= Prefix.Length + Suffix.Length)
-        {
-            return false;
-        }
-
-        string who = path.Substring(Prefix.Length, path.Length - Prefix.Length - Suffix.Length);
-        return who == "self" || who == p.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static long DoUnlink(ILinuxProcess p, ILinuxFiles f, int dirfd, ulong pathPtr, int flags)

@@ -1,0 +1,7 @@
+hello dynamic argc=3 argv0=dyn_hello
+at_base gesetzt
+at_entry ok
+at_phdr ok
+malloc ok x
+dlsym ok
+objekte +1

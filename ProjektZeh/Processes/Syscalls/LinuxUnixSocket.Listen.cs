@@ -106,7 +106,8 @@ internal sealed partial class LinuxUnixSocket
         {
             // _connecting unter _nameGate lesen: ConnectTo reserviert unter derselben Sperre, sonst könnte ein paralleles connect
             // zwischen Prüfung und _listening = true durchrutschen (Socket wäre dann lauschend und verbunden).
-            if (_connecting != 0 || _name.IsUnnamed || Volatile.Read(ref _closed) != 0)
+            // V27: AF_INET braucht einen Port statt eines Namens (der Verteiler bindet vorher automatisch wie inet_listen).
+            if (_connecting != 0 || (IsInet ? _inetPort == 0 : _name.IsUnnamed) || Volatile.Read(ref _closed) != 0)
             {
                 return -EINVAL;
             }
@@ -124,9 +125,10 @@ internal sealed partial class LinuxUnixSocket
     /// connect zu <paramref name="listener"/>: legt das Gegenende an (Erzeuger-PID des Lauschenden, wie copy_peercred), verbindet und
     /// stellt es an. -EISCONN schon verbunden, -EALREADY bei gleichzeitigem connect, -EINVAL lauschend, -ECONNREFUSED nicht lauschend oder
     /// geschlossen; Warteschlange voll: -EAGAIN mit <paramref name="nonBlocking"/>, sonst warten (Abbruch -EINTR). Typgleichheit prüft der
-    /// Verteiler (die Fehlernummer hängt an der Namensart).
+    /// Verteiler (die Fehlernummer hängt an der Namensart). V27b: Mit <paramref name="overfill"/> (TCP, nichtblockierend) stellt ein voller
+    /// Rückstand trotzdem an und liefert 1 statt -EAGAIN (der Verteiler meldet EINPROGRESS).
     /// </summary>
-    public long ConnectTo(LinuxUnixSocket listener, bool nonBlocking, ILinuxAbort? abort)
+    public long ConnectTo(LinuxUnixSocket listener, bool nonBlocking, ILinuxAbort? abort, bool overfill = false)
     {
         if (IsConnected)
         {
@@ -149,7 +151,7 @@ internal sealed partial class LinuxUnixSocket
             _connecting = 1;
         }
 
-        long r = listener.Enqueue(this, nonBlocking, abort);
+        long r = listener.Enqueue(this, nonBlocking, abort, overfill);
         if (r < 0)
         {
             lock (_nameGate)
@@ -162,8 +164,9 @@ internal sealed partial class LinuxUnixSocket
     }
 
     /// <summary>Am Lauschenden: wartet auf Platz, verbindet <paramref name="client"/> mit einem neuen Ende und stellt es an.</summary>
-    private long Enqueue(LinuxUnixSocket client, bool nonBlocking, ILinuxAbort? abort)
+    private long Enqueue(LinuxUnixSocket client, bool nonBlocking, ILinuxAbort? abort, bool overfill)
     {
+        long result = 0;
         lock (_nameGate)
         {
             while (true)
@@ -176,6 +179,15 @@ internal sealed partial class LinuxUnixSocket
                 // Linux (unix_recvq_full_lockless): voll erst, wenn mehr als backlog Verbindungen warten.
                 if (_pending.Count <= _backlog)
                 {
+                    break;
+                }
+
+                if (nonBlocking && overfill)
+                {
+                    // V27b, TCP: Linux verwirft das SYN (Rückstand voll), meldet EINPROGRESS und baut beim Wiederholen auf, sobald accept Platz
+                    // schafft. Hier gleich anstellen: gleiche Reihenfolge für accept, nur früher schreibbereit. Begrenzt durch die Zahl der
+                    // Dateideskriptoren der Verbindenden.
+                    result = 1;
                     break;
                 }
 
@@ -194,6 +206,11 @@ internal sealed partial class LinuxUnixSocket
 
             var server = new LinuxUnixSocket(Type, false, CreatorPid);
             server._name = _name; // das angenommene Ende meldet den Namen des Lauschenden (getsockname, getpeername der Gegenseite)
+            if (IsInet)
+            {
+                server.CopyInetFrom(this); // V27: gleicher Port, Adresse 127.0.0.1 bei einem Lauschenden auf 0.0.0.0
+            }
+
             server._bound = true; // Linux: bind auf ein angenommenes Ende -EINVAL (unix_bind: schon ein Name), wie auf ein gebundenes
             server._connecting = 1; // verbunden: listen -EINVAL, connect -EISCONN
             Connect(client, server);
@@ -202,7 +219,7 @@ internal sealed partial class LinuxUnixSocket
         }
 
         WakeIdle(); // poll eines Lauschenden wartet auf _idle
-        return 0;
+        return result;
     }
 
     /// <summary>
@@ -262,10 +279,12 @@ internal sealed partial class LinuxUnixSocket
     {
         LinuxUnixSocket[]? drop = null;
         LinuxUnixNames? names;
+        int inetPort;
         lock (_nameGate)
         {
             names = _names;
             _names = null;
+            inetPort = _inetPort;
             if (_listening)
             {
                 _listening = false;
@@ -276,7 +295,18 @@ internal sealed partial class LinuxUnixSocket
             Monitor.PulseAll(_nameGate); // wartende accept und connect sehen das Ende
         }
 
-        names?.Release(this);
+        // V27b: AF_INET gibt nur den eigenen Port frei (O(1)), Unix-Sockets nur ihre Namen.
+        if (names != null && IsInet)
+        {
+            if (inetPort != 0)
+            {
+                names.Ports.Release(IsInetDgram, inetPort, this);
+            }
+        }
+        else
+        {
+            names?.Release(this);
+        }
 
         // Außerhalb von _nameGate: Close nimmt Link.Gate. Nicht angenommene Verbindungen enden wie bei Linux (Verbindender: EOF/ECONNRESET).
         foreach (LinuxUnixSocket s in drop ?? [])

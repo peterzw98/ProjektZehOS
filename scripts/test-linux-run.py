@@ -3,7 +3,7 @@
 
 Zwei Schritte:
 
-  scripts/test-linux-run.py bundle <buendel> <programm>...
+  scripts/test-linux-run.py bundle <buendel> <programm>... [--file /ziel=quelle ...]
       Packt Programme in ein Buendel (Format ZLR1: Anzahl, je Eintrag Name und Inhalt). Gebaut wird dann mit
       -p:ZehOSLinuxRunProbe=true -p:ZehOSLinuxRunBundle=<buendel>; der Kernel startet beim Boot jedes Programm mit den
       Argumenten und der Umgebung von experiments/LinuxAbi/run-linux.py und haelt danach an.
@@ -46,15 +46,22 @@ def probe():
     return _probe
 
 
-def make_bundle(target: Path, programs: list[Path]) -> None:
-    data = bytearray(MAGIC + struct.pack("<I", len(programs)))
+def make_bundle(target: Path, programs: list[Path], files: list[str] | None = None) -> None:
+    """files: "ZIEL=QUELLE" mit absolutem ZIEL; der Kernel legt diese Dateien vor jedem Programm in dessen Wurzel (V25)."""
+    entries = [(program.name, program) for program in programs]
+    for item in files or []:
+        dest, _, src = item.partition("=")
+        if not dest.startswith("/") or not src or ".." in dest.split("/"):
+            raise ValueError(f"--file braucht /ziel=quelle: {item}")
+        entries.append((dest, Path(src)))
+    data = bytearray(MAGIC + struct.pack("<I", len(entries)))
     names = set()
-    for program in programs:
-        name = program.name.encode()
-        if program.name in names:
-            raise ValueError(f"Name doppelt: {program.name}")
-        names.add(program.name)
-        content = program.read_bytes()
+    for entry_name, source in entries:
+        name = entry_name.encode()
+        if entry_name in names:
+            raise ValueError(f"Name doppelt: {entry_name}")
+        names.add(entry_name)
+        content = source.read_bytes()
         data += struct.pack("<I", len(name)) + name + struct.pack("<I", len(content)) + content
     target.write_bytes(bytes(data))
 
@@ -153,6 +160,7 @@ def main(argv=None) -> int:
     bundle = sub.add_parser("bundle")
     bundle.add_argument("target", type=Path)
     bundle.add_argument("programs", type=Path, nargs="+")
+    bundle.add_argument("--file", action="append", default=[], help="/ziel=quelle: Datei in jede Programmwurzel (V25)")
     run = sub.add_parser("run")
     run.add_argument("--iso", type=Path, required=True)
     run.add_argument("--expected", type=Path, action="append", default=[])
@@ -164,8 +172,8 @@ def main(argv=None) -> int:
     run.add_argument("--timeout", type=float, default=300)
     args = parser.parse_args(argv)
     if args.command == "bundle":
-        make_bundle(args.target, args.programs)
-        print(f"{args.target}: {len(args.programs)} Programme, {args.target.stat().st_size} Byte")
+        make_bundle(args.target, args.programs, args.file)
+        print(f"{args.target}: {len(args.programs)} Programme, {len(args.file)} Dateien, {args.target.stat().st_size} Byte")
         return 0
     statuses = dict(item.split("=", 1) for item in args.status)
     wanted = expectations(args.expected, statuses, args.programs)
