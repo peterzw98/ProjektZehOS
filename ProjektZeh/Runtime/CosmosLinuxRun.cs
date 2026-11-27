@@ -859,8 +859,25 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>Trägt den Thread in <see cref="Running.Threads"/> ein (alle Prozesse des Laufs zusammen); false, wenn voll oder abgebrochen.</summary>
+    /// <summary>
+    /// V43b (laser risk1 P2): Seiten des Kernelstapels eines neuen Threads (<see cref="Cosmos.Kernel.Core.Scheduler.SchedulerThread.DefaultStackSize"/>,
+    /// 256 KiB). Er kommt nicht über <see cref="UserPageTable.AllocateFrame"/> und darf die Reserve deshalb nehmen; 256 Threads wären 64 MiB.
+    /// </summary>
+    private const ulong KernelStackPages = (ulong)Cosmos.Kernel.Core.Scheduler.SchedulerThread.DefaultStackSize / AddressSpaceMap.PageSize;
+
+    /// <summary>
+    /// Belegt einen Platz für einen neuen Thread oder Prozess; false (clone, fork, posix_spawn melden EAGAIN), wenn keiner frei ist oder sein
+    /// Kernelstapel in die Kernel-Reserve griffe (V43b). Die freien Seiten sind ein Schnappschuss ohne Sperre und zählen keine
+    /// zusammenhängenden Läufe; die Prüfung hält die Reserve nur von vielen Threads frei, sie garantiert sie nicht.
+    /// </summary>
     private static bool TakeSlot(Running run, Bridge b)
     {
+        ulong reserved = UserPageTable.ReservedPages;
+        if (reserved != 0 && UserPageTable.FreePages < reserved + KernelStackPages)
+        {
+            return false;
+        }
+
         lock (run.Threads)
         {
             int slot = Array.IndexOf(run.Threads, null);

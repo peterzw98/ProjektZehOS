@@ -93,6 +93,13 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     private readonly LinuxOpenFiles _openFiles;
     private readonly ulong _maxFrames;
 
+    /// <summary>
+    /// V43b: Grenze über private Seiten und die Frames der memfds dieses Prozesses (<see cref="LinuxFrameBudget"/>). Privat heißt hier:
+    /// alle Seiten in <c>_frames</c> außer geteilten aus einer gebuchten Datei (<c>_budgetedShared</c>), die schon beim Erzeuger zählen.
+    /// </summary>
+    private readonly LinuxFrameBudget _budget;
+    private int _budgetedShared;
+
     /// <summary>V43: Ein <see cref="NewFrame"/> unter <see cref="_memGate"/> bekam keinen Frame; nur für den laufenden Seitenfehler.</summary>
     private bool _noFrame;
 
@@ -133,6 +140,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         _pgid = pid; // V35: allein in Gruppe und Sitzung, bis fork, vfork oder execve sie vom Elternprozess übernehmen
         _sid = pid;
         _maxFrames = maxBytes / Page;
+        _budget = new LinuxFrameBudget(_maxFrames);
 
         // Der Hauptthread trägt die PID als TID (Linux: Thread-Gruppenführer); weitere TIDs vergibt _ids (NextTid über alle Prozesse).
         MainThread = new LinuxThread(pid);
@@ -896,6 +904,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
                 }
 
                 _frames[page] = frame;
+                SyncBudget();
             }
         }
 
@@ -1396,12 +1405,19 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         }
 
         _frames[page] = frame;
+        SyncBudget();
         return frame;
     }
 
+    /// <summary>V43b: Seiten, die gegen diesen Prozess zählen, ohne die Frames seiner memfds; unter <c>_memGate</c>.</summary>
+    private long PrivateFrames => _frames.Count - _budgetedShared;
+
+    /// <summary>V43b: meldet <see cref="PrivateFrames"/> an die Grenze, nach jeder Änderung von <c>_frames</c>; unter <c>_memGate</c>.</summary>
+    private void SyncBudget() => _budget.SetPrivate(PrivateFrames);
+
     private ulong NewFrame()
     {
-        ulong frame = (ulong)_frames.Count >= _maxFrames ? 0 : _pages.AllocateFrame();
+        ulong frame = !_budget.AllowsPrivate(PrivateFrames) ? 0 : _pages.AllocateFrame();
         _noFrame |= frame == 0;
         return frame;
     }
