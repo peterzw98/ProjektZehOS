@@ -30,16 +30,26 @@ internal sealed class ElfLoadOptions
     /// <summary>Größe des Stacks (Vielfaches der Seitengröße).</summary>
     public ulong StackSize { get; init; } = 8UL << 20;
 
-    /// <summary>Obergrenze für die Summe der Segmentgrößen im Speicher, damit ein Kopf mit riesigem .bss den Prozessstart nicht
-    /// den ganzen Speicher anfordern lässt.</summary>
+    /// <summary>Obergrenze für die Summe der Segmentgrößen im Speicher (Programm und Interpreter zusammen), damit ein Kopf mit
+    /// riesigem .bss den Prozessstart nicht den ganzen Speicher anfordern lässt.</summary>
     public ulong MaxImageSize { get; init; } = 1UL << 30;
+
+    /// <summary>V25: liest den Interpreter aus PT_INTERP (absoluter Pfad in der Prozesswurzel). Ohne Leser lehnt der Lader dynamisch
+    /// gelinkte Programme mit ENOENT ab, wie Linux bei fehlendem Interpreter.</summary>
+    public ElfFileReader? ReadInterpreter { get; init; }
 }
 
+/// <summary>Liest eine Datei ganz: 0 oder -errno (etwa -ENOENT), bei Erfolg der Inhalt in <paramref name="content"/>.</summary>
+internal delegate long ElfFileReader(string path, out byte[] content);
+
 /// <summary>
-/// Lader für statische ELF64-Programme (x86-64, Linux-ABI): ET_EXEC an den Adressen der Datei und statisch-PIE (ET_DYN ohne
-/// PT_INTERP) ab <see cref="PieBase"/>. Programme mit Interpreter (dynamisch gelinkt) gehören zu S2 und werden abgelehnt.
+/// Lader für ELF64-Programme (x86-64, Linux-ABI): ET_EXEC an den Adressen der Datei, ET_DYN (PIE) ab <see cref="PieBase"/>.
 /// Statisch-PIE verschiebt sich selbst (musl <c>_dlstart_c</c> findet die Basis über AT_PHDR und PT_DYNAMIC, AT_BASE ist 0
 /// wie bei Linux ohne Interpreter); der Lader wendet deshalb keine Relokationen an.
+/// V25: Mit PT_INTERP (dynamisch gelinkt) lädt er zusätzlich den Interpreter (musl: <c>/lib/ld-musl-x86_64.so.1</c>, über
+/// <see cref="ElfLoadOptions.ReadInterpreter"/>) ab <see cref="InterpreterBase"/> und springt dort hinein; AT_BASE nennt dessen
+/// Verschiebung, AT_PHDR, AT_PHNUM und AT_ENTRY beschreiben weiter das Programm. Den Rest (Bibliotheken, Relokationen) erledigt der
+/// Interpreter im Ring 3 über open, mmap und mprotect.
 /// Der Startstack folgt dem System-V-ABI für x86-64: argc, argv, NULL, envp, NULL, Hilfsvektor (Satz S1 des Entwurfs), darüber die
 /// Zeichenketten und die 16 Zufallsbytes.
 /// </summary>
@@ -55,6 +65,15 @@ internal static class ElfLoader
 
     /// <summary>Lage von statisch-PIE, dieselbe wie Linux ohne Zufall (ELF_ET_DYN_BASE). Feste Lage, bis es Zufall im Adressraum gibt.</summary>
     public const ulong PieBase = 0x0000_5555_5555_4000;
+
+    /// <summary>V25: Lage des Interpreters. Linux legt ihn unter die mmap-Basis nahe dem Stack (mit Zufall); ZehOS nimmt eine feste Adresse
+    /// weit über PIE, Heap und der mmap-Basis von <see cref="LinuxUserProcess"/>, unter dem Stack.</summary>
+    public const ulong InterpreterBase = 0x0000_7F00_0000_0000;
+
+    /// <summary>Längster Interpreterpfad samt Null, wie PATH_MAX bei Linux (binfmt_elf lehnt längere ab).</summary>
+    private const ulong MaxInterpreterPath = 4096;
+
+    private const long ENoEnt = 2;
 
     /// <summary>Platz für argv, envp und Hilfsvektor höchstens ein Viertel des Stacks, wie bei Linux (ARG_MAX-Regel).</summary>
     private const int StackInfoDivisor = 4;
@@ -87,23 +106,137 @@ internal static class ElfLoader
         ulong stackBottom = stackTop - options.StackSize;
         ulong guard = stackBottom - PageSize;
 
-        List<ElfProgramHeader> loads = new();
-        ulong lowestPage = ulong.MaxValue;
         ulong total = 0;
-        bool hasPhdr = false;
-        ulong phdrVaddr = 0;
+        List<ElfProgramHeader> loads = CollectLoads(file, elf, options, ref total, out ulong lowestPage, out bool hasPhdr, out ulong phdrVaddr, out string? interpreterPath);
+
+        // ET_EXEC liegt, wo die Datei sagt; ET_DYN so, dass die niedrigste Seite auf PieBase kommt.
+        ulong bias = 0;
+        if (file.Type == ElfFile.TypeShared && lowestPage < PieBase)
+        {
+            bias = PieBase - lowestPage;
+        }
+
+        UserSegment[] segments = Place(loads, bias, guard, false, out ulong highest);
+        UserRegion[] segmentRegions = BuildRegions(segments);
+        // Einsprung und PT_PHDR kommen frei aus der Datei: mit der PIE-Verschiebung kann die Summe überlaufen und auf eine
+        // gültige Adresse zurückfallen. Das wird vorher abgelehnt statt sich auf die Bereichsprüfung danach zu verlassen.
+        ulong programEntry = AddBias(file.Entry, bias, "Der Einsprung");
+        if (!IsExecutable(segmentRegions, programEntry))
+        {
+            throw new ElfLoadException("Der Einsprung 0x" + file.Entry.ToString("X", CultureInfo.InvariantCulture) + " liegt in keinem ausführbaren Segment.");
+        }
+
+        ulong phdrAddress = ProgramHeaderAddress(file, loads, hasPhdr, phdrVaddr, bias);
+        if (!IsMapped(segmentRegions, phdrAddress, (ulong)file.ProgramHeaderCount * ElfFile.ProgramHeaderSize))
+        {
+            throw new ElfLoadException("Die Programmköpfe liegen in keinem geladenen Segment (AT_PHDR).");
+        }
+
+        // V25: Interpreter. Der Einsprung wechselt zu ihm; AT_ENTRY bleibt der Einsprung des Programms.
+        ulong entry = programEntry;
+        ulong interpreterBias = 0;
+        byte[]? interpreter = null;
+        UserSegment[] interpreterSegments = [];
+        UserRegion[] interpreterRegions = [];
+        if (interpreterPath != null)
+        {
+            interpreter = ReadInterpreterFile(interpreterPath, options);
+            ElfFile interpreterFile = ElfFile.Parse(interpreter);
+            if (interpreterFile.Type != ElfFile.TypeShared)
+            {
+                throw new ElfLoadException("Der Interpreter " + interpreterPath + " ist kein ET_DYN.");
+            }
+
+            List<ElfProgramHeader> interpreterLoads = CollectLoads(interpreterFile, interpreter, options, ref total, out ulong interpreterLowest, out _, out _, out string? nested);
+            if (nested != null)
+            {
+                throw new ElfLoadException("Der Interpreter " + interpreterPath + " verlangt selbst einen Interpreter.");
+            }
+
+            if (interpreterLowest > InterpreterBase)
+            {
+                throw new ElfLoadException("Der Interpreter " + interpreterPath + " liegt zu hoch für seine Basis.");
+            }
+
+            interpreterBias = InterpreterBase - interpreterLowest;
+            interpreterSegments = Place(interpreterLoads, interpreterBias, guard, true, out _);
+            interpreterRegions = BuildRegions(interpreterSegments);
+            if (Overlaps(segmentRegions, interpreterRegions))
+            {
+                throw new ElfLoadException("Programm und Interpreter überschneiden sich im Adressraum.");
+            }
+
+            entry = AddBias(interpreterFile.Entry, interpreterBias, "Der Einsprung des Interpreters");
+            if (!IsExecutable(interpreterRegions, entry))
+            {
+                throw new ElfLoadException("Der Einsprung des Interpreters liegt in keinem ausführbaren Segment.");
+            }
+        }
+
+        byte[] random = options.Random;
+        string execFn = options.ExecFn ?? (argv.Length > 0 ? argv[0] : string.Empty);
+        ulong[] auxv =
+        [
+            AtPhdr, phdrAddress,
+            AtPhent, ElfFile.ProgramHeaderSize,
+            AtPhnum, (ulong)file.ProgramHeaderCount,
+            AtPagesz, PageSize,
+            AtBase, interpreterBias,
+            AtFlags, 0,
+            AtEntry, programEntry,
+            AtUid, options.Uid,
+            AtEuid, options.Uid,
+            AtGid, options.Gid,
+            AtEgid, options.Gid,
+            AtHwcap, options.HwCap,
+            AtClktck, 100,
+            AtSecure, 0,
+            AtRandom, 0, // Adresse folgt beim Aufbau
+            AtExecfn, 0, // Adresse folgt beim Aufbau
+            AtNull, 0,
+        ];
+
+        byte[] stack = BuildStack(stackTop, argv, envp, execFn, random, auxv, options.StackSize / StackInfoDivisor, out ulong stackPointer);
+
+        var regions = new List<UserRegion>(segmentRegions.Length + interpreterRegions.Length + 2);
+        regions.AddRange(segmentRegions);
+        regions.AddRange(interpreterRegions);
+        regions.Sort((a, b) => a.Start.CompareTo(b.Start));
+        regions.Add(new UserRegion(guard, stackBottom, MapAccess.None));
+        regions.Add(new UserRegion(stackBottom, stackTop, MapAccess.ReadWrite));
+        UserSegment[] all = new UserSegment[segments.Length + interpreterSegments.Length];
+        segments.CopyTo(all, 0);
+        interpreterSegments.CopyTo(all, segments.Length);
+        return new UserImage(entry, stackPointer, bias, phdrAddress, highest, stackBottom, stackTop, all, regions.ToArray(), stack, elf.Length, options.Uid, options.Gid)
+        {
+            Interpreter = interpreter,
+            InterpreterBias = interpreterBias,
+        };
+    }
+
+    /// <summary>Liest die ladbaren Segmente einer Datei, zählt sie gegen <see cref="ElfLoadOptions.MaxImageSize"/> und findet PT_PHDR und PT_INTERP.</summary>
+    private static List<ElfProgramHeader> CollectLoads(ElfFile file, ReadOnlySpan<byte> bytes, ElfLoadOptions options, ref ulong total, out ulong lowestPage,
+        out bool hasPhdr, out ulong phdrVaddr, out string? interpreterPath)
+    {
+        List<ElfProgramHeader> loads = new();
+        lowestPage = ulong.MaxValue;
+        hasPhdr = false;
+        phdrVaddr = 0;
+        interpreterPath = null;
         foreach (ElfProgramHeader ph in file.ProgramHeaders)
         {
             switch (ph.Type)
             {
                 case ElfProgramHeader.Interpreter:
-                    throw new ElfLoadException("Dynamisch gelinkte Programme (PT_INTERP) werden noch nicht unterstützt (Satz S2).");
+                    // Wie binfmt_elf: der erste PT_INTERP zählt.
+                    interpreterPath ??= ReadInterpreterPath(bytes, ph);
+                    break;
                 case ElfProgramHeader.ProgramHeaders:
                     hasPhdr = true;
                     phdrVaddr = ph.VirtualAddress;
                     break;
                 case ElfProgramHeader.Load:
-                    ValidateLoad(ph, elf.Length);
+                    ValidateLoad(ph, bytes.Length);
                     if (ph.MemorySize == 0)
                     {
                         break;
@@ -129,75 +262,88 @@ internal static class ElfLoader
         }
 
         RejectOverlaps(loads);
+        return loads;
+    }
 
-        // ET_EXEC liegt, wo die Datei sagt; statisch-PIE so, dass die niedrigste Seite auf PieBase kommt.
-        ulong bias = 0;
-        if (file.Type == ElfFile.TypeShared && lowestPage < PieBase)
-        {
-            bias = PieBase - lowestPage;
-        }
-
+    /// <summary>Verschiebt die Segmente um <paramref name="bias"/> und prüft, dass sie zwischen MinAddress und der Schutzseite liegen.</summary>
+    private static UserSegment[] Place(List<ElfProgramHeader> loads, ulong bias, ulong guard, bool interpreter, out ulong highest)
+    {
         var segments = new UserSegment[loads.Count];
-        ulong highest = 0;
+        highest = 0;
         for (int i = 0; i < loads.Count; i++)
         {
             ElfProgramHeader ph = loads[i];
             ulong start = ph.VirtualAddress & ~(PageSize - 1);
             ulong end = PageUp(ph.VirtualAddress + ph.MemorySize);
-            if (start > guard - bias || end > guard - bias || start + bias < MinAddress)
+            if (bias > guard || start > guard - bias || end > guard - bias || start + bias < MinAddress)
             {
                 throw new ElfLoadException("Segment bei 0x" + ph.VirtualAddress.ToString("X", CultureInfo.InvariantCulture) + " liegt außerhalb des nutzbaren Benutzerraums.");
             }
 
-            segments[i] = new UserSegment(ph.VirtualAddress + bias, ph.MemorySize, ph.Offset, ph.FileSize, AccessOf(ph.Flags));
+            segments[i] = new UserSegment(ph.VirtualAddress + bias, ph.MemorySize, ph.Offset, ph.FileSize, AccessOf(ph.Flags), interpreter);
             highest = Math.Max(highest, end + bias);
         }
 
-        UserRegion[] segmentRegions = BuildRegions(segments);
-        // Einsprung und PT_PHDR kommen frei aus der Datei: mit der PIE-Verschiebung kann die Summe überlaufen und auf eine
-        // gültige Adresse zurückfallen. Das wird vorher abgelehnt statt sich auf die Bereichsprüfung danach zu verlassen.
-        ulong entry = AddBias(file.Entry, bias, "Der Einsprung");
-        if (!IsExecutable(segmentRegions, entry))
+        return segments;
+    }
+
+    /// <summary>
+    /// Pfad aus PT_INTERP wie binfmt_elf: 2 bis PATH_MAX Bytes, das letzte eine Null; gilt bis zur ersten Null. ZehOS verlangt
+    /// zusätzlich einen absoluten Pfad: einen relativen löste Linux gegen das Arbeitsverzeichnis auf, das hat kein Programm.
+    /// </summary>
+    private static string ReadInterpreterPath(ReadOnlySpan<byte> bytes, ElfProgramHeader ph)
+    {
+        if (ph.FileSize < 2 || ph.FileSize > MaxInterpreterPath || !ElfFile.FitsInFile(ph.Offset, ph.FileSize, bytes.Length))
         {
-            throw new ElfLoadException("Der Einsprung 0x" + file.Entry.ToString("X", CultureInfo.InvariantCulture) + " liegt in keinem ausführbaren Segment.");
+            throw new ElfLoadException("PT_INTERP hat eine ungültige Länge oder liegt außerhalb der Datei.");
         }
 
-        ulong phdrAddress = ProgramHeaderAddress(file, loads, hasPhdr, phdrVaddr, bias);
-        if (!IsMapped(segmentRegions, phdrAddress, (ulong)file.ProgramHeaderCount * ElfFile.ProgramHeaderSize))
+        ReadOnlySpan<byte> raw = bytes.Slice((int)ph.Offset, (int)ph.FileSize);
+        if (raw[^1] != 0)
         {
-            throw new ElfLoadException("Die Programmköpfe liegen in keinem geladenen Segment (AT_PHDR).");
+            throw new ElfLoadException("PT_INTERP endet nicht mit einer Null.");
         }
 
-        byte[] random = options.Random;
-        string execFn = options.ExecFn ?? (argv.Length > 0 ? argv[0] : string.Empty);
-        ulong[] auxv =
-        [
-            AtPhdr, phdrAddress,
-            AtPhent, ElfFile.ProgramHeaderSize,
-            AtPhnum, (ulong)file.ProgramHeaderCount,
-            AtPagesz, PageSize,
-            AtBase, 0,
-            AtFlags, 0,
-            AtEntry, entry,
-            AtUid, options.Uid,
-            AtEuid, options.Uid,
-            AtGid, options.Gid,
-            AtEgid, options.Gid,
-            AtHwcap, options.HwCap,
-            AtClktck, 100,
-            AtSecure, 0,
-            AtRandom, 0, // Adresse folgt beim Aufbau
-            AtExecfn, 0, // Adresse folgt beim Aufbau
-            AtNull, 0,
-        ];
+        raw = raw.Slice(0, raw.IndexOf((byte)0));
+        if (raw.Length == 0 || raw[0] != (byte)'/')
+        {
+            throw new ElfLoadException("PT_INTERP nennt keinen absoluten Pfad.");
+        }
 
-        byte[] stack = BuildStack(stackTop, argv, envp, execFn, random, auxv, options.StackSize / StackInfoDivisor, out ulong stackPointer);
+        return Encoding.UTF8.GetString(raw);
+    }
 
-        var regions = new List<UserRegion>(segmentRegions.Length + 2);
-        regions.AddRange(segmentRegions);
-        regions.Add(new UserRegion(guard, stackBottom, MapAccess.None));
-        regions.Add(new UserRegion(stackBottom, stackTop, MapAccess.ReadWrite));
-        return new UserImage(entry, stackPointer, bias, phdrAddress, highest, stackBottom, stackTop, segments, regions.ToArray(), stack, elf.Length, options.Uid, options.Gid);
+    private static byte[] ReadInterpreterFile(string path, ElfLoadOptions options)
+    {
+        if (options.ReadInterpreter == null)
+        {
+            throw new ElfLoadException("Interpreter " + path + " nicht erreichbar (kein Dateisystem).", ElfLoadError.InterpreterUnavailable) { Errno = ENoEnt };
+        }
+
+        long r = options.ReadInterpreter(path, out byte[] content);
+        if (r < 0)
+        {
+            throw new ElfLoadException("Interpreter " + path + " nicht lesbar (errno " + (-r).ToString(CultureInfo.InvariantCulture) + ").", ElfLoadError.InterpreterUnavailable) { Errno = -r };
+        }
+
+        return content ?? throw new ElfLoadException("Interpreter " + path + " ohne Inhalt.");
+    }
+
+    // Beide Listen sind sortiert und in sich überlappungsfrei.
+    private static bool Overlaps(UserRegion[] a, UserRegion[] b)
+    {
+        foreach (UserRegion x in a)
+        {
+            foreach (UserRegion y in b)
+            {
+                if (x.Start < y.End && y.Start < x.End)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static void ValidateLoad(ElfProgramHeader ph, int fileLength)

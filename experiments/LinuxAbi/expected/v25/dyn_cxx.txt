@@ -1,0 +1,7 @@
+global ctor
+sortiert c++,ladybird,musl,os,zeh,
+a=5;b=2;c=1;d=1;r=2;
+gefangen: tief geworfen
+out_of_range ok
+thread 49 haupt 7
+global dtor

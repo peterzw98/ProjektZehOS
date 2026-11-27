@@ -23,7 +23,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 20 | `writev` | höchstens 1024 Einträge, Summe über 0x7ffff000 ergibt `-EINVAL` (Abweichung: Linux kürzt stattdessen), Einträge werden vorab gelesen |
 | 60, 231 | `exit`, `exit_group` | `ILinuxProcess.Exit(code & 0xff)` |
 | 12 | `brk` | wie Linux: bei Fehler der alte Wert, nie ein Fehlercode |
-| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), `MAP_SHARED` einer memfd geteilt (V17), Datei mit `MAP_FIXED` `-EINVAL`; fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
+| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), `MAP_SHARED` einer memfd geteilt (V17), Datei mit `MAP_FIXED` ersetzt den Bereich (V25, siehe unten); fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
 | 11, 10 | `munmap`, `mprotect` | Länge wird auf Seiten aufgerundet; `-EINVAL` bei unausgerichteter Adresse, Länge oder Adresse über 2^47, unbekannten `prot`-Bits, `munmap` mit Länge 0; `mprotect` mit Länge 0 liefert 0; `mprotect` ohne Abdeckung `-ENOMEM` |
 | 158 | `arch_prctl` | `ARCH_SET_FS` (nur Adressen der Benutzerhälfte, sonst `-EPERM`), `ARCH_GET_FS`; sonst `-EINVAL` |
 | 218 | `set_tid_address` | merkt die Adresse je Thread, liefert die Thread-ID (V10) |
@@ -309,8 +309,7 @@ Ladybird sucht seine ICU-Daten (`icudt78l.dat`, 27 MB) über `readlink("/proc/se
   Punkt: Spätere Änderungen an der Datei sieht die Abbildung nicht. `MAP_SHARED` geht deshalb nur ohne `PROT_WRITE`; beschreibbar geteilt bleibt
   `-ENODEV` (nichts flösse in die Datei zurück). Weitere Fehler: Terminal und Verzeichnis `-ENODEV`, nur zum Schreiben geöffnet `-EACCES`,
   unbekannter fd `-EBADF`. Seiten hinter dem Dateiende lesen sich als Nullen statt `SIGBUS`; über 2 GiB hinaus bleibt der Rest Null.
-- `MAP_FIXED` mit Datei-fd liefert `-EINVAL` (Abweichung; der alte Bereich bleibt unberührt). Nur ein dynamischer Lader bräuchte es, und `PT_INTERP`
-  wird abgelehnt. Scheitert die Kopie mittendrin (Speichermangel `-ENOMEM`, Lesefehler, Abbruch `-EINTR`), gibt `mmap` den Bereich frei und meldet den Fehler;
+- `MAP_FIXED` mit Datei-fd: seit V25 erlaubt (siehe „Dynamisch gelinkte Programme (V25)“). Scheitert die Kopie mittendrin (Speichermangel `-ENOMEM`, Lesefehler, Abbruch `-EINTR`), gibt `mmap` den Bereich frei und meldet den Fehler;
   eine teilweise gefüllte Abbildung bleibt nie zurück.
 - Die Kopie belegt sofort Speicher in voller Länge (ICU: 27 MB von 512 MiB je Programm) und läuft unter der Dateisperre (V11), darin die Speichersperre.
 - Geprüft im Gast (KVM, smp1): `js` findet und lädt die ICU-Daten; der nächste fehlende Aufruf ist `pipe2` (Ereignisschleife, `EventLoopImplementationUnix.cpp:165`).
@@ -347,7 +346,7 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxSpawn.cs`, `LinuxWait.cs`, `L
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
 | 56, 58 | `clone` (vfork-Form), `vfork` | `CLONE_VM|CLONE_VFORK` und Austrittssignal (sonst nichts): das Kind ist ein eigener Prozess (PID aus dem gemeinsamen Namensraum der PIDs und TIDs eines Laufs, Kopie der Deskriptortabelle samt `FD_CLOEXEC`, Handler, Arbeitsverzeichnis) auf dem Speicher und Stack aus `clone` (0: der bisherige) des Elternprozesses; dessen aufrufender Thread wartet, bis das Kind `execve` oder `exit` ruft, und bekommt dann die PID. vfork im vfork-Kind und andere Flags `-ENOSYS`, ohne Mittel `-EAGAIN` |
-| 59 | `execve` | im vfork-Kind; außerhalb davon seit V19 Ersatz des eigenen Abbilds (mit weiteren Threads `-ENOSYS`: kein Austausch des Adressraums unter laufenden Threads); Pfadfehler wie `open`, keine reguläre Datei `-EACCES`, über 128 MiB `-ENOMEM`; argv/envp: Zeichenkette über 128 KiB, mehr als 32768 Einträge oder zusammen über 2 MiB `-E2BIG`; ELF-Fehler `-ENOEXEC` (auch `PT_INTERP` und Segmente mit Schreib- und Ausführrecht, W^X), kaputte Argumente `-EINVAL`. Danach: neuer Adressraum, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` (SIG_IGN und Signalmaske bleiben, der Alternativstack nicht), während vfork gemerkte Signale zugestellt (siehe `kill`, V10) |
+| 59 | `execve` | im vfork-Kind; außerhalb davon seit V19 Ersatz des eigenen Abbilds (mit weiteren Threads `-ENOSYS`: kein Austausch des Adressraums unter laufenden Threads); Pfadfehler wie `open`, keine reguläre Datei `-EACCES`, über 128 MiB `-ENOMEM`; argv/envp: Zeichenkette über 128 KiB, mehr als 32768 Einträge oder zusammen über 2 MiB `-E2BIG`; ELF-Fehler `-ENOEXEC` (auch Segmente mit Schreib- und Ausführrecht, W^X); fehlt der Interpreter aus `PT_INTERP`, dessen Fehlernummer (meist `-ENOENT`, V25), kaputte Argumente `-EINVAL`. Danach: neuer Adressraum, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` (SIG_IGN und Signalmaske bleiben, der Alternativstack nicht), während vfork gemerkte Signale zugestellt (siehe `kill`, V10) |
 | 61 | `wait4` | `pid > 0`, `-1`, `0` (eigene Gruppe), `< -1` (Gruppe); `WNOHANG` (0 ohne fertiges Kind); `WUNTRACED`/`WCONTINUED` angenommen, warten aber nur auf das Ende (keine gestoppten Prozesse); Status wie Linux (`exit n`: n << 8, Signal: Nummer); rusage Nullen (keine Rechenzeit je Prozess); kein passendes Kind `-ECHILD`, unbekannte Optionen `-EINVAL`, `INT_MIN` `-ESRCH`; `-EFAULT` nach dem Abholen wie Linux |
 | 247 | `waitid` | `P_ALL`, `P_PID`, `P_PGID` (`P_PIDFD` `-EINVAL`: es gibt keine pidfds); `WEXITED` nötig, `WNOWAIT` lässt das Kind stehen; mit `WNOHANG` ohne fertiges Kind Nullen in `si_signo`/`si_pid` |
 | 110 | `getppid` | PID des Elternprozesses, 0 beim ersten Prozess des Laufs; Waisen behalten die tote PID |
@@ -553,3 +552,26 @@ Elternprozesses, und fork scheitert mit `-ENOMEM`, wenn der Rechner nicht genug 
 futex-Tabelle gehört weiter einem Prozess: Ein `FUTEX_WAKE` aus einem anderen Prozess (geteilter Speicher nach fork) weckt nicht sofort, der Wartende
 merkt nur eine Wertänderung nach höchstens einer Scheibe; ein Wecken ohne Wertänderung über Prozesse geht verloren, `FUTEX_REQUEUE` über Prozesse fehlt.
 Threads beginnen weiter mit frischem FPU-Zustand (nur das fork-Kind übernimmt ihn). Signale während fork an die Eltern erreicht das Kind nicht.
+
+## Dynamisch gelinkte Programme (V25)
+
+Ladybirds Prozesse aus dem D2-Bau (WebContent, RequestServer, ImageDecoder) sind dynamisch gegen Alpine-musl gelinkt und brauchen `ld-musl`, `libstdc++` und
+`libgcc_s` (WebContent auch `libdrm`). Der Kern lädt dafür nur den Interpreter; Bibliotheken lädt und verschiebt `ld-musl` selbst im Ring 3.
+
+- **Lader (`ElfLoader`):** Hat das Programm `PT_INTERP` (erster gilt; 2 bis 4096 Bytes mit abschließender Null wie `binfmt_elf`, zusätzlich absoluter Pfad),
+  liest er den Interpreter aus der Prozesswurzel: bei `execve` über das Dateisystem des Prozesses, beim ersten Programm von `run` direkt von der Platte unter der
+  Wurzel (ohne Wurzel auf der Platte `-ENOENT`; `..` wird abgelehnt; Verweisen folgt dieser erste Zugriff nicht). Der Interpreter muss `ET_DYN` ohne eigenes
+  `PT_INTERP` sein und kommt mit seiner niedrigsten Seite an die feste Adresse `0x7F00_0000_0000` (Linux: unter der mmap-Basis, mit Zufall). Für ihn gelten
+  dieselben Prüfungen wie für das Programm (W^X, Überschneidung, Benutzerraum), die Größengrenze zählt beide zusammen; mit dem Programm überschneiden darf er sich nicht.
+- **Einsprung und Hilfsvektor:** RIP ist der Einsprung des Interpreters. `AT_BASE` ist dessen Verschiebung, `AT_PHDR`, `AT_PHNUM` und `AT_ENTRY` beschreiben
+  das Programm (PIE ab `0x5555_5555_4000`). `brk` beginnt hinter dem Programm. Ohne `PT_INTERP` bleibt alles wie zuvor (`AT_BASE` 0).
+- **`mmap` mit Datei und `MAP_FIXED`:** wie `map_library` in musl (Spanne abbilden, dann jedes Segment mit `MAP_FIXED` aus der Datei, auch mit `PROT_EXEC`).
+  Der Altbestand wird ersetzt und die Kopie in die neuen Seiten gelesen. Vorab geprüft, mit stehen bleibendem Altbestand: unausgerichtete Adresse oder über 2^47
+  `-EINVAL`, Datei nur zum Schreiben offen `-EACCES`, Schreiben und Ausführen zugleich `-ENOMEM` (W^X). Scheitert die Kopie danach (Speicher, Lesefehler,
+  Abbruch), bleibt an der Stelle ein Loch, wie bei Linux. `MAP_SHARED|MAP_FIXED` einer memfd bleibt `-EINVAL`.
+- **Grenzen:** kein vDSO (Linux zählt ihn als weiteres Objekt in `dl_iterate_phdr`); Dateiabbildungen bleiben Kopien (jede Bibliothek belegt ihren Speicher je
+  Prozess, nichts wird zwischen Prozessen geteilt); keine Zufallslage (ASLR).
+- **Geprüft im Gast** (KVM, smp1 und smp4, Bündel mit `--file` für `/lib/ld-musl-x86_64.so.1`, `/usr/lib/libstdc++.so.6`, `/usr/lib/libgcc_s.so.1` aus
+  Alpine 3.24): `dyn_hello` (Hilfsvektor, malloc, `dlopen` von `libgcc_s.so.1`) und `dyn_cxx` (iostream, Container, Ausnahme über 20 Rahmen, `std::thread` mit
+  `thread_local`, statische Konstruktoren und Destruktoren) gleich wie unter Linux (`experiments/LinuxAbi/src/v25`, Bau mit `ALPINE_ROOT`). Nicht geprüft:
+  `execve` eines dynamischen Programms aus einem laufenden Programm (gleicher Lader, anderer Dateizugriff), VMware.
