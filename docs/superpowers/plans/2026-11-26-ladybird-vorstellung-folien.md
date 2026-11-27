@@ -47,7 +47,7 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 
 ## 7. Grenzen (ehrlich)
 
-- Alle Threads eines Programms auf einer CPU; fork kopiert den Adressraum sofort (kein Copy-on-Write).
+- Alle Threads **aller Prozesse eines Laufs** auf einer CPU (4 CPUs bringen Ladybird noch keine Parallelität, laser Risiko-Review 27.11.); fork kopiert den Adressraum sofort (kein Copy-on-Write).
 - Netz nur über Loopback, keine Fenster für Linux-Programme; FAT ohne symbolische Links und ohne echte Rechte.
 - Nicht geprüft: VMware, echte Hardware.
 
