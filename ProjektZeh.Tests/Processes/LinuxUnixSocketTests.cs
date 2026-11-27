@@ -20,7 +20,7 @@ public sealed class LinuxUnixSocketTests
     private const int Stream = 1, Seqpacket = 5, Dgram = 2, SockNonblock = 0x800, SockCloexec = 0x80000;
     private const int MsgPeek = 2, MsgCtrunc = 8, MsgTrunc = 0x20, MsgDontwait = 0x40, MsgWaitall = 0x100;
     private const long EBADF = 9, EAGAIN = 11, EFAULT = 14, EINVAL = 22, EPIPE = 32, ENOTSOCK = 88, EMSGSIZE = 90, ESOCKTNOSUPPORT = 94,
-        EAFNOSUPPORT = 97, EISCONN = 106;
+        EAFNOSUPPORT = 97, EISCONN = 106, ECONNREFUSED = 111;
 
     private sealed class Pages : IUserPages
     {
@@ -225,7 +225,7 @@ public sealed class LinuxUnixSocketTests
     {
         var f = new Fixture();
         Assert.AreEqual(-EAFNOSUPPORT, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 2, Stream, 0, f.Pair));
-        Assert.AreEqual(-ESOCKTNOSUPPORT, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 1, Dgram, 0, f.Pair));
+        Assert.AreEqual(-ESOCKTNOSUPPORT, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 1, 3 /* SOCK_RAW */, 0, f.Pair));
         Assert.AreEqual(-EFAULT, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 1, Stream, 0, 8));
         var (a, b) = f.SocketPair(Stream | SockNonblock | SockCloexec);
         Assert.AreEqual(-EAGAIN, f.ReadBytes(a, 4, out _), "SOCK_NONBLOCK");
@@ -254,6 +254,59 @@ public sealed class LinuxUnixSocketTests
         Assert.AreEqual(2, f.RecvMsg(b, 1, 0, out _, out _, out _, MsgTrunc), "MSG_TRUNC liefert die ganze Länge");
         var s = (LinuxUnixSocket)f.Parent.GetDescriptor(a)!;
         Assert.AreEqual(-EMSGSIZE, s.Send(new byte[LinuxUnixSocket.Capacity + 1], null, false, null, out _));
+    }
+
+    [TestMethod]
+    public void DgramPaarHaeltNachrichtengrenzenUndReichtDateienDurch()
+    {
+        var f = new Fixture();
+        var (a, b) = f.SocketPair(Dgram);
+        Assert.AreEqual(5, f.SendMsg(a, B("hallo")));
+        Assert.AreEqual(0, f.SendMsg(a, []), "leeres Datagramm ist erlaubt");
+        Assert.AreEqual(3, f.SendMsg(a, B("du!")));
+        Assert.AreEqual(4, f.RecvMsg(b, 4, 0, out byte[] got, out _, out int flags));
+        Assert.AreEqual("hall", S(got));
+        Assert.AreEqual(MsgTrunc, flags);
+        Assert.AreEqual(0, f.RecvMsg(b, 16, 0, out _, out _, out _), "das leere Datagramm kommt als eigene Nachricht");
+        Assert.AreEqual(3, f.RecvMsg(b, 16, 0, out got, out _, out flags));
+        Assert.AreEqual("du!", S(got));
+        Assert.AreEqual(0, flags);
+        Assert.AreEqual(-EAGAIN, f.RecvMsg(b, 16, 0, out _, out _, out _, MsgDontwait));
+
+        var (r, w) = f.MakePipe();
+        Assert.AreEqual(1, f.SendMsg(b, B("F"), [w]));
+        Assert.AreEqual(1, f.RecvMsg(a, 16, 64, out got, out int[] fds, out _));
+        Assert.AreEqual(1, fds.Length, "unix_fdpass: SCM_RIGHTS über SOCK_DGRAM");
+        Assert.AreEqual(2, f.WriteBytes(fds[0], B("ok")));
+        Assert.AreEqual(2, f.ReadBytes(r, 16, out got));
+    }
+
+    [TestMethod]
+    public void DgramKenntKeinEofSondernEconnrefusedNachCloseDerGegenseite()
+    {
+        var f = new Fixture();
+        var (a, b) = f.SocketPair(Dgram | SockNonblock);
+        Assert.AreEqual(1, f.SendMsg(a, B("x")));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Close, (ulong)a));
+        Assert.AreEqual(1, f.RecvMsg(b, 16, 0, out _, out _, out _), "Gepuffertes bleibt lesbar");
+        Assert.AreEqual(-EAGAIN, f.RecvMsg(b, 16, 0, out _, out _, out _), "kein EOF bei Dgram");
+        Assert.AreEqual(-ECONNREFUSED, f.SendMsg(b, B("y")));
+        Assert.AreEqual(0, ((LinuxUnixSocket)f.Parent.GetDescriptor(b)!).Shutdown(0));
+        Assert.AreEqual(0, f.RecvMsg(b, 16, 0, out _, out _, out _), "eigenes SHUT_RD: 0");
+    }
+
+    [TestMethod]
+    public void SigpendingMeldetNurBlockierteAnhaengige()
+    {
+        var f = new Fixture();
+        const long RtSigpending = 127, RtSigprocmask = 14;
+        Assert.AreEqual(-EINVAL, Fixture.Call(f.Parent, RtSigpending, f.RBuf, 129));
+        Assert.AreEqual(-EFAULT, Fixture.Call(f.Parent, RtSigpending, 8, 8));
+        f.Put(f.Data, BitConverter.GetBytes(1UL << (10 - 1))); // SIGUSR1 blockieren
+        Assert.AreEqual(0, Fixture.Call(f.Parent, RtSigprocmask, 0, f.Data, 0, 8));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, 200 /* tkill */, (ulong)f.Parent.Pid, 10));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, RtSigpending, f.RBuf, 8));
+        Assert.AreEqual(1UL << 9, BitConverter.ToUInt64(f.Get(f.RBuf, 8)));
     }
 
     [TestMethod]
