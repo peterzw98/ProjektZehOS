@@ -35,6 +35,17 @@ internal interface ILinuxPollable : ILinuxDescriptor
 }
 
 /// <summary>
+/// V22 (epoll mit EPOLLET): Zähler der Ereignisse, die ein Leser sehen soll (neue Daten, Ende der Gegenseite). epoll meldet einen
+/// flankengesteuerten Eintrag erneut, wenn sich der Zähler seit der letzten Meldung bewegt hat, auch wenn der Deskriptor die ganze Zeit
+/// lesbar blieb (Linux weckt bei jedem Schreiben). Deskriptoren ohne Zähler meldet epoll nur beim Übergang von nicht bereit zu bereit.
+/// </summary>
+internal interface ILinuxEdgeSource : ILinuxDescriptor
+{
+    /// <summary>Steigt bei jedem solchen Ereignis; der Wert selbst bedeutet nichts.</summary>
+    long EdgeSeq { get; }
+}
+
+/// <summary>
 /// Ein Deskriptor mit Statusflags der offenen Datei (V16): fcntl F_GETFL/F_SETFL für Pipe-Enden und Unix-Sockets. O_NONBLOCK gehört wie
 /// bei Linux zur offenen Datei; dup und SCM_RIGHTS teilen es.
 /// </summary>
@@ -83,6 +94,11 @@ internal sealed class LinuxPipe
     private int _count;
     private int _readers = 1;
     private int _writers = 1;
+
+    // V22: Ereigniszähler je Richtung für EPOLLET (ILinuxEdgeSource): _inSeq für das Leseende (geschrieben, Schreibende zu),
+    // _outSeq für das Schreibende (gelesen, Leseende zu). Getrennt wie Linux' rd_wait/wr_wait: Lesen weckt keinen EPOLLIN-Eintrag.
+    private long _inSeq;
+    private long _outSeq;
 
     private LinuxPipe(ILinuxAbort? abort) => _abort = abort;
 
@@ -135,6 +151,7 @@ internal sealed class LinuxPipe
                         _head = 0;
                     }
 
+                    _outSeq++;
                     Monitor.PulseAll(_gate); // Platz für wartende Schreiber
                     return n;
                 }
@@ -193,6 +210,7 @@ internal sealed class LinuxPipe
                     int take = Math.Min(space, src.Length - done);
                     Append(src.Slice(done, take));
                     done += take;
+                    _inSeq++;
                     Monitor.PulseAll(_gate); // Daten für wartende Leser und poll
                     if (done == src.Length)
                     {
@@ -261,13 +279,25 @@ internal sealed class LinuxPipe
             {
                 r |= PollErr;
             }
-            else if (Capacity - _count >= AtomicMax)
+
+            // Wie Linux' pipe_poll: bereit, solange eine Seite frei ist, auch ohne Leser (dann POLLOUT|POLLERR; V22, gegen Linux 6.12
+            // geprüft). Ohne Leser ist der Puffer geleert, also immer frei.
+            if (Capacity - _count >= AtomicMax)
             {
-                r |= (short)(events & PollOut); // wie Linux: bereit, solange eine Seite frei ist
+                r |= (short)(events & PollOut);
             }
         }
 
         return r;
+    }
+
+    /// <summary>V22: Ereigniszähler des Endes (<see cref="ILinuxEdgeSource"/>).</summary>
+    public long EdgeSeq(bool reader)
+    {
+        lock (_gate)
+        {
+            return reader ? _inSeq : _outSeq;
+        }
     }
 
     public short PollEvents(bool reader, short events)
@@ -311,6 +341,7 @@ internal sealed class LinuxPipe
             if (reader)
             {
                 _readers--;
+                _outSeq++;
                 if (_readers == 0)
                 {
                     // Ungelesenes verwerfen wie Linux; der Puffer wird nicht mehr gebraucht.
@@ -322,6 +353,7 @@ internal sealed class LinuxPipe
             else
             {
                 _writers--;
+                _inSeq++;
             }
 
             Monitor.PulseAll(_gate);
@@ -330,7 +362,7 @@ internal sealed class LinuxPipe
 }
 
 /// <summary>Gemeinsames eines Pipe-Endes: Statusflags (O_NONBLOCK) und einmaliges Schließen.</summary>
-internal abstract class LinuxPipeEnd : ILinuxPollable, ILinuxStatusFlags
+internal abstract class LinuxPipeEnd : ILinuxPollable, ILinuxStatusFlags, ILinuxEdgeSource
 {
     public const int ONonblock = 0x800;
 
@@ -351,6 +383,8 @@ internal abstract class LinuxPipeEnd : ILinuxPollable, ILinuxStatusFlags
     public abstract long Write(ReadOnlySpan<byte> data);
 
     public short PollEvents(short events) => Pipe.PollEvents(IsReader, events);
+
+    public long EdgeSeq => Pipe.EdgeSeq(IsReader);
 
     public bool WaitPoll(short events, long timeoutMs, ILinuxAbort? abort) => Pipe.WaitPoll(IsReader, events, timeoutMs, abort);
 

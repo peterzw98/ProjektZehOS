@@ -1,0 +1,32 @@
+create1 Flag ungueltig: ret=-1 errno=22
+create size 0: ret=-1 errno=22
+CLOEXEC=1
+read auf epoll: ret=-1 errno=22
+ctl ADD Eventzeiger NULL: ret=-1 errno=14
+ctl kein epoll: ret=-1 errno=22
+ctl EXCLUSIVE mit ONESHOT: ret=-1 errno=22
+wait epfd ungueltig: ret=-1 errno=9
+wait kein epoll: ret=-1 errno=22
+wait Puffer ungueltig: ret=0 errno=0
+ohne Ereignisse: ret=0 errno=0
+HUP ungefragt=1 events=0x10
+nach close keine Meldung: ret=0 errno=0
+schreibbar=1 events=0x4
+ohne Leser=1 events=0xc
+reihum verschieden=1
+beide bereit: ret=2 errno=0
+eventfd leer: ret=0 errno=0
+eventfd Flanke: ret=1 errno=0
+eventfd ohne neues write: ret=0 errno=0
+eventfd neues write: ret=1 errno=0
+socket nur schreibbar=1 events=0x4
+socket Flanke=1 data=8
+socket ohne neue Daten: ret=0 errno=0
+socket neue Daten: ret=1 errno=0
+socket Gegenseite zu=1 hup=1
+stdout schreibbar=1 data=9
+wait Frist 50 ms: ret=0 errno=0
+  mindestens 45 ms=1
+pwait Maske, Frist 0: ret=0 errno=0
+thread weckt=1 data=0x77
+ende

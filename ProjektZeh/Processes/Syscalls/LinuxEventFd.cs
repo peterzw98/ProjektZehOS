@@ -23,7 +23,7 @@ internal interface ILinuxAnonFile : ILinuxDescriptor
 /// Wartende schlafen in Scheiben von <see cref="LinuxPipe.SliceMs"/>, damit ein Abbruch jeden erreicht.
 /// </para>
 /// </summary>
-internal sealed class LinuxEventFd : ILinuxPollable, ILinuxStatusFlags, ILinuxInput, ILinuxAnonFile
+internal sealed class LinuxEventFd : ILinuxPollable, ILinuxStatusFlags, ILinuxInput, ILinuxAnonFile, ILinuxEdgeSource
 {
     public const int EfdSemaphore = 1;
 
@@ -37,6 +37,9 @@ internal sealed class LinuxEventFd : ILinuxPollable, ILinuxStatusFlags, ILinuxIn
     private ulong _count;
     private int _closed;
 
+    // V22: steigt bei jedem write (EPOLLET meldet dann erneut, wie Linux' eventfd_write mit EPOLLIN weckt).
+    private long _seq;
+
     public LinuxEventFd(uint initial, bool semaphore, bool nonBlocking)
     {
         _count = initial;
@@ -48,6 +51,17 @@ internal sealed class LinuxEventFd : ILinuxPollable, ILinuxStatusFlags, ILinuxIn
 
     /// <summary>O_RDWR wie Linux, dazu O_NONBLOCK.</summary>
     public int StatusFlags => 2 | (NonBlocking ? LinuxPipeEnd.ONonblock : 0);
+
+    public long EdgeSeq
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _seq;
+            }
+        }
+    }
 
     /// <summary>Zählerstand (Hosttests).</summary>
     public ulong Count
@@ -95,6 +109,7 @@ internal sealed class LinuxEventFd : ILinuxPollable, ILinuxStatusFlags, ILinuxIn
             }
 
             _count += add;
+            _seq++;
             if (add != 0)
             {
                 Monitor.PulseAll(_gate);
