@@ -7,7 +7,17 @@ Die Logs sind gekürzt: Timer- und Scheduler-Zeilen sind entfernt, LINUXRUN OUT 
 | `halt-c95ab059-maps-smp1.log` | c95ab059 (Pin 9ff7e86) | 512M smp1, Szenario maps (vorher kheap, mapsfrei im selben Boot), Halt in Stufe 2 (Socketpaare bei vollem Speicher) |
 | `halt-c95ab059-sockloop-smp4.log` | c95ab059 | 512M smp4, sockloop, 2. Wiederholung, Runde 31 |
 
-Häufigkeit auf c95ab059: 2 Halts in etwa 13 Bootvorgängen mit Socketlast bei vollem Speicher. Die Läufe auf d1d06dc0 (V43+V45, Pin 053fb42) folgen.
+Häufigkeit auf c95ab059: 2 Halts in etwa 13 Bootvorgängen mit Socketlast bei vollem Speicher.
+
+## Stand d1d06dc0 (V43+V45, Pin 053fb42), Läufe laufen noch
+| Datei | Lauf | Art |
+|---|---|---|
+| `halt-d1d06dc0-sockloop-smp1-oom.log` | 512M smp1, sockloop:150, 1. Wiederholung, Runde 51 | **anderer Halt:** unbehandelte OutOfMemoryException, `[FAILFAST] Unhandled exception`, "System halting" |
+
+Vor diesem Halt meldet die GC `Mark stack overflow` und `finalizer queue cannot grow`. Danach liefen zwei weitere Sammlungen, die kaum etwas freigaben (17 Objekte).
+Der Mark-Stapel wird ohne Reserve geholt (`PageAllocator.AllocPages` ohne `aKeepFree`). Scheitert das, war auch die Kernel-Reserve aufgebraucht. Der Kernel-Heap hat
+also mehr als die 64 MiB gebraucht: Das ist der offene V43-Restpunkt "Kernel-Heap über der Reserve". Der gemeldete Ausnahmeort 0xFFFFFFFF803FBA2B liegt in
+`FrozenObjectHeapManager.FrozenObjectSegment..ctor` (nm dieses Baus). Welcher Kernelthread die Ausnahme ohne Fänger warf, ist nicht ermittelt.
 
 ## Stapel (beide Halts identisch; Symbole mit `nm -n` aus dem ELF des Baus, `ProjektZeh.elf` im ISO unter `boot/`)
 ```
