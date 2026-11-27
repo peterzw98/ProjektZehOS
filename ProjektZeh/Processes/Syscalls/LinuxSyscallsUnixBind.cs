@@ -21,9 +21,14 @@ internal static partial class LinuxSyscalls
             return -SockErr.EINVAL; // Linux: unbekannte Flags oder Typ 0 vor der Familie
         }
 
+        if (domain == AfInet)
+        {
+            return DoSocketInet(p, f, kind, type, protocol); // V27: nur Loopback
+        }
+
         if (domain != AfUnix)
         {
-            return -SockErr.EAFNOSUPPORT; // AF_INET und andere: kein Netz für Linux-Programme (LINUX_ABI.md)
+            return -SockErr.EAFNOSUPPORT; // AF_INET6 und andere: kein Netz für Linux-Programme (LINUX_ABI.md)
         }
 
         if (protocol != 0 && protocol != AfUnix)
@@ -75,6 +80,11 @@ internal static partial class LinuxSyscalls
         if (s is null)
         {
             return error;
+        }
+
+        if (s.IsInet)
+        {
+            return DoBindInet(p, s, addr, len);
         }
 
         long r = ReadUnixAddress(p, addr, len, out LinuxUnixAddress a);
@@ -136,7 +146,7 @@ internal static partial class LinuxSyscalls
     private static long DoListen(ILinuxProcess p, int fd, int backlog)
     {
         LinuxUnixSocket? s = SocketOf(p, fd, out long error);
-        return s is null ? error : s.Listen(backlog);
+        return s is null ? error : s.IsInet ? DoListenInet(p, s, backlog) : s.Listen(backlog);
     }
 
     private static long DoConnect(ILinuxProcess p, ILinuxFiles f, int fd, ulong addr, ulong len)
@@ -145,6 +155,11 @@ internal static partial class LinuxSyscalls
         if (s is null)
         {
             return error;
+        }
+
+        if (s.IsInet)
+        {
+            return DoConnectInet(p, s, addr, len);
         }
 
         // unix_validate_addr: connect braucht mehr als die Familie (anders als bind mit Länge 2).
@@ -253,7 +268,16 @@ internal static partial class LinuxSyscalls
             return nfd;
         }
 
-        if (addr != 0)
+        if (addr != 0 && x.IsInet)
+        {
+            (uint ip, int port) = x.InetPeerName;
+            long w = WriteInetName(p, ip, port, addr, lenPtr);
+            if (w < 0)
+            {
+                return w;
+            }
+        }
+        else if (addr != 0)
         {
             LinuxUnixSocket? peer = x.Peer;
             long w = WriteName(p, peer?.Name ?? LinuxUnixAddress.Unnamed, addr, lenPtr);
@@ -272,6 +296,11 @@ internal static partial class LinuxSyscalls
         if (s is null)
         {
             return error;
+        }
+
+        if (s.IsInet)
+        {
+            return DoGetNameInet(p, s, addr, lenPtr, peer);
         }
 
         long c = CheckNameBuffer(p, addr, lenPtr, out _);

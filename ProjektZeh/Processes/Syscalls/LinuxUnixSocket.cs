@@ -102,7 +102,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         CreatorPid = creatorPid;
     }
 
-    /// <summary>SOCK_STREAM oder SOCK_SEQPACKET.</summary>
+    /// <summary>SOCK_STREAM, SOCK_SEQPACKET oder SOCK_DGRAM.</summary>
     public int Type { get; }
 
     /// <summary>O_NONBLOCK; gehört wie bei Linux zur offenen Datei, dup und SCM_RIGHTS teilen es.</summary>
@@ -125,7 +125,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         Link? l = Volatile.Read(ref _link);
         if (l == null)
         {
-            return 0;
+            return TakeConnectError(); // V27: verweigertes nichtblockierendes connect (AF_INET)
         }
 
         lock (l.Gate)
@@ -201,7 +201,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         Link? l = Volatile.Read(ref _link);
         if (l == null)
         {
-            return -ENOTCONN;
+            return IsInetDgram ? SendDatagramToPeer(data) : -ENOTCONN; // V27: UDP hat keine Verbindung, nur eine Gegenstelle
         }
 
         if (!IsStream && data.Length > Capacity)
@@ -289,7 +289,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         Link? l = Volatile.Read(ref _link);
         if (l == null)
         {
-            return -ENOTCONN;
+            return IsInetDgram ? ReceiveDatagram(dst, peek, nonBlocking, abort, out fullLength, out _, out _) : -ENOTCONN;
         }
 
         if (IsStream && dst.IsEmpty)
@@ -495,7 +495,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             Link? l = Volatile.Read(ref _link);
             if (l == null)
             {
-                return 0;
+                return IsInetDgram ? DatagramSeq : 0;
             }
 
             lock (l.Gate)
@@ -520,7 +520,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         Link? l = Volatile.Read(ref _link);
         if (l == null)
         {
-            return (short)(events & LinuxPipe.PollOut);
+            return UnconnectedEvents(events); // schreibbereit; V27: UDP-Eingang, verweigertes connect
         }
 
         lock (l.Gate)
