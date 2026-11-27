@@ -2,26 +2,28 @@
 
 Lesender Abgleich für T6 vom 28. November 2026. Untersucht wurden
 [`master` `c042ab90`](https://github.com/peterzw98/ProjektZehOS/commit/c042ab90a96b234d8e14eab645d5e57b2ab0979e)
-und der Freeze-Kandidat [`ff57d65b`](https://github.com/peterzw98/ProjektZehOS/commit/ff57d65b24a233ce4a37e7982e36fac30d59cd06).
-Der erfasste spätere Story-Kopf `4519757a` ergänzt Dokumentation. Bis zur
-Vorstellung am 4. Dezember bleibt der Code auf dem Vorzeigestand. V47, V49
-und die weiteren N2-Z-Torpakete werden separat geprüft und später übernommen.
+und [`story/ladybird` `3e1026f8`](https://github.com/peterzw98/ProjektZehOS/commit/3e1026f880b1a26fcefd89287ed30b3a701d2571)
+mit V47 und V49. [`ff57d65b`](https://github.com/peterzw98/ProjektZehOS/commit/ff57d65b24a233ce4a37e7982e36fac30d59cd06)
+bleibt der Referenzstand der V50-Browserabnahme. Nach Peters Entscheidung
+vom 28. November wird am 4. Dezember `master` gezeigt. `story/ladybird`
+nimmt geprüfte Änderungen regulär auf. Der Vorführcheck auf `master` ist
+eine eigene Abnahme.
 Gemeinsamer Vorfahr ist `53cba9cd`. `git merge-tree --write-tree --name-only --messages`
 lief in separaten Objektverzeichnissen. Für den kombinierten Stand stehen
-Build, Hosttests und Gastläufe aus. [T6 im N2-Z-Torplan](https://github.com/peterzw98/ProjektZehOS/blob/4519757a9e75d8af36cc08066bc30fb540aab95e/docs/superpowers/plans/2026-11-28-ladybird-n2z-tor.md)
+Build, Hosttests und Gastläufe aus. [N2-Z-Torplan](https://github.com/peterzw98/ProjektZehOS/blob/3e1026f880b1a26fcefd89287ed30b3a701d2571/docs/superpowers/plans/2026-11-28-ladybird-n2z-tor.md)
 
 ## Umfang und Konflikte
 
 Seit dem gemeinsamen Vorfahren liegen 24 Commits auf der Master-Seite und
-391 auf der Freeze-Seite. Das Master-Delta umfasst 16 Dateien (+226/−19),
-das Freeze-Delta **289 Dateien (+53.813/−76)**.
+403 auf der Story-Seite. Das Master-Delta umfasst 16 Dateien (+226/−19),
+das Story-Delta **292 Dateien (+54.117/−85)**.
 
 | Bereich im Story-Delta | Dateien | Inhalt |
 | --- | ---: | --- |
 | `experiments/` | 133 | Vergleichsprogramme, Ladybird-Proben, Erwartungen und Referenzdaten |
-| `ProjektZeh/` | 79 | Linux-ELF, Linux-ABI, Speicher und Prozesse sowie Änderungen an Scheduler, Terminal und Dateidienst |
-| `ProjektZeh.Tests/` | 32 | Hostprüfungen |
-| `docs/`, `scripts/` | 42 | 23 Dokumente und 19 Skripte und Tests |
+| `ProjektZeh/` | 80 | Linux-ELF, Linux-ABI, Speicher und Prozesse sowie Änderungen an Scheduler, Terminal und Dateidienst |
+| `ProjektZeh.Tests/` | 33 | Hostprüfungen |
+| `docs/`, `scripts/` | 43 | 24 Dokumente und 19 Skripte und Tests |
 | Cosmos-Pin und SDK-Auflösung | 3 | Commit, Paketversion, `global.json` |
 
 Die ZehOS-Simulation meldete drei Textkonflikte. Sie bilden gemeinsam
@@ -38,7 +40,7 @@ Projektdatei erhält den ZehOS-Versionspräfix 0.7 von Master. `ProjektZeh.cspro
 `CosmosClassScheduler.cs` und `test-wasm-doom-desktop.py` wurden automatisch
 zusammengeführt und brauchen einen inhaltlichen Abgleich.
 
-## Änderungen und Nachweise bis zum Freeze
+## Änderungen und Nachweise bis `ff57d65b`
 
 - V46 ergänzt `rt_sigsuspend` für `wait` in BusyBox `ash`. V45-P3 stellt
   TF/RF bei `rt_sigreturn` wieder her und ergänzt die SIGTRAP- und
@@ -53,6 +55,27 @@ zusammengeführt und brauchen einen inhaltlichen Abgleich.
   mit vier CPUs. Die separate Fangschaltung meldete damit 20/20. Die
   Ursache des Stillstands auf `13d48244` bleibt offen.
   [Runbook am erfassten Story-Kopf](https://github.com/peterzw98/ProjektZehOS/blob/4519757a9e75d8af36cc08066bc30fb540aab95e/docs/superpowers/plans/2026-12-04-ladybird-demo-ablauf.md#abendstand-der-abnahme)
+
+## V47 und V49 auf `3e1026f8`
+
+Für den ungemischten Story-Stand meldete der Lead 2.264 Hosttests ohne Fehler.
+Die Gastmessungen für T1 auf diesem Kopf stehen noch aus.
+
+- V47 ergänzt einen GC-Versuch bei Frame-Mangel nach Freigabe der
+  Seitensperre und eine Sammlung am Prozessende unter Speicherdruck. Die
+  separat gemessene V47-Fassung auf `ff57d65b` verlor nach
+  1.000 Starts und erzwungener GC 1.300 KiB bei einer und 1.172 KiB bei vier
+  CPUs auf KVM mit 512 MiB. Alle Starts liefen durch. Das T1-Ziel unter
+  1 MiB blieb offen. T1 wiederholt auf `3e1026f8` mit 100 Aufwärmstarts,
+  danach 1.000 und 3.000 Starts auf KVM mit je einer und vier CPUs. Messbau
+  und Integrationsnachweis getrennt protokollieren.
+  [V47-Branchstand](https://github.com/peterzw98/ProjektZehOS/commit/b9e32706456dba82d84fff289bb6baecd8d687e2)
+- V49 bündelt die Löschungen in `AddressSpaceMap.Cut`. Die Freigabe großer
+  Bereiche braucht einen Durchgang über die betroffenen Regionen. Der
+  abschließende Hosttest zählt Listenverschiebungen. Auf dem gemeinsamen
+  Stand `mmap`/`mprotect`/`munmap` nahe der V48-Grenze prüfen, auch mit
+  Abbruch und Rollback.
+  [V49-Branchstand](https://github.com/peterzw98/ProjektZehOS/commit/b5a40a468abe21ed1553c9ca68058dde0a4ff463)
 
 ## Cosmos zuerst integrieren
 
@@ -78,7 +101,7 @@ zusammengeführt und brauchen einen inhaltlichen Abgleich.
   Auflösung aus diesem Feed für den folgenden ZehOS-Bau protokollieren.
 - Danach im ZehOS-PR `deploy/cosmos/COMMIT`, `deploy/cosmos/VERSION` und
   `global.json` gemeinsam auf den integrierten Commit und seine Paketversion
-  setzen. Der Freeze-Pin ist die Ausgangsbasis für den Vergleich. Der
+  setzen. Der Story-Pin ist die Ausgangsbasis für den Vergleich. Der
   Integrationspin enthält zusätzlich die Änderungen aus `cosmos`.
   [Cosmos-Patchregeln](../../regeln/COSMOS_PATCHES.md) ·
   [Cosmos-Bauanleitung](../../../deploy/cosmos/README.md)
@@ -111,8 +134,8 @@ beziehen sich auf denselben kombinierten Stand mit dem neuen Cosmos-Pin.
 | Standard, VMware | Boot, Bildschirm und Eingabe prüfen. Ergebnisse und Grenzen getrennt von QEMU festhalten. |
 | LinuxRun, QEMU/KVM 1 und 4 CPUs, TCG mindestens 1 CPU | Den Linux-ABI-Referenzvergleich (T2), Fehlerisolation (T3) und 1.000 Starts mit Speichermessung nach GC (T1) nach Torplan auf dem integrierten Stand belegen. KVM-Abnahme für `static`, `css`, `js` und `img` mit 2 GiB wiederholen, dazu `static` mit vier CPUs und HTTP-Loopback mit einer CPU. |
 
-Die vorgesehenen T3- und T4-Läufe auf dem Freeze-Kandidaten liefern Vergleichswerte. Für die
-Integration die Ergebnisse der Matrix auf dem neuen Pin festhalten.
+Die vorgesehenen T3- und T4-Läufe auf dem Story-Kopf liefern Vergleichswerte.
+Für die Integration die Ergebnisse der Matrix auf dem neuen Pin festhalten.
 Unabhängiges Review und vorgeschriebene Freigaben gelten für beide PRs.
 Der Merge nach `master` wartet auf Peters Freigabe.
 [Bau- und Prüfregeln](../../regeln/PRUEFEN.md)
