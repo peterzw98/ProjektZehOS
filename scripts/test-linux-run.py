@@ -119,6 +119,15 @@ def evaluate(results: dict[str, dict], done: bool, wanted: dict) -> list[str]:
     return problems
 
 
+def decode_serial(raw: bytes) -> str:
+    """Seriallog als Text. Der Gast schreibt Zeichen heute roh als Latin-1 (0xFC fuer ue, belegt im Seriallog); die Erwartung
+    (Quelltext) ist UTF-8. Gueltiges UTF-8 im Log wird daher als UTF-8 gelesen, sonst als Latin-1; so passen beide Gastvarianten."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1")
+
+
 def run_once(args, number: int, wanted: dict) -> bool:
     helper = probe()
     tools = helper.tools()
@@ -128,8 +137,7 @@ def run_once(args, number: int, wanted: dict) -> bool:
     started = time.monotonic()
 
     def text() -> str:
-        # Der Gast schreibt Bytes (Latin-1), nicht UTF-8; Die Erwartung (Quelltext) ist UTF-8; beide Seiten werden so als Text verglichen.
-        return serial.read_bytes().decode("latin-1") if serial.exists() else ""
+        return decode_serial(serial.read_bytes()) if serial.exists() else ""
 
     try:
         (work / "seed").mkdir(parents=True)
