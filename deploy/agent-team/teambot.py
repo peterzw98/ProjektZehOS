@@ -82,7 +82,9 @@ def main():
     while True:
         try:
             pw = open(KEY).read().strip()
-            s = ssl.create_default_context().wrap_socket(
+            context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            s = context.wrap_socket(
                 socket.create_connection((HOST, PORT), timeout=300), server_hostname=HOST)
             with lock: sock = s
             send("PASS " + pw, quiet=True)  # PASS nie protokollieren
