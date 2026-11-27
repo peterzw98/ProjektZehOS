@@ -352,6 +352,38 @@ internal static partial class LinuxSyscalls
             }
         }
 
+        // V32: MAP_SHARED einer regulären Datei teilt eine Seitenablage je Datei (wie memfd) mit allen Abbildungen aller Prozesse des Laufs,
+        // auch lesend (ICU-Daten: Frames einmal für alle Prozesse; mprotect mit PROT_WRITE ohne Schreibrecht des Deskriptors -EACCES wie
+        // Linux). Zurückgeschrieben wird nur, wenn eine Abbildung schreibbar werden durfte. MAP_FIXED bleibt beim alten Weg (Seiten aus der
+        // Datei als Kopie, beschreibbar -ENODEV).
+        if ((flags & MapShared) != 0 && !fixedAt && p is ILinuxSharedMemory sharedFile)
+        {
+            lock (f.FileGate)
+            {
+                if (p.GetDescriptor(fd) is Vfs.LinuxRegularFile regular)
+                {
+                    bool wantWrite = (prot & ProtWrite) != 0;
+                    if (!regular.Readable || (wantWrite && !regular.Writable))
+                    {
+                        return -EACCES; // Linux: Abbilden braucht Lesen, geteilt beschreibbar zusätzlich Schreiben
+                    }
+
+                    if (flen > long.MaxValue || offset / 0x1000 > (ulong)(long.MaxValue - (long)flen) >> 12)
+                    {
+                        return -Vfs.LinuxErrno.EOVERFLOW; // wie bei memfd oben
+                    }
+
+                    LinuxMemFile? pages = regular.HoldSharedPages(sharedFile);
+                    if (pages != null)
+                    {
+                        long at = sharedFile.MapShared(pages, flen, prot, (long)(offset / 0x1000), regular.Writable);
+                        pages.ReleaseHold();
+                        return at;
+                    }
+                }
+            }
+        }
+
         if ((flags & MapShared) != 0 && (prot & ProtWrite) != 0)
         {
             return -ENODEV;

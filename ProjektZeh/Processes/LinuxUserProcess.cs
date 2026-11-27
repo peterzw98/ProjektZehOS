@@ -1141,6 +1141,10 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             {
                 ok = false;
             }
+            else if (access == MapAccess.ReadWrite && _shared.TryGetValue(page, out LinuxSharedFrame? sf))
+            {
+                sf.Owner.MarkDirty(sf); // V32-P2: ab jetzt ohne Seitenfehler beschreibbar
+            }
         }
 
         return ok;

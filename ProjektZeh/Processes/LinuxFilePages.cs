@@ -64,6 +64,12 @@ internal sealed class LinuxSharedStoreFile : ILinuxPageSource
 
     public long ReadAt(long offset, Span<byte> dst) => _file.ReadAt(offset, dst);
 
+    /// <summary>V32: Länge der Datei oder -errno (Seitenablage bei MAP_SHARED); sperrt wie <see cref="ReadAt"/> im Speicher selbst.</summary>
+    public long Length() => _file.Length();
+
+    /// <summary>V32: Zurückschreiben der Seitenablage; Anzahl oder -errno.</summary>
+    public long WriteAt(long offset, ReadOnlySpan<byte> src) => _file.WriteAt(offset, src);
+
     public void AddRef() => Interlocked.Increment(ref _refs);
 
     public void Release() => _ = ReleaseChecked();

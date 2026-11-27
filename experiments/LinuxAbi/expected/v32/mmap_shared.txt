@@ -1,0 +1,23 @@
+Datei=1 1
+mmap=1
+Kind sieht Eltern=1
+Kind exit=0
+Eltern sieht Kind=1 geerbt=1
+pread sieht Abbildung=1
+pwrite=2 Abbildung sieht pwrite=1
+read=1
+write=2 Abbildung sieht write=1
+msync=0
+msync unausgerichtet=-1 1
+msync SYNC|ASYNC=-1 1
+msync Luecke=-1 1
+msync anonym=0
+munmap=0 close=0
+Datei hat Eltern=1 Kind=1 geerbt=1
+lesend PROT_WRITE=1 1
+lesend mmap=1 Inhalt=1
+mprotect schreibbar=-1 1
+Leser sieht Schreiber=1
+ftruncate=0
+munmap=0 0 close=0 0
+Groesse=36864 neu=1 dahinter=1

@@ -23,7 +23,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 20 | `writev` | höchstens 1024 Einträge, Summe über 0x7ffff000 ergibt `-EINVAL` (Abweichung: Linux kürzt stattdessen), Einträge werden vorab gelesen |
 | 60, 231 | `exit`, `exit_group` | `ILinuxProcess.Exit(code & 0xff)` |
 | 12 | `brk` | wie Linux: bei Fehler der alte Wert, nie ein Fehlercode |
-| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), reguläre Datei seit V30 Seiten erst beim Zugriff, `MAP_SHARED` einer memfd geteilt (V17), Datei mit `MAP_FIXED` ersetzt den Bereich (V25, siehe unten); fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
+| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), reguläre Datei seit V30 Seiten erst beim Zugriff, `MAP_SHARED` einer memfd geteilt (V17), `MAP_SHARED` einer regulären Datei geteilt und zurückgeschrieben (V32), Datei mit `MAP_FIXED` ersetzt den Bereich (V25, siehe unten); fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
 | 11, 10 | `munmap`, `mprotect` | Länge wird auf Seiten aufgerundet; `-EINVAL` bei unausgerichteter Adresse, Länge oder Adresse über 2^47, unbekannten `prot`-Bits, `munmap` mit Länge 0; `mprotect` mit Länge 0 liefert 0; `mprotect` ohne Abdeckung `-ENOMEM` |
 | 158 | `arch_prctl` | `ARCH_SET_FS` (nur Adressen der Benutzerhälfte, sonst `-EPERM`), `ARCH_GET_FS`; sonst `-EINVAL` |
 | 218 | `set_tid_address` | merkt die Adresse je Thread, liefert die Thread-ID (V10) |
@@ -744,3 +744,42 @@ Gemessen im Gast (KVM, 3 GiB, `bin/rssw <n> /libexec/WebContent --disable-sandbo
 Geprüft im Gast (KVM, smp1 und smp4 je ein Lauf): `mmap_file`, seit V30-P3 auch `mmap_bus`, sowie die bisherigen `proc`, `mmap_anon`, `fork_cow`, `exec`, `memfd_seal`, `start`,
 `spawn`, `shm` (9/9, mit `mmap_bus` auf V30-P3 10/10). Der Lauf „vorher“ mit 6 Prozessen kam nicht zustande: In 4 von 13 Gaststarts dieser Reihe (beide Stände) blieb die Anmeldung
 nach `SATA: command completion timeout` beim Desktop-Start stehen, bevor ein Linux-Programm lief.
+
+## MAP_SHARED auf regulären Dateien (V32)
+
+Anlass: sqlite (Ladybirds Hub, WAL) bildet die Datei `<db>-shm` mit `mmap(PROT_READ|PROT_WRITE, MAP_SHARED)` ab; bis V31 gab das `-ENODEV`, sqlite meldete
+`disk I/O error`. Plattformunabhängig in `LinuxMemFile.cs` (Seitenablage mit Rückhaltdatei), `LinuxFileSystem.cs` (Register offener Dateien, `LinuxFileNode`), `LinuxOpenFiles.cs`
+(`LinuxRegularFile`), `LinuxUserProcessShared.cs` (msync, munmap, Prozessende); Hosttests `LinuxSharedFileTests`, Gastprogramm
+`experiments/LinuxAbi/src/v32/mmap_shared.c`, Erwartung Linux 6.12 in `expected/v32`.
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 9 | `mmap` `MAP_SHARED` einer regulären Datei | eine Seitenablage je offener Datei (V32-P2: am Knoten der offenen Datei, den jeder Deskriptor beim `open` bekommt und über `rename`/`unlink` behält) für alle Abbildungen aller Prozesse eines Laufs, wie memfd (V17): Frames kommen beim ersten Zugriff aus der Datei, alle Abbildungen sehen dieselben, auch über `fork` und eigene `open`/`mmap` im Kind; hinter dem Dateiende `SIGBUS` (V30-P3). Auch lesend (ICU-Daten teilen so ihre Frames). Lesender Deskriptor mit `PROT_WRITE` `-EACCES`, `mprotect` mit `PROT_WRITE` darauf `-EACCES`; nur zum Schreiben offen `-EACCES`; Offset plus Länge über `LONG_MAX` `-EOVERFLOW`. `MAP_SHARED|MAP_FIXED` bleibt beim Weg aus V25 (beschreibbar `-ENODEV`) |
+| 0, 1, 17, 18, 19, 20, 295, 296 | `read`, `write`, `pread64`, `pwrite64`, `readv`, `writev`, `preadv`, `pwritev` | solange eine Abbildung der Datei lebt: Datei und Frames ändern sich unter der Sperre der Ablage gemeinsam; Lesen sieht, was Abbildungen geschrieben haben, Schreiben landet sofort in der Abbildung |
+| 77 | `ftruncate` | Wachsen macht Seiten abbildbar; Kürzen nimmt Frames hinter dem Ende aus der Ablage und nullt den Rest der angeschnittenen Seite; ebenso `O_TRUNC` |
+| 26 | `msync` | schreibt die Dateiseiten im Bereich sofort zurück (auch `MS_ASYNC`; `MS_INVALIDATE` ohne Wirkung); unbekannte Flags, `MS_ASYNC|MS_SYNC`, unausgerichtete Adresse `-EINVAL`; Lücke im Bereich `-ENOMEM`; anonyme und private Bereiche 0 |
+| 74, 75 | `fsync`, `fdatasync` | schreiben die ganze Ablage der Datei zurück |
+
+- **Zurückschreiben:** bei `msync`, `fsync`, `close` eines Deskriptors der Datei, `munmap` (der wegfallende Teil), Prozessende und mit der letzten Abbildung;
+  nur wenn eine Abbildung schreibbar werden durfte (Deskriptor zum Schreiben offen), nur bis zum Dateiende (das Zurückschreiben verlängert die Datei nicht),
+  und nur geschriebene Seiten (V32-P2): Eine Seite gilt als geschrieben, sobald eine Prozessseite sie beschreibbar abbildet (Seitenfehler oder `mprotect`);
+  sie bleibt es, solange sie abgebildet ist (kein Dirty-Bit der Seitentabelle), und wird nach dem Zurückschreiben ohne Abbildung wieder sauber.
+  Danach gibt die Ablage Frames und Datei ab; die nächste Abbildung legt eine neue an. Fehler beim Zurückschreiben in `munmap`, `close` und am Ende gehen verloren
+  wie bei Linux; `msync` und `fsync` melden sie.
+- **Sperren:** FileGate, Registersperre (`LinuxFileSystem._sharedGate`), Sperre der Ablage, StorageLock, PageAllocator. Der Seitenfehler nimmt Speichersperre,
+  Ablage, StorageLock; das Register wird nie unter der Speichersperre genommen (ein Knoten ohne Deskriptor mit inzwischen toter Ablage bleibt im Register, bis
+  `open` es ab einer wachsenden Schwelle ausfegt).
+- **Offene Datei (V32-P2):** Das Register führt je Name (Speicherpfad, gefaltet wie der Speicher vergleicht) einen Knoten; Deskriptoren desselben Namens teilen
+  ihn, `rename` trägt ihn (auch für Dateien unter einem umbenannten Verzeichnis) zum neuen Namen, `unlink` und ein ersetztes `rename`-Ziel nehmen ihn aus dem
+  Register. Alte Deskriptoren schreiben so nach `rename`/`unlink` weiter durch ihre Ablage, und eine neue Datei gleichen Namens bekommt eine eigene (V32-Review P2:
+  vorher Suche per Pfad-Hash, munmap überschrieb ein `write` des alten Deskriptors, gleicher Name traf die Ablage der neuen Datei).
+- **Grenzen:** Eine schon abgebildete Seite behält nach `ftruncate` kleiner ihren Frame (wie memfd, Linux nimmt sie aus allen Abbildungen). Hartlinks (V28b)
+  sind unter jedem Namen eine eigene offene Datei mit eigener Ablage: Abbildungen über zwei Namen sind nicht kohärent, und ein `write` über den anderen Namen geht an
+  der Ablage vorbei (eine nur lesend abgebildete Seite überschreibt es nicht, eine geschriebene beim Zurückschreiben schon). Kein Zurückschreiben im Hintergrund: Was nur in den Frames steht,
+  fehlt nach einem Absturz des Systems (Linux: bis zum Writeback ebenso). Beschreibbar abgebildet, aber nicht beschrieben, zählt als geschrieben. `MAP_PRIVATE`-Abbildungen und
+  `execve` lesen ihre Seiten weiter direkt aus der Datei und sehen von einer geteilten Abbildung nur, was schon zurückgeschrieben ist.
+
+Geprüft im Gast (KVM, smp1 und smp4 je ein Lauf, Datenplatte FAT): `mmap_shared` und die bisherigen `mmap_file`, `mmap_bus`, `proc`, `mmap_anon`, `fork_cow`,
+`exec`, `memfd_seal`, `start`, `spawn`, `shm` (11/11). V32-P2: Hosttests `RenameAlterDeskriptor…`, `UnlinkUndNeu…`, `NurGeschriebeneSeiten…`,
+`RenameEinesVerzeichnisses…` (scheitern auf dem Stand vor P2), Gast KVM smp1 Sätze v32, v30, v17 PASS. Nicht geprüft: sqlite selbst (Hub-Lauf), VMware,
+smp4 nach P2, Fehlerweg `-EIO` bei `msync` (kein Hosttest).
