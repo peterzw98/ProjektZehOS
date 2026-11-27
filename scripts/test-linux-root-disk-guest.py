@@ -11,6 +11,8 @@ Prueft: LINUXRUN BEGIN, das Ende mit --status und jeden --expect-Text in der Aus
 die Datei aus der Platten-Kopie (mtools), z. B. den Screenshot von Hub --headless=screenshot --screenshot-path /data/lb/shot.png.
 --accel tcg (ohne KVM, z. B. Gegenprobe auf anderer CPU): alle festen Wartezeiten (Desktop, Anmeldung, LINUXRUN BEGIN, Herunterfahren)
 werden mit --wait-scale (Standard bei tcg 10, bei kvm 1) gestreckt; --timeout (Programmlaufzeit) bleibt wie angegeben.
+Kernel-Halt (KERNEL PANIC, "System halting", [FAILFAST]) nach dem Programmstart: sofort Abbruch mit "HALT <zeile>", Gast wird
+beendet, kein --fetch, Exit 3 (statt bis --timeout zu warten).
 """
 import argparse
 import importlib.util
@@ -23,6 +25,9 @@ import time
 
 R = Path(__file__).resolve().parent.parent
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# Marken der Cosmos-Haltpfade (Panic.cs, ExceptionHelper.cs). Nach einer davon kommt kein LINUXRUN END mehr
+# (lb-base3 mit 512M: FAILFAST OutOfMemoryException, danach nur noch Timer-Ticks), also nicht bis zum Zeitlimit warten.
+HALT = re.compile(r"^.*(?:KERNEL PANIC|System halting|\[FAILFAST\]).*$", re.M)
 
 
 def main() -> int:
@@ -67,11 +72,18 @@ def main() -> int:
     def serial_text(mark):
         return serial.read_text(encoding="utf-8", errors="replace")[mark:]
 
+    halted = None
+
     def wait_serial(pattern, timeout, mark):
+        nonlocal halted
         end = time.monotonic() + timeout
         while time.monotonic() < end:
-            if found := re.search(pattern, serial_text(mark)):
+            text = serial_text(mark)
+            if found := re.search(pattern, text):
                 return found
+            if halt := HALT.search(text):
+                halted = halt.group(0).strip()
+                return None
             time.sleep(0.5)
         return None
 
@@ -104,7 +116,13 @@ def main() -> int:
         mark = guest.mark()
         guest.qmp.line(f"run {args.run}")
         check("start", wait_serial(r"LINUXRUN BEGIN", 60 * scale, mark) is not None)
-        end = wait_serial(r"LINUXRUN END ([^\r\n]*)", args.timeout, mark)
+        end = wait_serial(r"LINUXRUN END ([^\r\n]*)", args.timeout, mark) if halted is None else None
+        if halted is not None:
+            # Der Kernel steht: kein Herunterfahren, keine Platte holen (Kopie evtl. unvollstaendig geschrieben).
+            print(f"HALT {halted}", flush=True)
+            (args.work / "program-out.txt").write_text(output(mark), encoding="utf-8")
+            check("kein Kernel-Halt", False)
+            return 3
         status = end.group(1).strip() if end else "kein Ende"
         print(f"ENDE {status}", flush=True)
         check(f"status {args.status}", status.startswith(args.status))
