@@ -72,6 +72,12 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     /// <summary>Linux net.unix.max_dgram_qlen: so viele Datagramme warten höchstens beim Empfänger, auch leere (sonst unbegrenzter Kernelspeicher).</summary>
     public const int MaxDgramQueue = 10;
 
+    /// <summary>
+    /// Leere Nachrichten (0 Byte) zählen nicht gegen <see cref="Capacity"/>; Linux belastet jede mit der Größe ihres sk_buff (rund 768 Byte,
+    /// also etwa 277 je 212992). Ohne Grenze wüchse die Warteschlange unbegrenzt (1 Mio. = 54 MiB Heap). Gilt für SEQPACKET und UDP.
+    /// </summary>
+    public const int MaxEmptyQueue = 256;
+
     private bool DgramQueueFull(Channel ch) => IsDgram && ch.Records.Count >= MaxDgramQueue;
 
     /// <summary>SCM_MAX_FD: höchstens so viele Dateien je Nachricht.</summary>
@@ -249,7 +255,8 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
 
                 int space = Capacity - ch.Bytes;
                 int want = data.Length - done;
-                if (IsStream ? space > 0 : space >= want && !DgramQueueFull(ch))
+                bool emptyFull = want == 0 && ch.Records.Count >= MaxEmptyQueue; // nur bei Nachrichten ohne Nutzdaten (siehe MaxEmptyQueue)
+                if (IsStream ? space > 0 : space >= want && !DgramQueueFull(ch) && !emptyFull)
                 {
                     int take = Math.Min(space, want);
                     ch.Records.Enqueue(new Record(data.Slice(done, take).ToArray(), fdsTaken ? null : fds));
