@@ -149,6 +149,7 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
                 // V43-Review P2: Ohne Frame (Grenze, Kernel-Reserve) SIGKILL wie bei privaten Seiten; nur hinter dem Dateiende oder bei
                 // einem Lesefehler SIGBUS (V30-P3).
                 _noFrame |= noFrame;
+                _frameShort |= noFrame;
                 busError = !noFrame;
                 return 0;
             }

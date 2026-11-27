@@ -1452,6 +1452,10 @@ internal static unsafe class CosmosLinuxRun
             process.ReportEnd(process.WaitStatusOf(9));
             process.Destroy();
             ReleaseSlot(run, b);
+            if (FrameReclaim.ShouldCollectAtExit(UserPageTable.FreePages, UserPageTable.TotalPages, UserPageTable.ReservedPages))
+            {
+                GC.Collect();
+            }
         }
     }
 
@@ -1658,6 +1662,7 @@ internal static unsafe class CosmosLinuxRun
 
         public UserPageTable Table => _table;
 
+        // V47: Sammeln vor ENOMEM geschieht nicht hier (der Aufrufer hält _memGate, _gate oder StorageLock), sondern im Aufrufer ohne Sperre.
         public ulong AllocateFrame() => UserPageTable.AllocateFrame();
 
         public void FreeFrame(ulong frame) => UserPageTable.FreeFrame(frame);
