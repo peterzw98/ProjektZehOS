@@ -6,7 +6,7 @@
 
 | Bahn | Inhalt |
 | --- | --- |
-| Threads | `clone`/`clone3`, `futex`, TLS, Threadende; danach mehrere CPUs je Prozess mit TLB-Abgleich per IPI |
+| Threads | `clone`/`clone3`, `futex`, TLS, Threadende; danach mehrere CPUs je Prozess mit TLB-Abgleich per IPI ([Entwurf N4-SMP](../specs/2026-11-28-ladybird-n4-smp-entwurf.md)) |
 | Ereignisse | `poll`, `epoll`, `eventfd`, `timerfd` auf einer gemeinsamen Wartemechanik |
 | Prozesse | `fork` (Kopie beim Schreiben), `vfork`, `execve`, `wait4`, Signale |
 | IPC | `AF_UNIX`, `SCM_RIGHTS`, Versiegelung, geteilte Abbildungen |
