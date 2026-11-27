@@ -366,7 +366,7 @@ internal sealed partial class LinuxUnixSocket
         lock (_inboxGate)
         {
             // Linux zählt den Eingang gegen SO_RCVBUF und verwirft, was nicht mehr passt.
-            if (_inboxBytes + data.Length > Capacity)
+            if (_inboxBytes + data.Length > Capacity || (data.Length == 0 && _inbox.Count >= MaxEmptyQueue))
             {
                 return;
             }

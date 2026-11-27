@@ -313,6 +313,23 @@ public sealed class LinuxUnixSocketTests
     }
 
     [TestMethod]
+    public void SeqpacketLeereNachrichtenSindAnzahlBegrenzt()
+    {
+        var f = new Fixture();
+        var (a, b) = f.SocketPair(Seqpacket | SockNonblock);
+        for (int i = 0; i < LinuxUnixSocket.MaxEmptyQueue; i++)
+        {
+            Assert.AreEqual(0, f.SendMsg(a, []), "leere Nachricht " + i);
+        }
+
+        Assert.AreEqual(-EAGAIN, f.SendMsg(a, []), "über der Grenze: EAGAIN statt unbegrenzt puffern");
+        Assert.AreEqual(1, f.SendMsg(a, B("x")), "Nachrichten mit Daten bleiben nur durch Capacity begrenzt");
+        Assert.AreEqual(0, f.RecvMsg(b, 16, 0, out _, out _, out _));
+        Assert.AreEqual(0, f.RecvMsg(b, 16, 0, out _, out _, out _));
+        Assert.AreEqual(0, f.SendMsg(a, []), "nach dem Lesen wieder Platz");
+    }
+
+    [TestMethod]
     public void DgramPollMeldetPolloutNurSolangeDieWarteschlangeNichtVollIst()
     {
         var f = new Fixture();
