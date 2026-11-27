@@ -31,7 +31,7 @@ internal static unsafe class CosmosLinuxRun
     /// <summary>Speicher je Programm (Frames), danach endet ein Seitenfehler mit Abbruch.</summary>
     private const ulong MaxBytes = 512UL << 20;
 
-    /// <summary>Größte ladbare Datei; js aus Ladybird liegt deutlich darunter.</summary>
+    /// <summary>Größter ladbarer Teil eines Programms (V28: ohne Debugabschnitte, <see cref="FileService.ReadExecutable"/>).</summary>
     public const int MaxFileSize = 128 << 20;
 
     /// <summary>Rückgabe von Enter nach einem Abbruch durch den Kernel (Zeitlimit, Ausnahme in der Brücke).</summary>
@@ -174,7 +174,7 @@ internal static unsafe class CosmosLinuxRun
             return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: run <datei> [argumente...]");
         }
 
-        ResultObject<byte[]> file = files.ReadBytes(arguments[0], MaxFileSize);
+        ResultObject<byte[]> file = files.ReadExecutable(arguments[0], MaxFileSize);
         if (!file.IsOK())
         {
             return file.Status;

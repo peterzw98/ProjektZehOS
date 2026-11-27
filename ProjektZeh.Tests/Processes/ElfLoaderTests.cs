@@ -939,6 +939,95 @@ public sealed class ElfLoaderTests
         Assert.IsTrue(loaded > 100, "einige Verfälschungen bleiben ladbar: " + loaded);
     }
 
+    private static ElfRangeReader Reader(byte[] file) => (offset, dst) =>
+    {
+        if (offset >= file.Length)
+        {
+            return 0;
+        }
+
+        int n = Math.Min(dst.Length, file.Length - (int)offset);
+        file.AsSpan((int)offset, n).CopyTo(dst);
+        return n;
+    };
+
+    [TestMethod]
+    public void LoadedLengthEndsAtLastSegmentAndSkipsTrailingSections()
+    {
+        // V28: Debugabschnitte hinter dem letzten Segment (WebContent: 58 von 175 MB) werden nicht gelesen.
+        ElfBuilder b = Static();
+        byte[] full = b.Build();
+        byte[] withDebug = new byte[full.Length + (8 * (int)Page)];
+        full.CopyTo(withDebug, 0);
+        Assert.AreEqual(0L, ElfFile.LoadedLength(withDebug.Length, Reader(withDebug), out long length));
+        Assert.AreEqual((long)(3 * Page + 0x110), length);
+
+        byte[] prefix = withDebug.AsSpan(0, (int)length).ToArray();
+        UserImage fromPrefix = Load(prefix);
+        UserImage fromFull = Load(withDebug);
+        Dictionary<ulong, byte[]> a = Materialize(fromPrefix, prefix);
+        Dictionary<ulong, byte[]> c = Materialize(fromFull, withDebug);
+        CollectionAssert.AreEquivalent(c.Keys.ToList(), a.Keys.ToList());
+        foreach (ulong page in c.Keys)
+        {
+            CollectionAssert.AreEqual(c[page], a[page], "Seite 0x" + page.ToString("X", System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+
+    [TestMethod]
+    public void LoadedLengthCoversInterpreterPathAndProgramHeaders()
+    {
+        ElfBuilder b = Static();
+        b.Body = new byte[6 * Page];
+        b.Add(ElfProgramHeader.Interpreter, R, 5 * Page, 0, 0x20, 0x20);
+        b.PhOffOverride = null;
+        byte[] elf = b.Build();
+        Assert.AreEqual(0L, ElfFile.LoadedLength(elf.Length, Reader(elf), out long length));
+        Assert.AreEqual((long)(5 * Page + 0x20), length);
+
+        // Programmköpfe hinter allen Segmenten: die Tabelle gehört dazu.
+        var late = new ElfBuilder { Body = new byte[4 * Page] };
+        late.Add(ElfProgramHeader.Load, R | X, 0, 0x400000, 0x100, 0x100);
+        byte[] lateElf = late.Build();
+        byte[] moved = new byte[lateElf.Length];
+        lateElf.CopyTo(moved, 0);
+        lateElf.AsSpan(64, 56).CopyTo(moved.AsSpan(3 * (int)Page));
+        BinaryPrimitives.WriteUInt64LittleEndian(moved.AsSpan(32), 3 * Page);
+        Assert.AreEqual(0L, ElfFile.LoadedLength(moved.Length, Reader(moved), out long lateLength));
+        Assert.AreEqual((long)(3 * Page + 56), lateLength);
+    }
+
+    [TestMethod]
+    public void LoadedLengthFallsBackToWholeFileForBrokenHeaders()
+    {
+        // Was der Lader ablehnen muss, bekommt er ganz, damit seine Meldung (ENOEXEC) unverändert bleibt.
+        byte[] text = Encoding.ASCII.GetBytes(new string('x', 200));
+        Assert.AreEqual(0L, ElfFile.LoadedLength(text.Length, Reader(text), out long l1));
+        Assert.AreEqual(200L, l1);
+
+        byte[] overEnd = Seg(R | X, Page, 0x401000, 100 * Page, 100 * Page);
+        Assert.AreEqual(0L, ElfFile.LoadedLength(overEnd.Length, Reader(overEnd), out long l2));
+        Assert.AreEqual((long)overEnd.Length, l2);
+        Assert.ThrowsException<ElfLoadException>(() => Load(overEnd));
+
+        byte[] badTable = Build(b => b.PhOffOverride = ulong.MaxValue - 8);
+        Assert.AreEqual(0L, ElfFile.LoadedLength(badTable.Length, Reader(badTable), out long l3));
+        Assert.AreEqual((long)badTable.Length, l3);
+
+        Assert.AreEqual(0L, ElfFile.LoadedLength(10, Reader(new byte[10]), out long l4));
+        Assert.AreEqual(10L, l4);
+    }
+
+    [TestMethod]
+    public void LoadedLengthPassesReadErrors()
+    {
+        byte[] elf = Static().Build();
+        Assert.AreEqual(-5L, ElfFile.LoadedLength(elf.Length, (_, _) => -5, out _));
+        int calls = 0;
+        ElfRangeReader secondFails = (offset, dst) => ++calls == 1 ? Reader(elf)(offset, dst) : -5;
+        Assert.AreEqual(-5L, ElfFile.LoadedLength(elf.Length, secondFails, out _));
+    }
+
     private static byte[] Build(Action<ElfBuilder> change)
     {
         ElfBuilder b = Static();
