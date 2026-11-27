@@ -479,7 +479,14 @@ internal static unsafe partial class GarbageCollector
             var en = s_gCHandleManager.DependentHandleStore.GetEnumerator();
             while (en.MoveNext())
             {
-                if (en.Current->Object != null) { live++; if (en.Current->ExtraInfo == 0) nosec++; }
+                if (en.Current->Object != null)
+                {
+                    live++;
+                    if (en.Current->ExtraInfo == 0)
+                    {
+                        nosec++;
+                    }
+                }
             }
             Serial.WriteString(" liveprimary=");
             Serial.WriteNumber(live);
