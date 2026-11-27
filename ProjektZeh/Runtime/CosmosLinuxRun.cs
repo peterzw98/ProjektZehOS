@@ -1619,8 +1619,8 @@ internal static unsafe class CosmosLinuxRun
 
         public bool Unmap(ulong page) => _table.Unmap(page) != 0 || !_table.TryTranslate(page, false, out _);
 
-        public bool MapsTo(ulong page, ulong frame) =>
-            _table.TryTranslate(page, false, out ulong physical) && (physical & ~(AddressSpaceMap.PageSize - 1)) == frame;
+        public bool MapsTo(ulong page, ulong frame, bool write) =>
+            _table.TryTranslate(page, write, out ulong physical) && (physical & ~(AddressSpaceMap.PageSize - 1)) == frame;
 
         public void DestroyTable() => _table.Dispose();
     }

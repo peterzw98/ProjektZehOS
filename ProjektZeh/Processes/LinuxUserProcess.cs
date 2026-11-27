@@ -33,12 +33,13 @@ internal interface IUserPages
 }
 
 /// <summary>
-/// V38, optional neben <see cref="IUserPages"/>: Ist die Seite schon mit diesem Frame abgebildet? Für den Seitenfehler, den ein anderer
-/// Thread zwischen Ausnahme und <c>_memGate</c> schon erledigt hat (Linux: "spurious fault", der Befehl wird einfach wiederholt).
+/// V38, optional neben <see cref="IUserPages"/>: Ist die Seite schon mit diesem Frame abgebildet (mit <paramref name="write"/> auch
+/// schreibbar)? Für den Seitenfehler, den ein anderer Thread zwischen Ausnahme und <c>_memGate</c> schon erledigt hat (Linux: "spurious
+/// fault", der Befehl wird einfach wiederholt); V38b auch für ein mprotect, das die Seite inzwischen schreibbar gemacht hat.
 /// </summary>
 internal interface IUserPagesQuery
 {
-    bool MapsTo(ulong page, ulong frame);
+    bool MapsTo(ulong page, ulong frame, bool write);
 }
 
 /// <summary>
@@ -944,12 +945,17 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     private bool HandlePageFaultLocked(ulong address, ulong error, out bool busError)
     {
         busError = false;
-        if ((error & FaultPresent) != 0 || address >= ElfLoader.UserEnd)
+        if (address >= ElfLoader.UserEnd)
         {
             return false;
         }
 
         ulong page = address & ~(Page - 1);
+        if ((error & FaultPresent) != 0)
+        {
+            return IsStaleWriteFault(page, error);
+        }
+
         if (!_map.TryFind(page, out MapAccess access) || access == MapAccess.None)
         {
             return false;
@@ -967,11 +973,25 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         // zweite Abbilden ab (Cosmos TryMap: schon vorhanden); ist sie mit demselben Frame da, ist der Fehler erledigt.
         if (_frames.TryGetValue(page, out ulong held))
         {
-            return _pages.Map(page, held, access) || (_pages is IUserPagesQuery query && query.MapsTo(page, held));
+            return _pages.Map(page, held, access) || (_pages is IUserPagesQuery query && query.MapsTo(page, held, write: false));
         }
 
         return Populate(page, access, out busError) != 0;
     }
+
+    /// <summary>
+    /// V38b: Schreibfehler auf einer vorhandenen Seite, die beim Fehler nur lesbar abgebildet war. Lief zwischen Ausnahme und
+    /// <c>_memGate</c> ein mprotect(PROT_WRITE) eines anderen Threads (oder sah diese CPU noch den alten TLB-Eintrag), ist die Seite jetzt
+    /// schreibbar: wie bei Linux den Befehl wiederholen statt SIGSEGV. true nur, wenn Karte <em>und</em> Tabelle das Schreiben schon
+    /// erlauben und derselbe Frame abgebildet ist; sonst liefe der wiederholte Befehl endlos in denselben Fehler. Ein Seitenfehler
+    /// invalidiert auf x86 den TLB-Eintrag der Adresse, die Wiederholung liest also die neue Tabelle. Ausführfehler (NX) und Lesefehler auf
+    /// vorhandenen Seiten bleiben Schutzverletzungen: Die Tabelle meldet kein NX-Bit, und PROT_NONE hebt die Abbildung ganz auf.
+    /// </summary>
+    private bool IsStaleWriteFault(ulong page, ulong error) =>
+        (error & FaultWrite) != 0 && (error & FaultFetch) == 0
+        && _map.TryFind(page, out MapAccess access) && access == MapAccess.ReadWrite
+        && _frames.TryGetValue(page, out ulong held)
+        && _pages is IUserPagesQuery query && query.MapsTo(page, held, write: true);
 
     public bool TrySetBrk(ulong newBrk)
     {

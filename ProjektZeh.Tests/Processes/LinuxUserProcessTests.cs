@@ -57,7 +57,8 @@ public sealed class LinuxUserProcessTests
             return true;
         }
 
-        public bool MapsTo(ulong page, ulong frame) => Mapped.TryGetValue(page, out var m) && m.Frame == frame;
+        public bool MapsTo(ulong page, ulong frame, bool write) =>
+            Mapped.TryGetValue(page, out var m) && m.Frame == frame && (!write || m.Access == MapAccess.ReadWrite);
 
         public bool Unmap(ulong page)
         {
@@ -165,8 +166,40 @@ public sealed class LinuxUserProcessTests
         Assert.IsTrue(process.HandlePageFault(Data + Page, NotPresentWrite), "schon abgebildet (gleichzeitiger Fehler)");
         Assert.AreEqual(MapAccess.ReadWrite, pages.Mapped[Data + Page].Access);
         Assert.IsTrue(process.HandlePageFault(Code, NotPresentFetch), "Codeseite, die ein anderer Thread schon holte (WebContent)");
-        Assert.IsFalse(process.HandlePageFault(Data + Page, PresentWrite), "Fehler auf vorhandener Seite holt nichts nach");
+        Assert.IsTrue(process.HandlePageFault(Data + Page, PresentWrite), "V38b: Seite schon schreibbar abgebildet, Befehl wiederholen");
+        Assert.AreEqual(MapAccess.ReadWrite, pages.Mapped[Data + Page].Access);
         Assert.IsTrue(process.HandlePageFault(image.StackBottom, NotPresentWrite), "Stack wächst bei Bedarf");
+    }
+
+    [TestMethod]
+    public void PresentWriteFaultAfterProtectToWriteIsRetried()
+    {
+        // V38b: Thread A schreibt auf eine nur lesbare Seite (#PF vorhanden+schreiben), Thread B macht sie per mprotect schreibbar,
+        // bevor A _memGate bekommt. Linux wiederholt den Befehl; vorher endete A mit SIGSEGV.
+        var (process, pages, _, _) = Start();
+        ulong a = process.MapAnonymous(2 * Page, 3);
+        Assert.IsTrue(process.TryWrite(a, new byte[] { 7 }));
+        Assert.IsTrue(process.Protect(a, 2 * Page, 1));
+        ulong frame = pages.Mapped[a].Frame;
+        Assert.IsFalse(process.HandlePageFault(a + 8, PresentWrite), "noch nur lesbar: Schutzverletzung bleibt");
+
+        Assert.IsTrue(process.Protect(a, Page, 3));
+        int frames = process.FrameCount;
+        Assert.IsTrue(process.HandlePageFault(a + 8, PresentWrite), "inzwischen schreibbar: wiederholen");
+        Assert.AreEqual(frame, pages.Mapped[a].Frame, "derselbe Frame, nichts neu geholt");
+        Assert.AreEqual(MapAccess.ReadWrite, pages.Mapped[a].Access);
+        Assert.AreEqual(frames, process.FrameCount);
+        byte[] back = new byte[1];
+        Assert.IsTrue(process.TryRead(a, back));
+        Assert.AreEqual(7, back[0], "Inhalt erhalten");
+
+        // Gegenproben: zweite Seite weiter nur lesbar; Karte erlaubt, Tabelle noch nicht (sonst endlose Wiederholung); Ausführen.
+        Assert.IsFalse(process.HandlePageFault(a + Page, PresentWrite), "Nachbarseite weiter nur lesbar");
+        pages.Mapped[a] = (frame, MapAccess.Read);
+        Assert.IsFalse(process.HandlePageFault(a, PresentWrite), "Tabelle noch nur lesbar: keine Wiederholungsschleife");
+        pages.Mapped[a] = (frame, MapAccess.ReadWrite);
+        Assert.IsFalse(process.HandlePageFault(a, PresentWrite | 0x10), "Ausführfehler bleibt Schutzverletzung");
+        Assert.IsFalse(process.HandlePageFault(a, PresentWrite & ~2UL), "Lesefehler auf vorhandener Seite bleibt Schutzverletzung");
     }
 
     [TestMethod]
