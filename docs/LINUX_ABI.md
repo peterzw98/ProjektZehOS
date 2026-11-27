@@ -23,7 +23,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 20 | `writev` | höchstens 1024 Einträge, Summe über 0x7ffff000 ergibt `-EINVAL` (Abweichung: Linux kürzt stattdessen), Einträge werden vorab gelesen |
 | 60, 231 | `exit`, `exit_group` | `ILinuxProcess.Exit(code & 0xff)` |
 | 12 | `brk` | wie Linux: bei Fehler der alte Wert, nie ein Fehlercode |
-| 9 | `mmap` | nur `MAP_ANONYMOUS` mit genau einem von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; `MAP_FIXED` `-ENOSYS` (Abweichung: Linux liefert je nach Fall `-EINVAL`/`-ENOMEM`); Datei-fd `-ENODEV` (fd < 0 ohne ANONYMOUS `-EBADF`); `-EINVAL`, `-ENOMEM` |
+| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), `MAP_SHARED` einer memfd geteilt (V17), Datei mit `MAP_FIXED` `-EINVAL`; fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
 | 11, 10 | `munmap`, `mprotect` | Länge wird auf Seiten aufgerundet; `-EINVAL` bei unausgerichteter Adresse, Länge oder Adresse über 2^47, unbekannten `prot`-Bits, `munmap` mit Länge 0; `mprotect` mit Länge 0 liefert 0; `mprotect` ohne Abdeckung `-ENOMEM` |
 | 158 | `arch_prctl` | `ARCH_SET_FS` (nur Adressen der Benutzerhälfte, sonst `-EPERM`), `ARCH_GET_FS`; sonst `-EINVAL` |
 | 218 | `set_tid_address` | merkt die Adresse je Thread, liefert die Thread-ID (V10) |
@@ -39,13 +39,13 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 131 | `sigaltstack` | setzen/abfragen/abschalten; Größe < 2048 `-ENOMEM`; ohne Zustellung wirkungslos; SS_AUTODISARM wird nicht gemerkt (Abweichung) |
 | 24 | `sched_yield` | `0` |
 | 7 | `poll` | höchstens 1024 Einträge; offene fd melden POLLOUT, POLLIN nur eine Eingabe mit Bytes, Eingabeende oder Abbruch (sonst nie POLLIN), unbekannte fd POLLNVAL; wartet ein Eintrag auf Eingabe, wartet poll darauf in 50-ms-Scheiben (auch mit Frist -1, Abbruch beendet), warten mehrere (Pipe-Enden, V13), reihum in 10-ms-Scheiben; ohne bereite Einträge und mit Frist > 0 schläft sie die Frist über `ILinuxHost.SleepNanos` ab (ohne Host nicht); Frist -1 (unendlich) schläft nie, Ergebnis 0 |
-| 28 | `madvise` | Hinweise 0-3, 14, 15 liefern 0; DONTNEED/FREE und Unbekanntes `-EINVAL` (Seiten nullen geht noch nicht); prüft keine Abbildung (Linux `-ENOMEM`) |
+| 28 | `madvise` | Hinweise 0-3 und 10-21 liefern 0 (ohne Wirkung); `MADV_DONTNEED`/`MADV_FREE` verwerfen den Inhalt, der Bereich liest sich danach als Nullen (V2c; bei memfd nur der Verweis, V17); Unbekanntes und unausgerichtete Adresse `-EINVAL` |
 | 202 | `futex` | mit Threads siehe V10; ohne Thread-Fähigkeit (Hosttests) wie S1, Einzelthread: WAIT/WAIT_BITSET mit abweichendem Wert `-EAGAIN`, mit Frist `-ETIMEDOUT` (ohne zu schlafen), ohne Frist `-EDEADLK` (Linux hängt; glibc bricht bei diesem unbekannten Fehler ab, musl dreht in einer Schleife); Wert wird vor der Frist gelesen: kaputte Frist bei abweichendem Wert liefert `-EAGAIN` statt `-EFAULT`/`-EINVAL` (Abweichung); WAKE* 0; CMP_REQUEUE prüft den Wert; WAKE_OP `-ENOSYS` |
 | 334 | `rseq` | `-ENOSYS` (Laufzeitbibliotheken fallen zurück) |
 
 Grenze: `write` verlässt sich auf `ILinuxDescriptor.Write` ≤ angebotene Länge (größere Rückgaben werden nicht abgefangen); je Aufruf ein 4-KiB-Puffer.
 
-Nicht in S1: Dateien (siehe V2 unten), Signalzustellung (siehe V18), Threads (siehe V10), `MAP_FIXED`, Dateiabbildungen.
+Nicht in S1: Dateien (siehe V2 unten), Signalzustellung (siehe V18), Threads (siehe V10), `MAP_FIXED` (V2c), Dateiabbildungen (V12, V17).
 
 ## Dateien (V2)
 
@@ -69,7 +69,7 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
 | 74, 75 | `fsync`, `fdatasync` | V14: Datei und Verzeichnis `0` (beide Speicher schreiben ungepuffert durch: `DirectoryFileStore` öffnet mit Puffergröße 1, Cosmos-FAT schreibt jeden Cluster sofort); `/dev/null`, `/dev/zero`, `/dev/tty` und das Terminal `-EINVAL` wie Linux für Zeichengeräte und Pipes |
 | 8 | `lseek` | whence 0-2 (`SEEK_DATA`/`SEEK_HOLE` `-EINVAL`); Terminal `-ESPIPE`; bei Verzeichnissen ist die Position der `getdents64`-Index (`rewinddir`, `seekdir`, `telldir`), `SEEK_END` `-EINVAL` |
 | 32, 33, 292 | `dup`, `dup2`, `dup3` | teilen die offene Datei; `dup2` schließt das Ziel still; `dup3` mit gleichen Nummern oder Flags außer `O_CLOEXEC` `-EINVAL` |
-| 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD` 0, `F_SETFD` ohne Wirkung (kein `execve`); `F_GETFL` immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar), bei Pipe-Enden (V13) `O_RDONLY`/`O_WRONLY` mit `O_NONBLOCK`; `F_SETFL` ohne Wirkung (Abweichung), bei Pipe-Enden setzt oder löscht es `O_NONBLOCK`; sonst `-EINVAL` |
+| 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD`/`F_SETFD` führen `FD_CLOEXEC` je Nummer, `execve` schließt solche Nummern (V15); `F_GETFL` bei Dateien immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar), bei Pipe-Enden (V13), Unix-Sockets (V16), eventfd und inotify (V20) Zugriffsart mit `O_NONBLOCK`; `F_SETFL` bei Dateien ohne Wirkung (Abweichung), bei den übrigen setzt oder löscht es `O_NONBLOCK`; `F_ADD_SEALS`/`F_GET_SEALS` siehe V17; sonst `-EINVAL` |
 | 79 | `getcwd` | Rückgabe Länge mit NUL; zu kleiner Puffer `-ERANGE` |
 | 80, 81 | `chdir`, `fchdir` | Ziel muss Verzeichnis sein (`-ENOTDIR`) und Suchrecht haben (`access X_OK`); cwd ist der textuell normalisierte Pfad (Symlinks bleiben darin stehen) |
 | 4, 5, 6, 262 | `stat`, `fstat`, `lstat`, `newfstatat` | `struct stat` 144 Bytes; `fstat` auf Terminal: Zeichengerät 136:0; `AT_EMPTY_PATH` mit leerem Pfad wie `fstat`, mit `AT_FDCWD` das Arbeitsverzeichnis |
@@ -268,7 +268,7 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxThreads.cs` und `LinuxUserPro
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
-| 56 | `clone` | nur Threads: `CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM` müssen alle gesetzt sein, dazu erlaubt `SETTLS`, `PARENT_SETTID`, `CHILD_SETTID`, `CHILD_CLEARTID`, `DETACHED`, Signalbyte (ignoriert wie bei Linux); `THREAD` ohne `SIGHAND` oder `SIGHAND` ohne `VM` `-EINVAL`; fork, vfork, posix_spawn und unbekannte Bits `-ENOSYS`; über 64 Threads oder nach `exit_group` `-EAGAIN`. Stack 0 heißt Stack des Elternthreads. TIDs ab PID+1, frei werdende TIDs beendeter Threads nach dem Umlauf bei 2^22 wieder ab 1 (PID und laufende übersprungen) |
+| 56 | `clone` | nur Threads: `CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM` müssen alle gesetzt sein, dazu erlaubt `SETTLS`, `PARENT_SETTID`, `CHILD_SETTID`, `CHILD_CLEARTID`, `DETACHED`, Signalbyte (ignoriert wie bei Linux); `THREAD` ohne `SIGHAND` oder `SIGHAND` ohne `VM` `-EINVAL`; `CLONE_VM|CLONE_VFORK` mit Austrittssignal ist ein vfork-Kind (V15, unten), fork und andere Kombinationen und unbekannte Bits `-ENOSYS`; über 64 Threads oder nach `exit_group` `-EAGAIN`. Stack 0 heißt Stack des Elternthreads. TIDs ab PID+1, frei werdende TIDs beendeter Threads nach dem Umlauf bei 2^22 wieder ab 1 (PID und laufende übersprungen) |
 | 435 | `clone3` | `-ENOSYS` (glibc fällt auf `clone` zurück) |
 | 60 | `exit` | beendet nur den Thread: `clear_child_tid` wird 0 und ein Wartender geweckt (pthread_join); der letzte Thread beendet den Prozess mit seinem Code |
 | 231 | `exit_group` | beendet alle Threads; futex-Wartende und Schlafende kehren mit `-EINTR` zurück, ein Lesen auf fd 0 bekommt Dateiende, dann verlassen alle den Ring 3. `clear_child_tid` der übrigen Threads bleibt ungeschrieben: Linux schreibt es nur, solange ein anderer den Adressraum nutzt, und das kann ohne zweiten Prozess, gemeinsamen Speicher oder ptrace niemand sehen |
@@ -322,7 +322,7 @@ Ereignisschleife aus anderen Threads über eine Pipe.
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
-| 22, 293 | `pipe`, `pipe2` | Pipe innerhalb des Prozesses (kein fork): kleinste freie Nummern für Lese- und Schreibende; Flags `O_CLOEXEC` (angenommen, nicht geführt: kein `execve`) und `O_NONBLOCK`, andere (`O_DIRECT`) `-EINVAL`; `-EFAULT` gibt beide Nummern wieder frei, `-EMFILE` ebenso |
+| 22, 293 | `pipe`, `pipe2` | kleinste freie Nummern für Lese- und Schreibende; vfork-Kinder und `SCM_RIGHTS` teilen die Enden (V15, V16); Flags `O_CLOEXEC` (setzt `FD_CLOEXEC` auf beiden Nummern, V15) und `O_NONBLOCK`, andere (`O_DIRECT`) `-EINVAL`; `-EFAULT` gibt beide Nummern wieder frei, `-EMFILE` ebenso |
 | 0, 19 | `read`, `readv` auf dem Leseende | blockiert ohne Daten bis zu einem Schreiben, bis kein Schreibende mehr offen ist (`0`, EOF) oder zum Abbruch (`-EINTR`); mit `O_NONBLOCK` `-EAGAIN`; liefert das Verfügbare, höchstens 4096 Bytes je Aufruf; auf dem Schreibende `-EBADF` |
 | 1, 20 | `write`, `writev` auf dem Schreibende | Puffer 64 KiB; bis 4096 Bytes (`PIPE_BUF`) ganz oder gar nicht; voll blockiert es, mit `O_NONBLOCK` `-EAGAIN`; ohne Leseende `-EPIPE` und `SIGPIPE` (V18); auf dem Leseende `-EBADF` |
 | 7 | `poll` | Leseende `POLLIN` mit Daten, `POLLHUP` ohne Schreibende; Schreibende `POLLOUT` bei mindestens 4096 Bytes Platz, `POLLERR` ohne Leseende; wartet auf Pipe-Enden ohne Dateisperre und wacht beim Schreiben, Lesen oder Schließen eines anderen Threads auf |
@@ -336,6 +336,29 @@ des Aufrufs). `ioctl(FIONREAD)`, `select`, `ppoll` und `epoll` gibt es nicht. Di
 Benutzerspeicher noch eine andere Sperre. `read` auf dem Leseende prüft den Puffer vor dem Entnehmen; gibt ein anderer Thread ihn danach per `munmap` oder
 `mprotect` frei, scheitert das Zurückschreiben mit `-EFAULT`, und die entnommenen Bytes sind verloren (Abweichung: Linux rückt in `pipe_read` erst nach erfolgreichem Kopieren vor und behält sie).
 
+## Prozesse starten und warten (V15)
+
+Plattformunabhängig in `ProjektZeh/Processes/LinuxSpawn.cs`, `LinuxWait.cs`, `LinuxOpenFiles.cs`, `Syscalls/LinuxSyscallsSpawn.cs` und `LinuxSyscallsWait.cs`
+(Hosttests `LinuxSpawnTests`, `LinuxProcessWaitTests`; Gastprogramme `experiments/LinuxAbi/src/v15/spawn.c` und `wait.c`, Erwartung Linux 6.12 in
+`expected/v15`). Anlass: Ladybird startet WebContent und die Helfer mit `posix_spawn`; musl ruft dafür `clone(CLONE_VM|CLONE_VFORK|SIGCHLD)` und im Kind
+`execve`. Es gibt kein `fork` mit eigenem Speicher.
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 56, 58 | `clone` (vfork-Form), `vfork` | `CLONE_VM|CLONE_VFORK` und Austrittssignal (sonst nichts): das Kind ist ein eigener Prozess (PID aus dem gemeinsamen Namensraum der PIDs und TIDs eines Laufs, Kopie der Deskriptortabelle samt `FD_CLOEXEC`, Handler, Arbeitsverzeichnis) auf dem Speicher und Stack aus `clone` (0: der bisherige) des Elternprozesses; dessen aufrufender Thread wartet, bis das Kind `execve` oder `exit` ruft, und bekommt dann die PID. vfork im vfork-Kind und andere Flags `-ENOSYS`, ohne Mittel `-EAGAIN` |
+| 59 | `execve` | nur im vfork-Kind (sonst `-ENOSYS`: kein Austausch des Adressraums unter laufenden Threads); Pfadfehler wie `open`, keine reguläre Datei `-EACCES`, über 128 MiB `-ENOMEM`; argv/envp: Zeichenkette über 128 KiB, mehr als 32768 Einträge oder zusammen über 2 MiB `-E2BIG`; ELF-Fehler `-ENOEXEC` (auch `PT_INTERP` und Segmente mit Schreib- und Ausführrecht, W^X), kaputte Argumente `-EINVAL`. Danach: neuer Adressraum, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` (SIG_IGN und Signalmaske bleiben, der Alternativstack nicht), während vfork gemerkte Signale zugestellt (siehe `kill`, V10) |
+| 61 | `wait4` | `pid > 0`, `-1`, `0` (eigene Gruppe), `< -1` (Gruppe); `WNOHANG` (0 ohne fertiges Kind); `WUNTRACED`/`WCONTINUED` angenommen, warten aber nur auf das Ende (keine gestoppten Prozesse); Status wie Linux (`exit n`: n << 8, Signal: Nummer); rusage Nullen (keine Rechenzeit je Prozess); kein passendes Kind `-ECHILD`, unbekannte Optionen `-EINVAL`, `INT_MIN` `-ESRCH`; `-EFAULT` nach dem Abholen wie Linux |
+| 247 | `waitid` | `P_ALL`, `P_PID`, `P_PGID` (`P_PIDFD` `-EINVAL`: es gibt keine pidfds); `WEXITED` nötig, `WNOWAIT` lässt das Kind stehen; mit `WNOHANG` ohne fertiges Kind Nullen in `si_signo`/`si_pid` |
+| 110 | `getppid` | PID des Elternprozesses, 0 beim ersten Prozess des Laufs; Waisen behalten die tote PID |
+| 62 | `kill` | siehe V10-Tabelle |
+
+Umsetzung und Grenzen:
+
+- Offene Dateien zählt `LinuxOpenFiles` je Lauf: Eine Datei, ein Pipe-Ende, ein Socket (V16) oder eine eventfd/inotify (V20) schließt erst mit der letzten
+  Nummer irgendeines Prozesses (`close` im Kind lässt die Pipe der Eltern offen). Ein Prozess schließt beim Ende alle Nummern, bevor `wait4` ihn sieht.
+- SIGCHLD geht beim Ende an die Eltern (V18); ignoriert der Elternprozess SIGCHLD oder setzt `SA_NOCLDWAIT`, bleibt kein Zombie.
+- Waisen gehen nicht an init (der erste Prozess eines Laufs ist das Programm, kein init); ihr Status geht an niemanden.
+
 ## Unix-Sockets (V16)
 
 Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `LinuxSyscallsSocket.cs` (Hosttests `LinuxUnixSocketTests`, Gastprogramm
@@ -346,7 +369,7 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
 | 41 | `socket` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`, kein Netz), `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` `-ESOCKTNOSUPPORT`), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
-| 49 | `bind` | abstrakte Namen (führendes Nullbyte, binär) und Pfade relativ zum Arbeitsverzeichnis; ein Pfad legt eine leere Datei an (vorhanden: `-EADDRINUSE`), die nach `close` stehen bleibt; Länge 2 bindet automatisch (`\0` und fünf Hexziffern); schon gebunden `-EINVAL`; Namen gelten je Lauf |
+| 49 | `bind` | abstrakte Namen (führendes Nullbyte, binär) und Pfade relativ zum Arbeitsverzeichnis; ein Pfad legt eine leere Datei an (vorhanden: `-EADDRINUSE`), die nach `close` stehen bleibt; Länge 2 bindet automatisch (`\0` und fünf Hexziffern); schon gebunden oder angenommenes Ende `-EINVAL`; Namen gelten je Lauf |
 | 50 | `listen` | unbenannt oder verbunden `-EINVAL`; Rückstand bis 4096, wie Linux wartet eine Verbindung mehr als angegeben |
 | 42 | `connect` | legt das Gegenende sofort an (Senden vor `accept` geht); volle Warteschlange: blockierend warten, sonst `-EAGAIN`; kein Lauschender, gewöhnliche Datei oder anderer Typ unter abstraktem Namen `-ECONNREFUSED`, anderer Typ unter Pfad `-EPROTOTYPE`, fehlender Pfad `-ENOENT` (auch nach `unlink`), verbunden `-EISCONN`, Länge bis 2 `-EINVAL` |
 | 43, 288 | `accept`, `accept4` | älteste Verbindung; nicht lauschend `-EINVAL`, leer mit `O_NONBLOCK` `-EAGAIN`; Name des Verbindenden (unbenannt: Länge 2); `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `close` des Lauschenden beendet nicht angenommene Verbindungen (EOF beim Verbindenden) |
@@ -363,7 +386,9 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `
 
 Grenzen: Ein Socket, das sich selbst (oder einen Kreis von Sockets) in einer ungelesenen Nachricht trägt, wird nie geschlossen (Linux räumt solche Kreise mit
 einem Garbage Collector ab). Der Puffer zählt Nutzbytes, nicht den Verwaltungsaufwand je Nachricht wie Linux; wie viele Bytes bis `-EAGAIN` passen, weicht ab.
-Die Socket-Sperre ist eine Blattsperre (Dateisperre vor Socket-Sperre); Senden und Empfangen warten ohne Dateisperre. Pipes und Sockets warten seit V16 mit dem
+Rechte: `bind` legt die Socketdatei mit 0755 an, ohne `umask` (es gibt keine), und `connect` prüft nur, dass der Pfad ein Socket ist, nicht das
+Schreibrecht darauf (Linux verlangt `w`); da alle Prozesse eines Laufs eine UID haben, weicht nur ein bewusst schreibgeschützter Socketpfad ab. Pfadnamen
+werden als UTF-8 gelesen: ungültige Bytefolgen werden zu U+FFFD, zwei solche Namen können zusammenfallen. Die Socket-Sperre ist eine Blattsperre (Dateisperre vor Socket-Sperre); Senden und Empfangen warten ohne Dateisperre. Pipes und Sockets warten seit V16 mit dem
 Abbruch des aufrufenden Prozesses (`ILinuxPollable.ReadAs`/`WriteAs`/`WaitPoll`): Vorher lieferte eine Pipe, die ein beendetes vfork-Kind angelegt hatte, den
 Eltern nur noch `-EINTR`.
 
@@ -420,3 +445,26 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
   Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3) und keine Handler für Ausnahmen (SIGSEGV/SIGFPE aus einem Fehler im
   Ring 3 beenden weiter). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigpending`, `rt_sigtimedwait` und
   `signalfd` fehlen.
+
+## Weiche Lücken: eventfd, statfs, inotify (V20)
+
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxEventFd.cs` und `LinuxSyscallsSoft.cs` (Hosttests `LinuxSoftGapsTests`). Anlass: die Lesestudie
+zum Ladybird-Startweg (`docs/superpowers/specs/2026-11-27-ladybird-636-vorlauf.md`, Punkte 4, 5 und 9): libcurl weckt seine Ereignisschleife über eventfd,
+fontconfig fragt statfs, Ladybird beobachtet die Zeitzone mit inotify.
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 284, 290 | `eventfd`, `eventfd2` | 64-Bit-Zähler mit Startwert; Flags `EFD_CLOEXEC`, `EFD_NONBLOCK`, `EFD_SEMAPHORE`, andere `-EINVAL` (`eventfd` ohne Flags) |
+| 0, 1 | `read`, `write` auf eventfd | `read` unter 8 Bytes (auch 0) `-EINVAL`, sonst 8 Bytes: der Zähler, danach 0 (mit `EFD_SEMAPHORE` 1, Zähler minus 1); Zähler 0 wartet oder `-EAGAIN`. `write` unter 8 Bytes oder Wert 2^64 - 1 `-EINVAL`; addiert, ein Überlauf über 2^64 - 2 wartet oder `-EAGAIN`; Ergebnis 8 |
+| 7 | `poll` auf eventfd | `POLLIN` bei Zähler > 0, `POLLOUT` solange noch 1 dazupasst |
+| 137, 138 | `statfs`, `fstatfs` | `struct statfs` 120 Bytes; Prozesswurzel auf der Platte: `f_type` vfat (`0x4d44`), Größe = Kontingent (V7), frei = Kontingent minus Nettowachstum; im Arbeitsspeicher tmpfs mit dessen Grenzen und Knotenzahl; `f_bsize`/`f_frsize` 4096, `f_namelen` 255, `f_flags` `ST_VALID`, `f_fsid` 0. `fstatfs` auf Pipe, Socket, eventfd/inotify und Terminal meldet pipefs, sockfs, anon_inodefs und devpts wie Linux. Pfadfehler wie `stat`, ungültiger fd `-EBADF` |
+| 253, 294 | `inotify_init`, `inotify_init1` | Flags `IN_CLOEXEC`, `IN_NONBLOCK`, andere `-EINVAL`; `F_GETFL` `O_RDONLY` |
+| 254 | `inotify_add_watch` | Reihenfolge wie Linux: Maske ohne bekannte Bits oder `IN_MASK_ADD` mit `IN_MASK_CREATE` `-EINVAL`; fd ungültig `-EBADF`, kein inotify `-EINVAL`; Pfadfehler wie `stat` (`IN_DONT_FOLLOW` folgt keinem Link), `IN_ONLYDIR` ohne Verzeichnis `-ENOTDIR`, ohne Leserecht `-EACCES`. Dieselbe Datei (Gerät und Inode) ergibt denselben Watch: `IN_MASK_CREATE` `-EEXIST`, `IN_MASK_ADD` verknüpft die Masken, sonst ersetzt die neue; Watch-Nummern ab 1, nicht wiederverwendet; höchstens 8192 je Instanz (`-ENOSPC`) |
+| 255 | `inotify_rm_watch` | unbekannter Watch `-EINVAL`; sonst entfernt, ein Ereignis `IN_IGNORED` (16 Bytes, ohne Namen) wartet |
+| 0, 1, 7 | `read`, `write`, `poll` auf inotify | `read` liefert ganze Ereignisse; passt das erste nicht, `-EINVAL`; ohne Ereignis wartet es oder `-EAGAIN`; `write` `-EBADF` (nur lesend offen); `poll` nur `POLLIN` |
+| 5 | `fstat` | eventfd und inotify: Modus 0600 ohne Dateityp (anon_inode), Größe 0 |
+
+Grenzen: ZehOS meldet **keine Dateiänderungen**; inotify erzeugt außer `IN_IGNORED` nach `inotify_rm_watch` nie ein Ereignis (Ladybird merkt eine geänderte
+Zeitzone also erst beim Neustart). `IN_ONESHOT` und `IN_EXCL_UNLINK` werden angenommen und ohne Wirkung gespeichert; `ioctl(FIONREAD)` fehlt. statfs meldet
+für den ganzen Baum dieselben Werte, auch für das virtuelle `/dev`; der freie Platz der Platte selbst fließt nicht ein. `select`, `epoll` und `signalfd` fehlen
+weiter. Die Sperren von eventfd und inotify sind Blattsperren wie die Pipe-Sperre (Dateisperre davor möglich); Lesen und Warten laufen ohne Dateisperre.

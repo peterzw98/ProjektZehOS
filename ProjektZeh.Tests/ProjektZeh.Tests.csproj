@@ -94,6 +94,8 @@
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxUnixNames.cs" Link="Processes\Syscalls\LinuxUnixNames.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxUnixSocket.Listen.cs" Link="Processes\Syscalls\LinuxUnixSocket.Listen.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxSyscallsUnixBind.cs" Link="Processes\Syscalls\LinuxSyscallsUnixBind.cs" />
+    <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxEventFd.cs" Link="Processes\Syscalls\LinuxEventFd.cs" />
+    <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxSyscallsSoft.cs" Link="Processes\Syscalls\LinuxSyscallsSoft.cs" />
     <Compile Include="..\ProjektZeh\Processes\Vfs\*.cs" Exclude="..\ProjektZeh\Processes\Vfs\Cosmos*.cs" Link="Processes\Vfs\%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Input\**\*.cs" Exclude="..\ProjektZeh\Input\Cosmos*.cs" Link="Input\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\ProjektZeh\Graphics\PixelSurface.cs" Link="Graphics\PixelSurface.cs" />
