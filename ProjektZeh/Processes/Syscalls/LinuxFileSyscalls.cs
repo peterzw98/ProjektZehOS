@@ -12,7 +12,7 @@ internal static partial class LinuxSyscalls
 {
     private static class FileNr
     {
-        public const long Read = 0, Open = 2, Close = 3, Lseek = 8, Pread64 = 17, Pwrite64 = 18, Readv = 19, Pipe = 22, Dup = 32, Dup2 = 33, Fcntl = 72,
+        public const long Read = 0, Open = 2, Close = 3, Lseek = 8, Pread64 = 17, Pwrite64 = 18, Readv = 19, Pipe = 22, Dup = 32, Dup2 = 33, Fcntl = 72, Flock = 73,
             Fsync = 74, Fdatasync = 75, Ftruncate = 77, Getcwd = 79, Chdir = 80, Fchdir = 81, Openat = 257, Dup3 = 292, Pipe2 = 293, Preadv = 295, Pwritev = 296,
             MemfdCreate = 319;
     }
@@ -28,6 +28,8 @@ internal static partial class LinuxSyscalls
     private const int FdCloexec = 1;
     private const int FdDupfd = 0, FdGetfd = 1, FdSetfd = 2, FdGetfl = 3, FdSetfl = 4, FdDupfdCloexec = 1030, FdAddSeals = 1033, FdGetSeals = 1034;
     private const int FileChunk = 65536;
+    private const int FdGetlk = 5, FdSetlk = 6, FdSetlkw = 7, FdOfdGetlk = 36, FdOfdSetlk = 37, FdOfdSetlkw = 38;
+    private const long FileENOLCK = 37;
 
     private static long DispatchFile(ref SyscallArgs a, ILinuxProcess p, ILinuxFiles f)
     {
@@ -57,6 +59,7 @@ internal static partial class LinuxSyscalls
 
                 return WithCloseOnExec(f, DoDup2(p, f, (int)a.A0, (int)a.A1, allowSame: false), ((int)a.A2 & FileOCloexec) != 0);
             case FileNr.Fcntl: return DoFcntl(p, f, (int)a.A0, (int)a.A1, a.A2);
+            case FileNr.Flock: return DoFlock(p, (int)a.A0, (int)a.A1); // V28b: nur LOCK_NB oder LOCK_UN; wartend über DoFcntlLockWait
             case FileNr.Getcwd: return DoGetcwd(p, f, a.A0, a.A1);
             case FileNr.Chdir: return DoChdir(p, f, a.A0);
             case FileNr.Fchdir: return DoFchdir(p, f, (int)a.A0);
@@ -113,6 +116,8 @@ internal static partial class LinuxSyscalls
             return -EBADF;
         }
 
+        ReleasePosixLocksOnClose(p, d); // V28b: jedes close, nicht erst das letzte (Linux filp_flush -> locks_remove_posix)
+
         // Wie Linux: Die Nummer ist auch bei einem Fehler frei; der Fehler beim Zurückschreiben erreicht das Programm (nur beim letzten close).
         return ReleaseIfUnused(p, d);
     }
@@ -140,6 +145,11 @@ internal static partial class LinuxSyscalls
         if (p is ILinuxOpenFileCount count && count.IsOpenAnywhere(d))
         {
             return 0;
+        }
+
+        if (p is ILinuxFileLocking locking)
+        {
+            locking.FileLocks.ReleaseOfd(d); // V28b: OFD-Sperren gehören der offenen Datei und fallen mit ihrem letzten close
         }
 
         if (d is LinuxUnixSocket socket)
@@ -510,6 +520,7 @@ internal static partial class LinuxSyscalls
         ILinuxDescriptor? old = p.GetDescriptor(newFd);
         if (old is not null && f.RemoveDescriptor(newFd))
         {
+            ReleasePosixLocksOnClose(p, old);
             _ = ReleaseIfUnused(p, old); // dup2 verwirft den Fehler des stillen close wie Linux
         }
 
@@ -553,6 +564,13 @@ internal static partial class LinuxSyscalls
                 return 2;
             case FdSetfl:
                 return 0; // O_NONBLOCK/O_APPEND nachträglich: nicht umgesetzt, still angenommen (LINUX_ABI.md)
+            case FdGetlk:
+            case FdSetlk:
+            case FdSetlkw: // nur ohne Gegenspieler; wartend über DoFcntlLockWait (der Verteiler nimmt die Sperre selbst)
+            case FdOfdGetlk:
+            case FdOfdSetlk:
+            case FdOfdSetlkw:
+                return DoFcntlLock(p, fd, cmd, arg);
             default:
                 return -EINVAL;
         }

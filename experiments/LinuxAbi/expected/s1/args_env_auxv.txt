@@ -4,7 +4,8 @@ argv[2]=b 2
 env=ZEHOS_ABI=1
 env=LANG=C
 env=PATH=/usr/bin:/bin
-envc=3
+env=HOME=/
+envc=4
 AT_PAGESZ=4096
 AT_PHENT=56
 AT_PHNUM>0=1

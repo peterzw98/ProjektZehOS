@@ -128,6 +128,7 @@ internal static partial class LinuxSyscalls
                 }
                 else if (f.RemoveDescriptor(fd))
                 {
+                    ReleasePosixLocksOnClose(p, d); // V28b: wie close (Linux file_close_fd_locked -> filp_flush)
                     _ = ReleaseIfUnused(p, d); // Linux meldet Fehler beim Schließen hier nicht
                 }
             }

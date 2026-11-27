@@ -46,7 +46,7 @@ internal interface IUserPages
 /// </para>
 /// </summary>
 internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
-    ILinuxSystemInfo, ILinuxSpawn, ILinuxFdFlags, ILinuxOpenFileCount, ILinuxWait, ILinuxInFlight
+    ILinuxSystemInfo, ILinuxSpawn, ILinuxFdFlags, ILinuxOpenFileCount, ILinuxWait, ILinuxInFlight, ILinuxFileLocking
 {
     /// <summary>
     /// Größe der Deskriptortabelle; gleich der Grenze, bis zu der der Verteiler bei close nach weiteren Nummern derselben Datei sucht
@@ -696,6 +696,12 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// <summary>V15: true, solange irgendeine Nummer irgendeines Prozesses dieses Laufs auf <paramref name="d"/> zeigt. Der Aufrufer hält FileGate.</summary>
     public bool IsOpenAnywhere(ILinuxDescriptor d) => _openFiles.IsReferenced(d);
 
+    /// <summary>V28b: Sperrtabelle des Laufs (geteilt wie die Zähltabelle).</summary>
+    public LinuxFileLocks FileLocks => _openFiles.Locks;
+
+    /// <summary>V28b: POSIX-Sperren gehören der PID; execve (TakeOver) behält sie, wie Linux.</summary>
+    public int LockOwner => Pid;
+
     /// <summary>V16 (SCM_RIGHTS): eine Unix-Socket-Nachricht hält <paramref name="d"/> wie eine Nummer. Der Aufrufer hält FileGate.</summary>
     public void HoldInFlight(ILinuxDescriptor d) => _openFiles.Add(d);
 
@@ -718,6 +724,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
 
         _descriptors[fd] = null;
         _openFiles.Remove(d);
+        LinuxSyscalls.ReleasePosixLocksOnClose(this, d); // V28b: vor dem Schließen, das stat braucht die offene Datei
 
         // Close fängt Dateifehler ab und gibt das Budget in jedem Fall zurück; ein -EIO beim Zurückschreiben hat am Prozessende oder
         // bei execve keinen Empfänger mehr (wie Linux in exit und do_close_on_exec) und darf die übrigen Dateien nicht offen lassen.
@@ -752,6 +759,13 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             for (int fd = 0; fd < MaxDescriptors; fd++)
             {
                 DropDescriptor(fd);
+            }
+
+            // V28b: Rest für Sperren, deren Datei sich nicht mehr erkennen ließ (stat gescheitert). Nach execve hat der neue Prozess die PID
+            // übernommen (_pidPassed); seine Sperren bleiben.
+            if (!_pidPassed)
+            {
+                _openFiles.Locks.ReleaseProcess(Pid);
             }
         }
     }

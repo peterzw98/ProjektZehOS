@@ -51,7 +51,9 @@ internal static partial class LinuxSyscalls
             case MetaNr.Renameat2: return (uint)a.A4 != 0 ? -MetaErr.EINVAL : DoRename(p, f, (int)a.A0, a.A1, (int)a.A2, a.A3); // NOREPLACE/EXCHANGE nicht umgesetzt
             case MetaNr.Symlink: return DoSymlink(p, f, a.A0, MetaAtFdcwd, a.A1);
             case MetaNr.Symlinkat: return DoSymlink(p, f, a.A0, (int)a.A1, a.A2);
-            default: return DispatchSoft(ref a, p, f); // V20: eventfd, statfs, inotify; sonst -ENOSYS
+            default:
+                // V28b: chmod und link (FAT ohne Rechtebits und harte Links); V20: eventfd, statfs, inotify; sonst -ENOSYS
+                return TryDispatchMode(ref a, p, f, out long moded) ? moded : DispatchSoft(ref a, p, f);
         }
     }
 

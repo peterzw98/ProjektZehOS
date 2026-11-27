@@ -51,6 +51,9 @@ internal sealed class LinuxOpenFiles
         public int Count { get; set; }
     }
 
+    /// <summary>V28b: beratende Bereichssperren (fcntl) aller Prozesse des Laufs; geschützt durch dieses Objekt als FileGate.</summary>
+    public LinuxFileLocks Locks { get; } = new();
+
     /// <summary>Anzahl verschiedener gezählter Objekte (Tests).</summary>
     public int Distinct => _entries.Count;
 
