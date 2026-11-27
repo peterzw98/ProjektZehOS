@@ -188,6 +188,11 @@ internal static partial class LinuxSyscalls
             return -EBADF;
         }
 
+        if (d is LinuxEpoll)
+        {
+            return -EINVAL; // V22: Linux liest aus epoll nichts (ep_eventpoll_fops ohne read)
+        }
+
         if (d is not ILinuxFile file)
         {
             return -EBADF; // Terminal ist bisher nur zum Schreiben offen

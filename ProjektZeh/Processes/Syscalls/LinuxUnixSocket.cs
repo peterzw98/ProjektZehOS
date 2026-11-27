@@ -62,7 +62,7 @@ internal sealed class LinuxSocketFds
 /// Prozesses, nicht des erzeugenden: Über SCM_RIGHTS und vfork benutzen auch andere Prozesse das Ende, und der Erzeuger darf vorher enden.
 /// </para>
 /// </summary>
-internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILinuxStatusFlags
+internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILinuxStatusFlags, ILinuxEdgeSource
 {
     public const int SockStream = 1, SockSeqpacket = 5;
 
@@ -230,6 +230,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
                     ch.Records.Enqueue(new Record(data.Slice(done, take).ToArray(), fdsTaken ? null : fds));
                     fdsTaken = true;
                     ch.Bytes += take;
+                    ch.Seq++;
                     done += take;
                     Monitor.PulseAll(l.Gate); // Daten für wartende Leser und poll
                     if (done == data.Length)
@@ -397,6 +398,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             if (how != 0)
             {
                 Outgoing(l).WriteClosed = true; // Gegenseite liest den Rest, dann EOF; eigenes Senden -EPIPE
+                Outgoing(l).Seq++;
             }
 
             Monitor.PulseAll(l.Gate);
@@ -429,6 +431,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         {
             Channel incoming = Incoming(l);
             Outgoing(l).WriteClosed = true;
+            Outgoing(l).Seq++;
             incoming.ReadClosed = true;
             if (incoming.Records.Count > 0 && Peer != null)
             {
@@ -455,6 +458,24 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             foreach (LinuxSocketFds f in dropped)
             {
                 f.Release();
+            }
+        }
+    }
+
+    /// <summary>V22: Ereigniszähler der eingehenden Richtung; unverbunden und lauschend 0 (epoll meldet dann nur Übergänge).</summary>
+    public long EdgeSeq
+    {
+        get
+        {
+            Link? l = Volatile.Read(ref _link);
+            if (l == null)
+            {
+                return 0;
+            }
+
+            lock (l.Gate)
+            {
+                return Incoming(l).Seq;
             }
         }
     }
@@ -595,6 +616,9 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         public bool WriteClosed { get; set; }
 
         public bool ReadClosed { get; set; }
+
+        /// <summary>V22: steigt mit jedem Datensatz und mit dem Ende des Senders (EPOLLET des Empfängers, <see cref="ILinuxEdgeSource"/>).</summary>
+        public long Seq { get; set; }
     }
 
     /// <summary>Gemeinsamer Zustand eines verbundenen Paars: Sperre und beide Richtungen.</summary>

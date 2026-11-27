@@ -278,7 +278,7 @@ public class LinuxPipeTests
         Assert.AreEqual(0L, Call(p, Close, (ulong)r));
         Assert.AreEqual(-32L, WriteText(p, w, "x"), "EPIPE");
         rev = DoPoll(p, 0, out _, (w, PollOut));
-        Assert.AreEqual(PollErr, rev[0]);
+        Assert.AreEqual((short)(PollErr | PollOut), rev[0], "wie Linux' pipe_poll (V22, gegen Linux 6.12 geprüft)");
     }
 
     [TestMethod]
