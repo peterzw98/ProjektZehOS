@@ -461,6 +461,8 @@ public sealed class LinuxSpawnTests
     {
         var f = new Fixture();
         Assert.AreEqual(-21, OpenFile(f, f.Parent, "/proc/self/fd", 2), "O_RDWR auf ein Verzeichnis");
+        Assert.AreEqual(-17, OpenFile(f, f.Parent, "/proc/self/fd", 0xC0), "O_CREAT|O_EXCL auf Vorhandenes");
+        Assert.AreEqual(-21, OpenFile(f, f.Parent, "/proc/self/fd", 0x40), "O_CREAT auf ein Verzeichnis");
         long fd = OpenFile(f, f.Parent, "/proc/" + Pid + "/fd", 0x10000); // O_DIRECTORY
         Assert.AreEqual(3, fd);
         Assert.AreEqual(0, Fixture.Call(f.Parent, Fstat, 3, f.Mem + 256));
@@ -529,6 +531,69 @@ public sealed class LinuxSpawnTests
         LinuxSignalFrame.AfterSyscall(f.Parent, ref r, new byte[512], entry.ToSyscallArgs(), -LinuxSyscalls.EINTR, f.Parent.SignalsTaken);
         Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
         Assert.AreEqual(Code, r.Rip);
+    }
+
+    [TestMethod]
+    public void PpollWartemaskeZweierThreadsStelltDieAlteErstAmEndeHer()
+    {
+        var f = new Fixture();
+        const ulong Usr1 = 1UL << 9, Term = 1UL << 14, Usr2 = 1UL << 11;
+        var a = new LinuxThread(1001);
+        var b = new LinuxThread(1002);
+
+        // A endet zuerst: B wartet noch, seine Maske bleibt; erst B stellt die Maske von vor A her (nicht A's Wartemaske).
+        f.Parent.Signals.Blocked = Usr1;
+        f.Parent.BeginWaitMask(a, Term);
+        f.Parent.BeginWaitMask(b, Usr2);
+        Assert.AreEqual(Usr1, b.SavedBlocked, "B merkt die Maske vor A, nicht A's Wartemaske");
+        f.Parent.EndWaitMask(a);
+        Assert.AreEqual(Usr2, f.Parent.Signals.Blocked, "B wartet noch");
+        f.Parent.EndWaitMask(b);
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+
+        // B endet zuerst.
+        f.Parent.BeginWaitMask(a, Term);
+        f.Parent.BeginWaitMask(b, Usr2);
+        f.Parent.EndWaitMask(b);
+        f.Parent.EndWaitMask(a);
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+
+        // A verlässt die Wartemaske über einen Signalrahmen (zählt nur ab), B stellt am Ende her; ein zweites Ende ist wirkungslos.
+        f.Parent.BeginWaitMask(a, Term);
+        f.Parent.BeginWaitMask(b, Usr2);
+        Assert.IsTrue(f.Parent.LeaveWaitMask(a, restore: false));
+        f.Parent.EndWaitMask(b);
+        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+        Assert.IsFalse(f.Parent.LeaveWaitMask(b, restore: true));
+        f.Parent.Signals.Blocked = Usr2;
+        f.Parent.EndWaitMask(a);
+        Assert.AreEqual(Usr2, f.Parent.Signals.Blocked, "kein Thread in einer Wartemaske: nichts herzustellen");
+    }
+
+    [TestMethod]
+    public void PpollRestzeitLaeuftBeiRiesigerFristNichtUeber()
+    {
+        var f = new Fixture();
+        const ulong Usr1 = 1UL << 9;
+        const long Sec = 10_000_000_000L; // sec * 10^9 > long.MaxValue
+        ulong ts = f.Mem + 128, mask = f.Mem + 160;
+        Assert.IsTrue(f.Parent.TryWrite(ts, BitConverter.GetBytes(Sec)));
+        Assert.IsTrue(f.Parent.TryWrite(ts + 8, BitConverter.GetBytes(5L)));
+        Assert.IsTrue(f.Parent.TryWrite(mask, new byte[8]));
+        f.Parent.Signals.Blocked = Usr1;
+        f.Parent.Signals.Handler[10] = 0x401000;
+        f.Parent.Signals.Restorer[10] = 0x401000;
+        f.Parent.Signals.Flags[10] = LinuxUserProcess.SaRestorer;
+        Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.Tkill, (ulong)Pid, 10));
+
+        // Das anhängige SIGUSR1 wird frei: sofort -EINTR, die Restzeit steht wieder in tmo_p.
+        Assert.AreEqual(-LinuxSyscalls.EINTR, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 8));
+        byte[] left = new byte[16];
+        Assert.IsTrue(f.Parent.TryRead(ts, left));
+        long leftSec = BitConverter.ToInt64(left), leftNsec = BitConverter.ToInt64(left, 8);
+        Assert.IsTrue(leftSec >= Sec - 2 && leftSec <= Sec, "Restzeit " + leftSec);
+        Assert.IsTrue(leftNsec >= 0 && leftNsec < 1_000_000_000);
+        f.Parent.EndWaitMask(f.Parent.CurrentThread);
     }
 
     // Statisches Programm wie in LinuxUserProcessTests: Code bei 0x401000 (ret), Daten bei 0x403000.

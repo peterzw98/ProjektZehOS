@@ -76,10 +76,24 @@ internal static partial class LinuxSyscalls
 
         if (timeoutPtr != 0 && timeoutMs > 0)
         {
-            long leftMs = Math.Max(0, timeoutMs - LinuxPipe.ElapsedMs(start));
-            long leftNs = Math.Min((sec * 1_000_000_000) + nsec, leftMs * 1_000_000);
-            BitConverter.TryWriteBytes(ts, leftNs / 1_000_000_000);
-            BitConverter.TryWriteBytes(ts[8..], leftNs % 1_000_000_000);
+            // In Sekunden und Nanosekunden getrennt rechnen: sec * 10^9 liefe ab etwa 9,2 * 10^9 Sekunden über (Review V19, P3).
+            long elapsedMs = Math.Clamp(LinuxPipe.ElapsedMs(start), 0, timeoutMs);
+            long leftSec = sec - (elapsedMs / 1000);
+            long leftNsec = nsec - ((elapsedMs % 1000) * 1_000_000);
+            if (leftNsec < 0)
+            {
+                leftNsec += 1_000_000_000;
+                leftSec--;
+            }
+
+            if (leftSec < 0 || elapsedMs >= timeoutMs)
+            {
+                leftSec = 0; // abgelaufen (die aufgerundete Frist kann die angegebene um weniger als 1 ms übersteigen)
+                leftNsec = 0;
+            }
+
+            BitConverter.TryWriteBytes(ts, leftSec);
+            BitConverter.TryWriteBytes(ts[8..], leftNsec);
             _ = p.Memory.TryWrite(timeoutPtr, ts); // Linux: Fehler beim Zurückschreiben ändern das Ergebnis nicht
         }
 
