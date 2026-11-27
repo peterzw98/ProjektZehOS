@@ -119,6 +119,7 @@ internal static unsafe partial class GarbageCollector
             {
                 // Dead object - add to free run
                 freed++;
+                ClearDeadObjectHeader(ptr);
 
                 if (freeRunStart == null)
                 {
@@ -146,6 +147,27 @@ internal static unsafe partial class GarbageCollector
         }
 
         return freed;
+    }
+
+    /// <summary>
+    /// Clears the runtime object header (objRef-4: identity hash or sync-table index) of a dead object.
+    /// </summary>
+    /// <remarks>
+    /// The header lies in the last bytes before the object, outside the bytes an allocation hands out:
+    /// the allocators zero from the block start on, so the object that next starts at this address
+    /// would inherit the header. A stale sync-table index then names an entry the runtime has freed
+    /// or given to another object (lock on a null <c>Lock</c>, page fault at 0x14). CoreCLR zeroes from
+    /// the allocation pointer minus the header for the same reason. The write stays inside the segment:
+    /// before an object at <see cref="GCSegment.Start"/> it lands in the padding the segment manager
+    /// reserves there (<see cref="ReservedHeaderSlotSize"/>); before any other object it lands in the
+    /// tail of the preceding entry, which every object size already counts as the next object's header.
+    /// </remarks>
+    /// <param name="obj">Start of the dead object.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ClearDeadObjectHeader(byte* obj)
+    {
+        // ZehOS patch gc-header-clear, see PATCHES.md
+        *(uint*)(obj - sizeof(uint)) = 0;
     }
 
     /// <summary>

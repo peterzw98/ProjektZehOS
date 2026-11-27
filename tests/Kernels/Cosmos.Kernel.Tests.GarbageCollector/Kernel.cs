@@ -29,7 +29,7 @@ public class Kernel : Sys.Kernel
         Serial.WriteString("[GarbageCollector] BeforeRun() reached!\n");
         Serial.WriteString("[GarbageCollector] Starting tests...\n");
 
-        TR.Start("GarbageCollector Tests", expectedTests: 60 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
+        TR.Start("GarbageCollector Tests", expectedTests: 61 + FinalizerTests.TestCount + FinalizerThreadTests.TestCount);
 
         // First: Kernel.Start turned the finalizer thread on, CosmosEnableFinalizerThread being on
         // in this kernel. The cells below check the collector with the finalizers run inline, on
@@ -95,6 +95,10 @@ public class Kernel : Sys.Kernel
         TR.RunIf(smp, "GC_Stop_NestedCollectionUnderAStop", TestGCStopNestedCollectionUnderAStop, OneCpuCell);
 
         TR.Run("GC_MallocHeapNotSwept", TestGCMallocHeapNotSwept);
+
+        // A dead object's runtime header (hash or sync-table index at objRef-4) does not pass to
+        // the next object at its address (ZehOS patch gc-header-clear).
+        TR.Run("GC_Sweep_DeadHeaderNotInherited", TestGCSweepDeadHeaderNotInherited);
 
         // A failed allocation throws instead of returning null (ZehOS patch gc-oom-throw). The
         // suite's guest has 512 MB, so 1 GiB never fits; the heap must stay usable afterwards.
@@ -2063,6 +2067,114 @@ public class Kernel : Sys.Kernel
         Assert.Equal((ulong)(KernelCpus.Count - 1), acksOuter, "GC: the outer entry stopped every other CPU");
         Assert.Equal(0UL, acksInner, "GC: the nested collection stopped nobody again");
         Assert.Equal(collsBefore + 1, collsAfter, "GC: the nested collection ran");
+    }
+
+    // ==================== Dead Object Header (ZehOS patch gc-header-clear) ====================
+
+    /// <summary>Object of 40 bytes with its header: every dead one is big enough for a free block.</summary>
+    private sealed class HeaderProbe
+    {
+        public long A;
+        public long B;
+        public long C;
+    }
+
+    private const int HeaderProbeGroups = 8;
+    private const int HeaderProbeDeadPerGroup = 260;
+
+    /// <summary>
+    /// Fills the heap with groups of one kept probe and a run of dead ones that each carry a
+    /// sync-table entry (hash code, then a lock: the header holds the entry's index). A dead run
+    /// is larger than a TLAB, so after the collection a refill takes it from the free list and the
+    /// first new object starts where the first dead one of the run did.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static unsafe HeaderProbe[] FillHeaderProbes(out int dirtyBefore)
+    {
+        var keep = new HeaderProbe[HeaderProbeGroups];
+        dirtyBefore = 0;
+        for (int g = 0; g < HeaderProbeGroups; g++)
+        {
+            keep[g] = new HeaderProbe();
+            for (int i = 0; i < HeaderProbeDeadPerGroup; i++)
+            {
+                var dead = new HeaderProbe();
+                RuntimeHelpers.GetHashCode(dead);
+                lock (dead)
+                {
+                    dead.A = i;
+                }
+
+                if (*(uint*)(Unsafe.As<HeaderProbe, nint>(ref dead) - sizeof(uint)) != 0)
+                {
+                    dirtyBefore++;
+                }
+            }
+        }
+
+        return keep;
+    }
+
+    /// <summary>
+    /// Allocates new probes and counts those whose header is not zero before any use: a new
+    /// object has no hash and no lock, whatever lay at its address before.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static unsafe int CountDirtyNewProbes(int count, out uint firstDirty)
+    {
+        int dirty = 0;
+        firstDirty = 0;
+        for (int i = 0; i < count; i++)
+        {
+            var probe = new HeaderProbe();
+            uint header = *(uint*)(Unsafe.As<HeaderProbe, nint>(ref probe) - sizeof(uint));
+            if (header != 0)
+            {
+                if (dirty == 0)
+                {
+                    firstDirty = header;
+                }
+
+                dirty++;
+            }
+
+            // A lock on the new object: with an inherited index it would take a freed entry.
+            lock (probe)
+            {
+                probe.B = i;
+            }
+        }
+
+        return dirty;
+    }
+
+    private static void TestGCSweepDeadHeaderNotInherited()
+    {
+        for (int round = 0; round < 3; round++)
+        {
+            CoreGC.Collect();
+            HeaderProbe[] keep = FillHeaderProbes(out int dirtyBefore);
+            Assert.Equal(HeaderProbeGroups * HeaderProbeDeadPerGroup, dirtyBefore,
+                "GC: every dead probe carries a header before the collection");
+
+            // Twice: the second collection also frees the sync-table entries of the dead probes.
+            CoreGC.Collect();
+            CoreGC.Collect();
+
+            int dirty = CountDirtyNewProbes(2 * HeaderProbeGroups * HeaderProbeDeadPerGroup, out uint firstDirty);
+            if (dirty != 0)
+            {
+                Serial.WriteString("[GC] new object with header 0x");
+                Serial.WriteHex(firstDirty);
+                Serial.WriteString(", count ");
+                Serial.WriteNumber((uint)dirty);
+                Serial.WriteString("\n");
+            }
+
+            Assert.Equal(0, dirty, "GC: a new object inherits no header from a dead one (round " + round + ")");
+            Assert.Equal(HeaderProbeGroups, keep.Length, "GC: kept probes stay reachable");
+            GC.KeepAlive(keep);
+        }
     }
 
     /// <summary>

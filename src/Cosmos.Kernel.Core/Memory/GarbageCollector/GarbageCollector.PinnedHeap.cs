@@ -189,6 +189,7 @@ internal static unsafe partial class GarbageCollector
             {
                 // Dead pinned object - add to free run
                 freed++;
+                ClearDeadObjectHeader(ptr);
                 if (s_pinnedHeapObjectCount > 0)
                 {
                     s_pinnedHeapObjectCount--;
