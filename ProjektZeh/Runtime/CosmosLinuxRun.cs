@@ -32,6 +32,17 @@ internal static unsafe class CosmosLinuxRun
     /// <summary>Speicher je Programm (Frames), danach endet ein Seitenfehler mit Abbruch.</summary>
     private const ulong MaxBytes = 512UL << 20;
 
+    /// <summary>
+    /// V43: Seiten, die Nutzer-Frames dem Kernel lassen (<see cref="UserPageTable.ReservedPages"/>): ein Achtel des Speichers,
+    /// mindestens 64 MiB, höchstens 128 MiB. Ohne Reserve nahmen die Frames aller Programme (Ladybird: mehrere Prozesse je bis
+    /// <see cref="MaxBytes"/>) dem Kernel-Heap die letzte Seite, und der Kernel hielt mit OutOfMemoryException an; mit ihr
+    /// scheitert der Seitenfehler oder mmap des Programms.
+    /// </summary>
+    private const ulong ReserveMinPages = (64UL << 20) / AddressSpaceMap.PageSize;
+
+    /// <summary>Obergrenze der Reserve (<see cref="ReserveMinPages"/>).</summary>
+    private const ulong ReserveMaxPages = (128UL << 20) / AddressSpaceMap.PageSize;
+
     /// <summary>Größter ladbarer Teil eines Programms (V28: ohne Debugabschnitte, <see cref="FileService.ReadExecutable"/>).</summary>
     public const int MaxFileSize = 128 << 20;
 
@@ -313,6 +324,8 @@ internal static unsafe class CosmosLinuxRun
         bool started = false;
         try
         {
+            // Auch der Shell-Weg (run, Ladybird-Demo) braucht die Reserve, nicht nur Run().
+            ReserveKernelPages();
             if (!Prepare(elf, arguments, envp, root, out UserImage? image, out string why))
             {
                 return ResultErr.CreateFailure(ResultCode.Failure, "run: " + why);
@@ -520,6 +533,21 @@ internal static unsafe class CosmosLinuxRun
         return 0;
     }
 
+    /// <summary>Setzt die Kernel-Reserve (<see cref="ReserveMinPages"/>) beim ersten Programm; Threadkontext, vor jedem Prozess.</summary>
+    private static void ReserveKernelPages()
+    {
+        if (UserPageTable.ReservedPages != 0)
+        {
+            return;
+        }
+
+        ulong pages = Math.Clamp(UserPageTable.TotalPages / 8, ReserveMinPages, ReserveMaxPages);
+        UserPageTable.ReservedPages = pages;
+        Serial("[linux-run] Kernel-Reserve " + (pages * AddressSpaceMap.PageSize >> 20).ToString() + " MiB, frei "
+            + (UserPageTable.FreePages * AddressSpaceMap.PageSize >> 20).ToString() + " von "
+            + (UserPageTable.TotalPages * AddressSpaceMap.PageSize >> 20).ToString() + " MiB");
+    }
+
     private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
 
     /// <summary>Lädt und startet das Programm und wartet auf sein Ende, höchstens <paramref name="timeoutSeconds"/> Sekunden.</summary>
@@ -536,6 +564,7 @@ internal static unsafe class CosmosLinuxRun
         Running? run = null;
         try
         {
+            ReserveKernelPages();
             if (!Prepare(elf, argv, envp, root, out UserImage? image, out string why))
             {
                 return new Outcome(false, string.Empty, why);
@@ -830,8 +859,25 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>Trägt den Thread in <see cref="Running.Threads"/> ein (alle Prozesse des Laufs zusammen); false, wenn voll oder abgebrochen.</summary>
+    /// <summary>
+    /// V43b (laser risk1 P2): Seiten des Kernelstapels eines neuen Threads (<see cref="Cosmos.Kernel.Core.Scheduler.SchedulerThread.DefaultStackSize"/>,
+    /// 256 KiB). Er kommt nicht über <see cref="UserPageTable.AllocateFrame"/> und darf die Reserve deshalb nehmen; 256 Threads wären 64 MiB.
+    /// </summary>
+    private const ulong KernelStackPages = (ulong)Cosmos.Kernel.Core.Scheduler.SchedulerThread.DefaultStackSize / AddressSpaceMap.PageSize;
+
+    /// <summary>
+    /// Belegt einen Platz für einen neuen Thread oder Prozess; false (clone, fork, posix_spawn melden EAGAIN), wenn keiner frei ist oder sein
+    /// Kernelstapel in die Kernel-Reserve griffe (V43b). Die freien Seiten sind ein Schnappschuss ohne Sperre und zählen keine
+    /// zusammenhängenden Läufe; die Prüfung hält die Reserve nur von vielen Threads frei, sie garantiert sie nicht.
+    /// </summary>
     private static bool TakeSlot(Running run, Bridge b)
     {
+        ulong reserved = UserPageTable.ReservedPages;
+        if (reserved != 0 && UserPageTable.FreePages < reserved + KernelStackPages)
+        {
+            return false;
+        }
+
         lock (run.Threads)
         {
             int slot = Array.IndexOf(run.Threads, null);
@@ -1434,10 +1480,11 @@ internal static unsafe class CosmosLinuxRun
         }
 
         bool busError = false; // V30-P3: Dateiseite nicht lesbar, Linux schickt SIGBUS statt SIGSEGV
+        bool outOfMemory = false; // V43: kein Frame mehr (Kernel-Reserve), Linux beendet mit SIGKILL (OOM-Killer)
         try
         {
             // Im vfork-Kind leitet der Prozess an den Speicher des Elternprozesses weiter (V15).
-            if (vector == PageFault && me.Process.HandlePageFault(address, error, out busError))
+            if (vector == PageFault && me.Process.HandlePageFault(address, error, out busError, out outOfMemory))
             {
                 return 1;
             }
@@ -1459,7 +1506,8 @@ internal static unsafe class CosmosLinuxRun
         ulong faultRip = frame->Rip; // DeliverFault setzt den Rahmen auf den Handler
         try
         {
-            if (!me.Process.InVfork && DeliverFault(me, frame, vector, error, address, busError))
+            // V43: Ohne Speicher kein Handler: Er bräuchte selbst Seiten (Stack, Absturzbericht), SIGKILL lässt sich nicht abfangen.
+            if (!outOfMemory && !me.Process.InVfork && DeliverFault(me, frame, vector, error, address, busError))
             {
                 // Nur merken (kein Protokoll im Ausnahmehandler); Fault bleibt false, der Thread läuft im Handler weiter.
                 me.FaultVector = vector;
@@ -1478,7 +1526,7 @@ internal static unsafe class CosmosLinuxRun
 
         // V15: Eine Ausnahme in einem Kindprozess (nach execve) beendet nur ihn; sein Thread meldet sie nach dem Verlassen.
         // Im vfork-Kind (vor execve) bricht sie den ganzen Lauf ab: Der Thread trägt die Register des blockierten Elternthreads.
-        int signal = busError ? LinuxFault.SigBus : SignalOf(vector);
+        int signal = outOfMemory ? LinuxFault.SigKill : busError ? LinuxFault.SigBus : SignalOf(vector);
         me.Fault = true;
         me.FaultVector = vector;
         me.FaultSignal = signal;

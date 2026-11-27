@@ -13,6 +13,7 @@ die Datei aus der Platten-Kopie (mtools), z. B. den Screenshot von Hub --headles
 werden mit --wait-scale (Standard bei tcg 10, bei kvm 1) gestreckt; --timeout (Programmlaufzeit) bleibt wie angegeben.
 Kernel-Halt (KERNEL PANIC, "System halting", [FAILFAST]) nach dem Programmstart: sofort Abbruch mit "HALT <zeile>", Gast wird
 beendet, kein --fetch, Exit 3 (statt bis --timeout zu warten).
+--disk-cache unsafe (Standard) | writeback: Cache der Laufkopie der Datenplatte; unsafe vermeidet Host-fdatasync-Waits ueber 30 s.
 """
 import argparse
 import importlib.util
@@ -30,6 +31,15 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 HALT = re.compile(r"^.*(?:KERNEL PANIC|System halting|\[FAILFAST\]).*$", re.M)
 
 
+def apply_disk_cache(mode: str) -> None:
+    """Setzt den Cache der Datenplatte fuer start_qemu.
+
+    Die Platte ist immer die Laufkopie (disk.qcow2 im Arbeitsordner), nie das Original, und wird nach dem Lauf verworfen.
+    Mit cache=unsafe ignoriert QEMU Flush-Anforderungen des Gastes; sonst wartete der Host bei jedem fdatasync des Gastes
+    (Ladybird-Bundle schreiben) laenger als 30 s, bis der Gast in einen SATA-Timeout lief. Ein Absturz kostet nur die Kopie."""
+    os.environ["ZEHOS_QEMU_DISK_CACHE"] = mode
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("iso", type=Path)
@@ -44,6 +54,8 @@ def main() -> int:
     parser.add_argument("--memory")
     parser.add_argument("--fetch", help="Datei auf der Datenplatte (relativ zur Wurzel, z. B. lb/shot.png), nach dem Lauf holen")
     parser.add_argument("--out", type=Path, help="Ziel fuer --fetch (Standard: <arbeitsordner>/<dateiname>)")
+    parser.add_argument("--disk-cache", choices=["unsafe", "writeback"], default="unsafe",
+                        help="QEMU-Cache der Datenplatte (Standard unsafe, writeback schaltet es ab)")
     parser.add_argument("--accel", choices=["kvm", "tcg"], default="kvm")
     parser.add_argument("--wait-scale", type=float, help="Faktor fuer feste Wartezeiten (Standard: tcg 10, kvm 1)")
     args = parser.parse_args()
@@ -57,6 +69,7 @@ def main() -> int:
         t.wait_serial = lambda work, text, timeout, start=0: base_wait(work, text, timeout * scale, start)
     args.work.mkdir()
     os.environ["ZEHOS_QEMU_SMP"] = args.smp
+    apply_disk_cache(args.disk_cache)
     disk = args.work / "disk.qcow2"
     shutil.copyfile(args.disk, disk)
     program = args.run.split()[0]

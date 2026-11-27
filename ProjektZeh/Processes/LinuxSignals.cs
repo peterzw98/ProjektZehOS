@@ -53,6 +53,9 @@ internal readonly record struct LinuxFault(int Signal, int Code, ulong Address, 
 
     /// <summary>V30-P3: Signal einer Dateiseite, die sich im Seitenfehler nicht lesen lässt.</summary>
     public const int SigBus = 7;
+
+    /// <summary>V43: Signal eines Seitenfehlers ohne freien Frame (Linux: OOM-Killer).</summary>
+    public const int SigKill = 9;
     private const int FpeFltdiv = 3, FpeFltovf = 4, FpeFltund = 5, FpeFltres = 6, FpeFltinv = 7;
 
     /// <summary>Signal der Ausnahme <paramref name="vector"/> (auch für den Wartestatus, wenn kein Handler sie nimmt).</summary>

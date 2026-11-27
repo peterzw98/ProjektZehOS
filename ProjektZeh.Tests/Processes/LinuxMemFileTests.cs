@@ -49,11 +49,11 @@ public sealed class LinuxMemFileTests
     private readonly LinuxOpenFiles _open = new();
     private readonly LinuxIds _ids = new(1);
 
-    private (LinuxUserProcess P, Pages Pages, ulong Mem) NewProcess(int pid)
+    private (LinuxUserProcess P, Pages Pages, ulong Mem) NewProcess(int pid, ulong maxBytes = 64 << 20)
     {
         var term = new TerminalDescriptor(new Lines());
         var pages = new Pages(_store);
-        var p = new LinuxUserProcess(pages, term, pid, 64 << 20, null, new LinuxFileSystem(new MemoryFileStore(), term), _open, _ids);
+        var p = new LinuxUserProcess(pages, term, pid, maxBytes, null, new LinuxFileSystem(new MemoryFileStore(), term), _open, _ids);
         ulong mem = p.MapAnonymous(4 * Page, ProtRw);
         Assert.AreNotEqual(0UL, mem);
         return (p, pages, mem);
@@ -97,6 +97,67 @@ public sealed class LinuxMemFileTests
         var b = new byte[n];
         Assert.IsTrue(p.TryRead(at, b));
         return b;
+    }
+
+    [TestMethod]
+    public void MemfdFramesZaehlenGegenDieGrenzeDesErzeugers()
+    {
+        // V43b (laser risk3 P2-3): Frames einer memfd zählen mit den privaten Seiten gegen dieselbe Grenze; vorher legte write sie ohne
+        // Grenze an. Grenze 16 Seiten, eine private Seite (Name der memfd), also 15 für die Datei.
+        const long ENOSPC = 28;
+        const ulong NotPresentWrite = 0x6;
+        var (p, _, mem) = NewProcess(1, 16 * Page);
+        int fd = Memfd(p, mem);
+        long written = 0;
+        long r;
+        while ((r = Call(p, Write, (ulong)fd, mem, Page)) > 0)
+        {
+            written += r;
+        }
+
+        Assert.AreEqual(-ENOSPC, r);
+        Assert.AreEqual(15 * (long)Page, written);
+        Assert.IsFalse(p.HandlePageFault(mem + Page, NotPresentWrite, out bool bus, out bool noMemory), "private Seite über der Grenze");
+        Assert.IsTrue(noMemory);
+        Assert.IsFalse(bus);
+
+        // Kürzen gibt die Frames zurück; danach geht die private Seite wieder.
+        Assert.AreEqual(0, Call(p, Ftruncate, (ulong)fd, 0));
+        Assert.IsTrue(p.HandlePageFault(mem + Page, NotPresentWrite, out _, out noMemory));
+        Assert.AreEqual(0, Call(p, Close, (ulong)fd));
+        p.Destroy();
+        Assert.AreEqual(0, _store.Live.Count, "alle Frames frei");
+    }
+
+    [TestMethod]
+    public void GeteilteSeiteOhneFrameIstSpeichermangelKeinBusfehler()
+    {
+        // V43-Review P2: Kommt für eine geteilte Seite kein Frame (Grenze des Erzeugers, Kernel-Reserve), endet der Prozess wie bei einer
+        // privaten Seite mit SIGKILL (Speichermangel), nicht mit SIGBUS an einen Handler; hinter dem Dateiende bleibt es SIGBUS.
+        const ulong NotPresentWrite = 0x6;
+        var (a, _, memA) = NewProcess(1, 8 * Page);
+        var (b, _, _) = NewProcess(2);
+        int fd = Memfd(a, memA);
+        Assert.AreEqual(0, Call(a, Ftruncate, (ulong)fd, 8 * Page));
+        int fdB = Pass(a, fd, b);
+        ulong at = MapSharedFd(b, fdB, 9 * Page);
+        int got = 0;
+        while (b.HandlePageFault(at + (ulong)got * Page, NotPresentWrite, out _, out _))
+        {
+            got++;
+        }
+
+        Assert.AreEqual(7, got, "Grenze von a: 8 Seiten, eine privat");
+        Assert.IsFalse(b.HandlePageFault(at + 7 * Page, NotPresentWrite, out bool bus, out bool noMemory));
+        Assert.IsTrue(noMemory);
+        Assert.IsFalse(bus);
+        Assert.IsFalse(b.HandlePageFault(at + 8 * Page, NotPresentWrite, out bus, out noMemory), "hinter dem Dateiende");
+        Assert.IsTrue(bus);
+        Assert.IsFalse(noMemory);
+        Assert.AreEqual(0, Call(a, Close, (ulong)fd));
+        a.Destroy();
+        b.Destroy();
+        Assert.AreEqual(0, _store.Live.Count, "alle Frames frei");
     }
 
     [TestMethod]

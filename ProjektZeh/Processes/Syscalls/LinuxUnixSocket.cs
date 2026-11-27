@@ -73,10 +73,18 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     public const int MaxDgramQueue = 10;
 
     /// <summary>
-    /// Leere Nachrichten (0 Byte) zählen nicht gegen <see cref="Capacity"/>; Linux belastet jede mit der Größe ihres sk_buff (rund 768 Byte,
+    /// Leere Nachrichten (0 Byte) zählen seit <see cref="MessageOverhead"/> mit diesem Aufschlag gegen <see cref="Capacity"/> (P2-2); Linux belastet jede mit der Größe ihres sk_buff (rund 768 Byte,
     /// also etwa 277 je 212992). Ohne Grenze wüchse die Warteschlange unbegrenzt (1 Mio. = 54 MiB Heap). Gilt für SEQPACKET und UDP.
     /// </summary>
     public const int MaxEmptyQueue = 256;
+
+    /// <summary>
+    /// Verwaltungsaufschlag je Nachricht gegen <see cref="Capacity"/> (P2-2). Linux belastet den Sendepuffer mit der truesize des sk_buff
+    /// (Nutzbytes plus Kopf und Struktur, mindestens rund 768 Byte, SKB_TRUESIZE); wir rechnen 512 Byte: etwa so viel wie der Kopf eines
+    /// kleinen sk_buff ohne Daten und mehr als unser Record samt Array (rund 100 Byte). Damit nehmen 1-Byte-Nachrichten nur noch
+    /// 415 statt 212992 an (513 Byte je Nachricht; Heap höchstens rund 40 KiB je Richtung statt 19 MiB). Gilt für Stream, Seqpacket und Datagramme.
+    /// </summary>
+    public const int MessageOverhead = 512;
 
     private bool DgramQueueFull(Channel ch) => IsDgram && ch.Records.Count >= MaxDgramQueue;
 
@@ -198,7 +206,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     /// <summary>
     /// Sendet <paramref name="data"/>; <paramref name="fds"/> reisen mit der ersten Nachricht (<paramref name="fdsTaken"/>: übernommen,
     /// sonst gibt der Aufrufer sie frei). Stream: blockierend alles, O_NONBLOCK so viel wie passt; Seqpacket: ganz oder gar nicht,
-    /// länger als <see cref="Capacity"/> -EMSGSIZE. -EPIPE nach dem Ende der Gegenseite oder shutdown, -ENOTCONN unverbunden, -EINTR beim
+    /// länger als <see cref="Capacity"/> minus <see cref="MessageOverhead"/> -EMSGSIZE. -EPIPE nach dem Ende der Gegenseite oder shutdown, -ENOTCONN unverbunden, -EINTR beim
     /// Abbruch; wurde schon etwas gesendet, zählt das.
     /// </summary>
     public long Send(ReadOnlySpan<byte> data, LinuxSocketFds? fds, bool nonBlocking, ILinuxAbort? abort, out bool fdsTaken)
@@ -210,7 +218,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             return IsInetDgram ? SendDatagramToPeer(data) : -ENOTCONN; // V27: UDP hat keine Verbindung, nur eine Gegenstelle
         }
 
-        if (!IsStream && data.Length > Capacity)
+        if (!IsStream && data.Length + MessageOverhead > Capacity)
         {
             return -EMSGSIZE;
         }
@@ -253,7 +261,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
                     return done > 0 ? done : -EINTR;
                 }
 
-                int space = Capacity - ch.Bytes;
+                int space = Capacity - ch.Charged - MessageOverhead; // Platz für Nutzbytes einer weiteren Nachricht
                 int want = data.Length - done;
                 bool emptyFull = want == 0 && ch.Records.Count >= MaxEmptyQueue; // nur bei Nachrichten ohne Nutzdaten (siehe MaxEmptyQueue)
                 if (IsStream ? space > 0 : space >= want && !DgramQueueFull(ch) && !emptyFull)
@@ -262,6 +270,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
                     ch.Records.Enqueue(new Record(data.Slice(done, take).ToArray(), fdsTaken ? null : fds));
                     fdsTaken = true;
                     ch.Bytes += take;
+                    ch.Charged += take + MessageOverhead;
                     ch.Seq++;
                     done += take;
                     Monitor.PulseAll(l.Gate); // Daten für wartende Leser und poll
@@ -372,6 +381,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             {
                 r.Offset += n;
                 ch.Bytes -= n;
+                ch.Charged -= n;
                 r.Fds = null; // übergeben; der Rest der Nachricht trägt sie nicht mehr
             }
 
@@ -388,6 +398,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
             while (ch.Records.Count > 0 && ch.Records.Peek().Offset == ch.Records.Peek().Data.Length)
             {
                 _ = ch.Records.Dequeue();
+                ch.Charged -= MessageOverhead;
             }
         }
 
@@ -406,6 +417,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         if (!peek)
         {
             ch.Bytes -= r.Data.Length;
+            ch.Charged -= r.Data.Length + MessageOverhead;
         }
 
         return true;
@@ -479,6 +491,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
 
             incoming.Records.Clear();
             incoming.Bytes = 0;
+            incoming.Charged = 0;
             Monitor.PulseAll(l.Gate);
         }
 
@@ -559,7 +572,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         }
 
         // Linux: schreibbereit, solange höchstens ein Viertel des Sendepuffers belegt ist; nach dem Ende der Gegenseite auch (write: EPIPE).
-        if (sndShut || (outc.Bytes * 4L <= Capacity && !DgramQueueFull(outc)))
+        if (sndShut || (outc.Charged * 4L <= Capacity && !DgramQueueFull(outc)))
         {
             r |= (short)(events & LinuxPipe.PollOut);
         }
@@ -673,6 +686,9 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         public Queue<Record> Records { get; } = new();
 
         public int Bytes { get; set; }
+
+        /// <summary>Bytes plus <see cref="MessageOverhead"/> je wartender Nachricht: das zählt gegen <see cref="Capacity"/>; <see cref="Bytes"/> bleibt der Lesbestand (FIONREAD).</summary>
+        public int Charged { get; set; }
 
         public bool WriteClosed { get; set; }
 

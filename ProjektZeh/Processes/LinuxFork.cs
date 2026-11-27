@@ -158,6 +158,7 @@ internal sealed partial class LinuxUserProcess
 
                 _pages.Frame(held.Value).CopyTo(child._pages.Frame(frame));
                 child._frames[held.Key] = frame;
+                child.SyncBudget();
 
                 // Sofort abbilden spart je Seite einen Fehler; lehnt die Tabelle ab oder ist die Seite PROT_NONE, holt HandlePageFault es
                 // mit dem Zugriff aus der Karte nach (Frame vorhanden, Seite nicht abgebildet).
