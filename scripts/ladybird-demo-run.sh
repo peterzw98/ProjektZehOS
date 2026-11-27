@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do case $1 in
   -b) BUNDLE=$2; shift 2;; -o) OUT=$2; shift 2;; -u) URL=$2; shift 2;; -s) DELAY=$2; shift 2;;
   --smp) SMP=$2; shift 2;; --timeout) TIMEOUT=$2; shift 2;; --skip-cosmos) SKIPC=1; shift;; --skip-build) SKIPB=1; shift;;
   --iso) ISO=$2; shift 2;; --disk) DISK=$2; shift 2;; -h|--help) sed -n 2,14p "$0"; exit 0;;
-  --page) URL=file:///share/zehos-probe/$2.html; shift 2;; --accel) ACCEL=$2; shift 2;; --wait-scale) WSCALE=$2; shift 2;; --memory) MEM=$2; shift 2;;
+  --page) case $2 in ""|*[!a-z]*) echo "--page nur [a-z]+" >&2; exit 2;; esac; URL=file:///share/zehos-probe/$2.html; shift 2;; --accel) ACCEL=$2; shift 2;; --wait-scale) WSCALE=$2; shift 2;; --memory) MEM=$2; shift 2;;
   *) echo "unbekannte Option $1" >&2; exit 2;; esac; done
 [ -n "$ISO" ] && SKIPB=1
 mkdir -p "$OUT" || exit 2; LOG=$OUT/run.log; : > "$LOG"; : > "$OUT/times.txt"

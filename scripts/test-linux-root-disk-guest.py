@@ -87,7 +87,8 @@ def main() -> int:
 
     try:
         guest = t.Guest(args.work, port, "http://127.0.0.1:1", time.monotonic())
-        guest.wait("Desktop ist bereit", 240 * scale)
+        # Kein "* scale": Guest.wait geht durch das oben gepatchte t.wait_serial, das schon streckt.
+        guest.wait("Desktop ist bereit", 240)
         guest.connect()
         time.sleep(1)
         guest.login(first=True)
