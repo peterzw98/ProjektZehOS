@@ -352,6 +352,31 @@ public sealed class LinuxProcessWaitTests
     }
 
     [TestMethod]
+    public void KindendeSchicktSigchldMitSiginfoAnDieEltern()
+    {
+        var r = new Root();
+        LinuxUserProcess a = r.Spawn(), b = r.Spawn();
+        r.P.Signals.Handler[17] = 0x401000; // Handler (V18)
+        r.P.Signals.Flags[17] = LinuxUserProcess.SaSiginfo | LinuxUserProcess.SaRestorer;
+        a.ReportEnd(LinuxWaitStatus.Exited(3));
+        Assert.IsTrue(r.P.SignalWaiting);
+        Assert.IsTrue(r.P.TakeSignal(out LinuxSignalDelivery d));
+        Assert.AreEqual((17, 1, a.Pid, 3), (d.Signal, d.Code, d.Pid, d.Status), "CLD_EXITED mit Exitcode");
+        Assert.AreEqual(1UL << 16, r.P.Signals.Blocked, "im Handler blockiert");
+        r.P.Signals.Blocked = 0;
+        b.ReportEnd(LinuxWaitStatus.Signaled(9));
+        Assert.IsTrue(r.P.TakeSignal(out d));
+        Assert.AreEqual((2, b.Pid, 9), (d.Code, d.Pid, d.Status), "CLD_KILLED mit Signal");
+        Assert.AreEqual(a.Pid, r.Wait4(a.Pid, 0, 0), "Zombie bleibt für wait4");
+
+        r.P.Signals.Handler[17] = 0; // SIG_DFL, nicht blockiert: ignoriert, nichts anhängig
+        r.P.Signals.Blocked = 0;
+        LinuxUserProcess c = r.Spawn();
+        c.ReportEnd(LinuxWaitStatus.Exited(0));
+        Assert.AreEqual(0UL, r.P.PendingSignals);
+    }
+
+    [TestMethod]
     public void CloexecFolgtOpenDupUndFcntl()
     {
         var r = new Root();

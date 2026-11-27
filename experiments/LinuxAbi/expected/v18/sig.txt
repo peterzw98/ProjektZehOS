@@ -1,0 +1,37 @@
+sigaction chld=0 errno=0
+kind schreiben=0 errno=0
+posix_spawn=0 errno=0
+kind schreiben=0 errno=0
+posix_spawn=0 errno=0
+kind schreiben=0 errno=0
+posix_spawn=0 errno=0
+sigchld gezaehlt=3 pid=3 cld_exited=3 status summe=6
+waitpid summe=6
+sigaction int=0 errno=0
+kill int=0 errno=0
+sigint gezaehlt=1 im handler blockiert=1 danach blockiert=0 fpu=5.000
+pipe=0 errno=0
+sigaction pipe=0 errno=0
+write ohne leser=-1 errno=32
+sigpipe gezaehlt=1
+write ignoriert=-1 errno=32
+sigpipe gezaehlt=1
+sigaction usr1=0 errno=0
+pipe=0 errno=0
+kind schreiben=0 errno=0
+posix_spawn=0 errno=0
+read ohne restart=-1 errno=4
+sigusr1 gezaehlt=1 byte=-
+waitpid=0 errno=0
+sigaction usr1 restart=0 errno=0
+pipe=0 errno=0
+kind schreiben=0 errno=0
+posix_spawn=0 errno=0
+read mit restart=1 errno=0
+sigusr1 gezaehlt=1 byte=K
+waitpid=0 errno=0
+sigaltstack=0 errno=0
+sigaction usr2=0 errno=0
+kill usr2=0 errno=0
+sigusr2 gezaehlt=1 auf altstack=1 zurueckgesetzt=1
+ende

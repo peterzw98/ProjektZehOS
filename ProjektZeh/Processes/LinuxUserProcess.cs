@@ -120,6 +120,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         _threads.Add(MainThread);
         _liveThreads = 1;
         Futexes = new LinuxFutexTable(() => MonotonicNanos);
+        Futexes.SignalWaiting = () => SignalWaiting; // V18: ein Signal mit Handler unterbricht futex-Wartende
     }
 
     /// <summary>Wird beim Exit gerufen; im Kernel verlässt das den Ring 3 (<c>UserMode.LeaveCurrent</c>).</summary>
@@ -437,14 +438,14 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             return -LinuxSyscalls.ESRCH;
         }
 
-        return DeliverSignal(signal, fromOutside: false);
+        return DeliverSignal(signal, fromOutside: false, SiTkill, Pid);
     }
 
     /// <summary>
     /// Zustellen an den Prozess (tgkill, tkill, kill). <paramref name="fromOutside"/>: Der Aufrufer ist ein Thread eines anderen Prozesses
     /// (kill aus LinuxWait.cs); dann verlässt nicht der aufrufende Thread den Ring 3, sondern die Threads dieses Prozesses (<see cref="OnKilled"/>).
     /// </summary>
-    private long DeliverSignal(int signal, bool fromOutside)
+    private long DeliverSignal(int signal, bool fromOutside, int code = SiUser, int senderPid = 0, int status = 0)
     {
         if (signal == 0)
         {
@@ -458,23 +459,28 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             return 0;
         }
 
-        // Zustellen an einen Handler kann der Kernel noch nicht (keine Signalrahmen im Ring 3); ehrlich ablehnen statt verschlucken,
-        // auch wenn das Signal blockiert ist (sonst stünde es anhängig für einen Handler, den nie jemand ruft).
-        if (Signals.Handler[signal] > 1)
-        {
-            return -LinuxSyscalls.ENOSYS;
-        }
-
-        // Blockiert: anhängig, bis sigprocmask es freigibt oder sigaction es ignoriert (Linux reiht auch ignorierte blockierte ein,
-        // denn der Handler kann sich bis zur Freigabe ändern). Prüfen und Eintragen unter derselben Sperre wie SignalStateChanged.
+        // Blockiert oder mit Handler (V18): anhängig, bis ein Thread den Ring 3 nach einem Aufruf wieder betritt (TakeSignal, LinuxSignals.cs),
+        // sigprocmask es freigibt oder sigaction es ignoriert (Linux reiht auch ignorierte blockierte ein, denn der Handler kann sich bis zur
+        // Freigabe ändern). Prüfen und Eintragen unter derselben Sperre wie SignalStateChanged und TakeSignal.
         ulong bit = 1UL << (signal - 1);
+        bool wake = false;
         lock (_threadGate)
         {
-            if ((Signals.Blocked & bit) != 0)
+            if ((Signals.Blocked & bit) != 0 || Signals.Handler[signal] > 1)
             {
-                _pendingSignals |= bit;
-                return 0;
+                Queue(signal, code, senderPid, status);
+                wake = (Signals.Blocked & bit) == 0;
+                if (!wake)
+                {
+                    return 0;
+                }
             }
+        }
+
+        if (wake)
+        {
+            Futexes.Kick(); // Wartende (futex, pause, nanosleep) kehren mit -EINTR zurück, die Brücke springt den Handler an
+            return 0;
         }
 
         if (!IsIgnored(signal))
@@ -511,11 +517,16 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
 
     /// <summary>
     /// Nach sigprocmask oder sigaction: anhängige Signale, die jetzt ignoriert werden, fallen weg (Linux beim Setzen von SIG_IGN);
-    /// das niedrigste freigegebene mit Standardaktion "beenden" beendet den Prozess. Eines mit inzwischen gesetztem Handler bleibt
-    /// anhängig, denn zustellen kann der Kernel nicht.
+    /// das niedrigste freigegebene mit Standardaktion "beenden" beendet den Prozess. Eines mit Handler bleibt anhängig; die Brücke stellt
+    /// es beim Rücksprung dieses Aufrufs zu (V18).
     /// </summary>
     public void SignalStateChanged()
     {
+        if (SignalWaiting)
+        {
+            Futexes.Kick(); // andere Threads, die warten, sollen es ebenfalls sehen
+        }
+
         int deliver = 0;
         lock (_threadGate)
         {

@@ -609,6 +609,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
     private void ChildEnded(int pid, int waitStatus)
     {
+        bool ended = false;
         lock (_children)
         {
             LinuxChild? child = _children.Find(c => c.Pid == pid);
@@ -618,9 +619,20 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 // Kein Zombie (LinuxWait.cs): wait4 sieht das Kind nicht mehr; Eintrag und PID räumt FreeIfOrphaned, sobald das Kind
                 // seine IDs abrechnet (danach kann die PID nicht mehr an einen noch laufenden Endpfad vergeben werden).
                 child.AutoReaped = ReapsChildrenAutomatically();
+                ended = true;
             }
 
             Monitor.PulseAll(_children);
+        }
+
+        // V18: SIGCHLD an die Eltern wie Linux (do_notify_parent), außerhalb von ChildGate (DeliverSignal nimmt _threadGate und weckt).
+        // Standard und SIG_IGN verwerfen es (IsIgnored); siginfo nennt das Kind: CLD_EXITED 1 mit Exitcode, CLD_KILLED 2/CLD_DUMPED 3 mit Signal.
+        if (ended)
+        {
+            bool exited = LinuxWaitStatus.IsExited(waitStatus);
+            int code = exited ? 1 : (waitStatus & 0x80) != 0 ? 3 : 2;
+            int value = exited ? LinuxWaitStatus.ExitCode(waitStatus) : LinuxWaitStatus.TermSignal(waitStatus);
+            _ = DeliverSignal(SigChld, fromOutside: true, code, pid, value);
         }
     }
 

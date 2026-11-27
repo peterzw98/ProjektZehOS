@@ -69,6 +69,22 @@ internal interface ILinuxAbort
 }
 
 /// <summary>
+/// V18: Optional neben <see cref="ILinuxAbort"/>: true, solange ein Signal mit Handler anhängig und nicht blockiert ist. Wartende Aufrufe
+/// (wait4, poll, Pipes, Sockets, futex, pause, nanosleep) kehren dann mit -EINTR zurück, damit die Brücke den Handler beim Rücksprung anspringt.
+/// Getrennt von <see cref="ILinuxAbort.IsAborted"/>: Kopierschleifen über reguläre Dateien unterbricht ein Signal unter Linux nicht.
+/// </summary>
+internal interface ILinuxSignalWake
+{
+    bool SignalWaiting { get; }
+}
+
+/// <summary>V18: Abbruch oder wartendes Signal des Aufrufers; die gemeinsame Prüfung aller Warteschleifen.</summary>
+internal static class LinuxInterrupt
+{
+    public static bool Check(ILinuxAbort? caller) => caller != null && (caller.IsAborted || caller is ILinuxSignalWake { SignalWaiting: true });
+}
+
+/// <summary>
 /// Optional neben <see cref="ILinuxProcess"/>: Pfad des laufenden Programms, wie der Prozess ihn sieht (V12, readlink "/proc/self/exe").
 /// null, wenn das Programm außerhalb der Prozesswurzel liegt; dann gibt es den Link nicht (-ENOENT).
 /// </summary>

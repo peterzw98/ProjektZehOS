@@ -53,7 +53,7 @@ internal static partial class LinuxSyscalls
 
         int idType = pid > 0 ? PPid : pid == -1 ? PAll : PPgid;
         int id = pid > 0 ? pid : pid == 0 ? member.GroupPid : -pid;
-        long r = member.WaitChild(idType, id, options, consume: true, () => Aborted(p), out int status, out _);
+        long r = member.WaitChild(idType, id, options, consume: true, () => LinuxInterrupt.Check(p as ILinuxAbort), out int status, out _);
         if (r <= 0)
         {
             return r;
@@ -102,7 +102,7 @@ internal static partial class LinuxSyscalls
         }
 
         bool consume = (options & LinuxUserProcess.WNowait) == 0;
-        long r = member.WaitChild(idType, id, options, consume, () => Aborted(p), out int status, out ulong uid);
+        long r = member.WaitChild(idType, id, options, consume, () => LinuxInterrupt.Check(p as ILinuxAbort), out int status, out ulong uid);
         if (r < 0)
         {
             return r;

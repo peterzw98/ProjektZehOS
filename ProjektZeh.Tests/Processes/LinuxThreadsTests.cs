@@ -317,7 +317,9 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Tkill, tid, 0));
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 17), "SIGCHLD wird ignoriert");
         f.P.Signals.Handler[10] = 0x401000;
-        Assert.AreEqual(-LinuxSyscalls.ENOSYS, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 10), "Handler: Zustellen fehlt noch");
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 10), "Handler: anhängig für die Brücke (V18)");
+        Assert.AreEqual(1UL << 9, f.P.PendingSignals);
+        Assert.IsTrue(f.P.SignalWaiting);
         Assert.IsNull(f.P.ExitCode);
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 15));
         Assert.AreEqual(15, f.P.TerminatedBySignal);
@@ -384,7 +386,7 @@ public sealed class LinuxThreadsTests
     }
 
     [TestMethod]
-    public void AnhaengigesSignalFaelltMitSigIgnWegHandlerBleibtEnosys()
+    public void AnhaengigesSignalFaelltMitSigIgnWegHandlerBleibtAnhaengig()
     {
         var f = new Fixture();
         ulong tid = (ulong)f.Clone(0, 0).Tid;
@@ -398,8 +400,9 @@ public sealed class LinuxThreadsTests
 
         SetMask(f, 2, 1UL << 11);
         SetHandler(f, 12, 0x401000);
-        Assert.AreEqual(-LinuxSyscalls.ENOSYS, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 12), "Handler auch blockiert: Zustellen fehlt");
-        Assert.AreEqual(0UL, f.P.PendingSignals);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 12), "Handler, blockiert: anhängig");
+        Assert.AreEqual(1UL << 11, f.P.PendingSignals);
+        Assert.IsFalse(f.P.SignalWaiting, "blockiert wartet nicht");
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 9), "SIGKILL ist nie blockiert");
         Assert.AreEqual(9, f.P.TerminatedBySignal);
     }
@@ -485,5 +488,197 @@ public sealed class LinuxThreadsTests
             Assert.IsTrue(sw.ElapsedMilliseconds < 5000, "Bedingung nicht erreicht");
             Thread.Sleep(1);
         }
+    }
+
+    // ---- V18 Signalzustellung (LinuxSignals.cs) ----
+
+    private const ulong Restorer = 0x401100, HandlerAddr = 0x401000;
+
+    private static void SetAction(Fixture f, int sig, ulong handler, ulong flags, ulong mask = 0, ulong restorer = Restorer)
+    {
+        var b = new byte[32];
+        BitConverter.GetBytes(handler).CopyTo(b, 0);
+        BitConverter.GetBytes(flags | LinuxUserProcess.SaRestorer).CopyTo(b, 8);
+        BitConverter.GetBytes(restorer).CopyTo(b, 16);
+        BitConverter.GetBytes(mask).CopyTo(b, 24);
+        Assert.IsTrue(f.P.TryWrite(f.Mem + 0x400, b));
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.RtSigaction, (ulong)sig, f.Mem + 0x400, 0, 8));
+    }
+
+    private static LinuxUserRegs Regs(Fixture f) => new()
+    {
+        R8 = 8, R9 = 9, R10 = 10, R11 = 0x246, R12 = 12, R13 = 13, R14 = 14, R15 = 15, Rdi = 0xd1, Rsi = 0x51, Rbp = 0xb9, Rbx = 0xb8,
+        Rdx = 0xd8, Rax = 0, Rcx = 0x400123, Rsp = f.Mem + 12 * Page + 8, Rip = 0x400123, Rflags = 0x646, // mit DF
+    };
+
+    private static byte[] Fpu(uint mxcsr)
+    {
+        var fpu = new byte[512];
+        BitConverter.GetBytes((ushort)0x27F).CopyTo(fpu, 0);
+        BitConverter.GetBytes(mxcsr).CopyTo(fpu, 24);
+        BitConverter.GetBytes(0xFFFFu).CopyTo(fpu, 28);
+        fpu[160] = 0xAB; // xmm0
+        return fpu;
+    }
+
+    private static ulong Read64(Fixture f, ulong addr)
+    {
+        Span<byte> b = stackalloc byte[8];
+        Assert.IsTrue(f.P.TryRead(addr, b));
+        return BitConverter.ToUInt64(b);
+    }
+
+    [TestMethod]
+    public void HandlerBekommtRahmenUndRtSigreturnStelltAllesWiederHer()
+    {
+        var f = new Fixture();
+        SetAction(f, 10, HandlerAddr, LinuxUserProcess.SaSiginfo, mask: 1UL << 11);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        Assert.IsTrue(f.P.SignalWaiting);
+
+        LinuxUserRegs r = Regs(f);
+        LinuxUserRegs before = r;
+        byte[] fpu = Fpu(0x1FA0);
+        byte[] fpuBefore = (byte[])fpu.Clone();
+        LinuxSignalFrame.AfterSyscall(f.P, ref r, fpu, LinuxSyscalls.Kill, 0, 0, 0);
+
+        Assert.AreEqual(HandlerAddr, r.Rip);
+        Assert.AreEqual(10UL, r.Rdi);
+        Assert.AreEqual(8UL, r.Rsp % 16, "wie nach call");
+        Assert.IsTrue(r.Rsp + 440 + 512 <= before.Rsp - 128, "unter der roten Zone");
+        Assert.AreEqual(r.Rsp + 312, r.Rsi);
+        Assert.AreEqual(r.Rsp + 8, r.Rdx);
+        Assert.AreEqual(0UL, r.Rflags & 0x400, "DF gelöscht");
+        Assert.AreEqual(Restorer, Read64(f, r.Rsp), "pretcode = sa_restorer");
+        Assert.AreEqual(10, f.Read32(r.Rsi), "si_signo");
+        Assert.AreEqual(0, f.Read32(r.Rsi + 8), "SI_USER");
+        Assert.AreEqual(Pid, f.Read32(r.Rsi + 16), "si_pid");
+        Assert.AreEqual(0x1F80, BitConverter.ToInt32(fpu, 24), "Handler mit frischem MXCSR");
+        Assert.AreEqual(0, fpu[160]);
+        Assert.AreEqual((1UL << 9) | (1UL << 11), f.P.Signals.Blocked, "Signal und sa_mask im Handler blockiert");
+        Assert.IsFalse(f.P.SignalWaiting);
+
+        // Der Handler ändert Register; ret nimmt pretcode, dann rt_sigreturn.
+        r.Rbx = 0xdead;
+        r.Rsp += 8;
+        Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, fpu));
+        Assert.AreEqual(before.Rip, r.Rip);
+        Assert.AreEqual(before.Rsp, r.Rsp);
+        Assert.AreEqual(before.Rbx, r.Rbx);
+        Assert.AreEqual(before.R15, r.R15);
+        Assert.AreEqual(before.Rax, r.Rax);
+        Assert.AreEqual(before.Rflags, r.Rflags | 0x400 & before.Rflags);
+        CollectionAssert.AreEqual(fpuBefore, fpu, "FPU-Zustand zurück");
+        Assert.AreEqual(0UL, f.P.Signals.Blocked);
+    }
+
+    [TestMethod]
+    public void SaRestartStartetReadNeuOhneLiefertEintr()
+    {
+        var f = new Fixture();
+        SetAction(f, 10, HandlerAddr, LinuxUserProcess.SaRestart);
+        SetAction(f, 12, HandlerAddr + 0x10, 0);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        LinuxUserRegs r = Regs(f);
+        r.Rax = unchecked((ulong)-LinuxSyscalls.EINTR);
+        LinuxSignalFrame.AfterSyscall(f.P, ref r, Fpu(0x1F80), 0, 0, 0, -LinuxSyscalls.EINTR);
+        ulong uc = r.Rdx;
+        Assert.AreEqual(0x400121UL, Read64(f, uc + 40 + 128), "RIP auf syscall zurück");
+        Assert.AreEqual(0UL, Read64(f, uc + 40 + 104), "rax = Nummer von read");
+
+        r.Rsp += 8;
+        Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, Fpu(0x1F80)));
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 12));
+        LinuxUserRegs q = Regs(f);
+        q.Rax = unchecked((ulong)-LinuxSyscalls.EINTR);
+        LinuxSignalFrame.AfterSyscall(f.P, ref q, Fpu(0x1F80), 0, 0, 0, -LinuxSyscalls.EINTR);
+        Assert.AreEqual(HandlerAddr + 0x10, q.Rip);
+        Assert.AreEqual(0x400123UL, Read64(f, q.Rdx + 40 + 128), "ohne SA_RESTART kein Neustart");
+        Assert.AreEqual(unchecked((ulong)-LinuxSyscalls.EINTR), Read64(f, q.Rdx + 40 + 104));
+
+        // poll startet auch mit SA_RESTART nicht neu.
+        Assert.IsFalse(LinuxSignalFrame.Restartable(LinuxSyscalls.Poll, 0, 0));
+        Assert.IsTrue(LinuxSignalFrame.Restartable(LinuxSyscalls.Futex, 0, 0));
+        Assert.IsFalse(LinuxSignalFrame.Restartable(LinuxSyscalls.Futex, 0, 0x7000), "futex mit Frist");
+    }
+
+    [TestMethod]
+    public void EpipeLoestSigpipeAusStandardBeendetHandlerLaeuft()
+    {
+        var f = new Fixture();
+        SetAction(f, 13, HandlerAddr, 0);
+        LinuxUserRegs r = Regs(f);
+        LinuxSignalFrame.AfterSyscall(f.P, ref r, Fpu(0x1F80), 1, 0, 0, -32);
+        Assert.AreEqual(HandlerAddr, r.Rip);
+        Assert.AreEqual(13UL, r.Rdi);
+
+        var g = new Fixture();
+        LinuxUserRegs s = Regs(g);
+        LinuxSignalFrame.AfterSyscall(g.P, ref s, Fpu(0x1F80), 46, 0x4000, 0, -32);
+        Assert.IsNull(g.P.ExitCode, "sendmsg mit MSG_NOSIGNAL");
+        LinuxSignalFrame.AfterSyscall(g.P, ref s, Fpu(0x1F80), 1, 0, 0, -32);
+        Assert.AreEqual(13, g.P.TerminatedBySignal, "SIG_DFL beendet");
+    }
+
+    [TestMethod]
+    public void AlternativstackMitAutodisarmUndResethand()
+    {
+        var f = new Fixture();
+        var ss = new byte[24];
+        BitConverter.GetBytes(f.Mem + 2 * Page).CopyTo(ss, 0);
+        BitConverter.GetBytes(0x80000000u).CopyTo(ss, 8); // SS_AUTODISARM
+        BitConverter.GetBytes(4 * Page).CopyTo(ss, 16);
+        Assert.IsTrue(f.P.TryWrite(f.Mem + 0x500, ss));
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Sigaltstack, f.Mem + 0x500, 0));
+        SetAction(f, 12, HandlerAddr, LinuxUserProcess.SaOnstack | LinuxUserProcess.SaResethand);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 12));
+        LinuxUserRegs r = Regs(f);
+        LinuxSignalFrame.AfterSyscall(f.P, ref r, Fpu(0x1F80), LinuxSyscalls.Kill, 0, 0, 0);
+        Assert.IsTrue(r.Rsp > f.Mem + 2 * Page && r.Rsp < f.Mem + 6 * Page, "Rahmen auf dem Alternativstack");
+        Assert.AreEqual(2, f.P.Signals.AltFlags, "abgeschaltet bis rt_sigreturn");
+        Assert.AreEqual(0UL, f.P.Signals.Handler[12], "SA_RESETHAND");
+        r.Rsp += 8;
+        Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, Fpu(0x1F80)));
+        Assert.AreEqual(f.Mem + 2 * Page, f.P.Signals.AltSp);
+        Assert.AreEqual(4 * Page, f.P.Signals.AltSize);
+        Assert.AreEqual(unchecked((int)0x80000000), f.P.Signals.AltFlags);
+    }
+
+    [TestMethod]
+    public void OhneRestorerOderKaputterStackEndetMitSigsegv()
+    {
+        var f = new Fixture();
+        SetAction(f, 10, HandlerAddr, 0, restorer: 0);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        LinuxUserRegs r = Regs(f);
+        LinuxSignalFrame.AfterSyscall(f.P, ref r, Fpu(0x1F80), LinuxSyscalls.Kill, 0, 0, 0);
+        Assert.AreEqual(11, f.P.TerminatedBySignal);
+
+        var g = new Fixture();
+        LinuxUserRegs q = Regs(g);
+        q.Rsp = 0x10; // kein Rahmen lesbar
+        Assert.IsFalse(LinuxSignalFrame.Return(g.P, ref q, Fpu(0x1F80)));
+    }
+
+    [TestMethod]
+    public void WartendesSignalUnterbrichtPauseUndFutex()
+    {
+        var f = new Fixture();
+        SetAction(f, 10, HandlerAddr, 0);
+        long result = 1;
+        var t = new Thread(() => result = f.Call(LinuxSyscalls.Pause));
+        t.Start();
+        Thread.Sleep(50);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        Assert.IsTrue(t.Join(5000));
+        Assert.AreEqual(-LinuxSyscalls.EINTR, result);
+
+        // Blockiert: futex wartet weiter, bis die Frist abläuft.
+        SetMask(f, 2, 1UL << 9);
+        f.Write32(f.Mem + 0x600, 0);
+        f.WriteTimespec(f.Mem + 0x610, 0, 50_000_000);
+        Assert.AreEqual(-LinuxSyscalls.ETIMEDOUT, f.Call(LinuxSyscalls.Futex, f.Mem + 0x600, 0, 0, f.Mem + 0x610));
+        SetMask(f, 2, 0);
+        Assert.AreEqual(-LinuxSyscalls.EINTR, f.Call(LinuxSyscalls.Futex, f.Mem + 0x600, 0, 0, f.Mem + 0x610));
     }
 }

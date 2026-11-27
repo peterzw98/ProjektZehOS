@@ -172,7 +172,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
 
     private Channel Incoming(Link l) => _sideA ? l.BtoA : l.AtoB;
 
-    private static bool Aborted(ILinuxAbort? abort) => abort is { IsAborted: true };
+    private static bool Aborted(ILinuxAbort? abort) => LinuxInterrupt.Check(abort); // V18: auch ein wartendes Signal (-EINTR)
 
     /// <summary>
     /// Sendet <paramref name="data"/>; <paramref name="fds"/> reisen mit der ersten Nachricht (<paramref name="fdsTaken"/>: übernommen,

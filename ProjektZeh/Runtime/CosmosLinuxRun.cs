@@ -859,6 +859,13 @@ internal static unsafe class CosmosLinuxRun
         me.Frame = frame;
         try
         {
+            // V18 rt_sigreturn: Register aus dem Signalrahmen statt eines Ergebnisses; danach können weitere Signale warten.
+            if (frame->Rax == LinuxSignalFrame.RtSigreturn)
+            {
+                SignalReturn(me, frame);
+                return;
+            }
+
             var args = new SyscallArgs
             {
                 Number = unchecked((long)frame->Rax),
@@ -870,14 +877,18 @@ internal static unsafe class CosmosLinuxRun
                 A5 = frame->R9,
             };
             long result = LinuxSyscalls.Dispatch(ref args, me.Process);
+            long number = args.Number;
             if (me.Resume)
             {
                 ResumeParent(me, frame);
+                number = -1; // der Aufruf gehörte dem vfork-Kind; der Elternthread hat nichts neu zu starten
             }
             else
             {
                 frame->Rax = unchecked((ulong)result);
             }
+
+            DeliverSignals(me, frame, number, args.A1, args.A3, result);
         }
         catch (Exception exception)
         {
@@ -890,6 +901,69 @@ internal static unsafe class CosmosLinuxRun
         {
             me.Frame = null;
         }
+    }
+
+    /// <summary>
+    /// V18: Vor dem Rücksprung die wartenden Signale mit Handler anspringen (Rahmen auf dem Benutzerstapel, LinuxSignals.cs). Das
+    /// fxsave-Abbild des Threads liegt direkt unter dem Rahmen (UserMode.s: <c>sub rsp, FPU_SIZE; fxsave64 [rsp]</c>, frame = rsp davor),
+    /// fxrstor64 lädt es beim Rücksprung. Endet der Prozess dabei (SIGSEGV), verlässt der Thread den Ring 3 über OnExit.
+    /// </summary>
+    private static void DeliverSignals(Bridge me, UserFrame* frame, long number, ulong a2, ulong a3, long result)
+    {
+        LinuxUserProcess process = me.Process;
+        if (!process.SignalWaiting && result != -LinuxSignalFrame.EPIPE && result != -LinuxSyscalls.EINTR)
+        {
+            return; // der häufige Fall ohne Kopien
+        }
+
+        LinuxUserRegs regs = ToRegs(frame);
+        LinuxSignalFrame.AfterSyscall(process, ref regs, new Span<byte>((byte*)frame - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize),
+            number, a2, a3, result);
+        FromRegs(frame, regs);
+    }
+
+    private static void SignalReturn(Bridge me, UserFrame* frame)
+    {
+        LinuxUserRegs regs = ToRegs(frame);
+        var fpu = new Span<byte>((byte*)frame - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize);
+        if (!LinuxSignalFrame.Return(me.Process, ref regs, fpu))
+        {
+            me.Process.ForceSegv();
+            return;
+        }
+
+        FromRegs(frame, regs);
+        DeliverSignals(me, frame, -1, 0, 0, 0);
+    }
+
+    private static LinuxUserRegs ToRegs(UserFrame* f) => new()
+    {
+        R8 = f->R8, R9 = f->R9, R10 = f->R10, R11 = f->R11, R12 = f->R12, R13 = f->R13, R14 = f->R14, R15 = f->R15,
+        Rdi = f->Rdi, Rsi = f->Rsi, Rbp = f->Rbp, Rbx = f->Rbx, Rdx = f->Rdx, Rax = f->Rax, Rcx = f->Rcx,
+        Rsp = f->Rsp, Rip = f->Rip, Rflags = f->Rflags,
+    };
+
+    // CS und SS bleiben die des Kernels; UserMode.Prepare prüft RIP, RSP und RFLAGS vor dem Rücksprung (ungültig: der Thread endet).
+    private static void FromRegs(UserFrame* f, in LinuxUserRegs r)
+    {
+        f->R8 = r.R8;
+        f->R9 = r.R9;
+        f->R10 = r.R10;
+        f->R11 = r.R11;
+        f->R12 = r.R12;
+        f->R13 = r.R13;
+        f->R14 = r.R14;
+        f->R15 = r.R15;
+        f->Rdi = r.Rdi;
+        f->Rsi = r.Rsi;
+        f->Rbp = r.Rbp;
+        f->Rbx = r.Rbx;
+        f->Rdx = r.Rdx;
+        f->Rax = r.Rax;
+        f->Rcx = r.Rcx;
+        f->Rsp = r.Rsp;
+        f->Rip = r.Rip;
+        f->Rflags = r.Rflags;
     }
 
     /// <summary>

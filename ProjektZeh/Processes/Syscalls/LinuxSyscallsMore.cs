@@ -33,7 +33,7 @@ internal interface ILinuxSystemInfo
     bool TryGetMemory(out ulong totalBytes, out ulong freeBytes);
 }
 
-/// <summary>Zustand der Signale eines Prozesses (S1: nur Verwaltung, keine Zustellung).</summary>
+/// <summary>Zustand der Signale eines Prozesses (Handler, Maske, Alternativstack); zugestellt wird seit V18 (LinuxSignals.cs).</summary>
 internal sealed class LinuxSignalState
 {
     public readonly ulong[] Handler = new ulong[65];
@@ -82,7 +82,7 @@ internal static partial class LinuxSyscalls
             case Getgid:
             case Getegid: return (long)p.Gid;
             case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
-            case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // ohne Signalzustellung schläft pause bis zum Ende
+            case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // bis ein Signal mit Handler kommt (-EINTR, V18) oder der Prozess endet
             case Wait4:
             case Waitid:
             case Getppid:
@@ -368,7 +368,7 @@ internal static partial class LinuxSyscalls
             {
                 st.AltSp = sp;
                 st.AltSize = size;
-                st.AltFlags = 0;
+                st.AltFlags = flags & int.MinValue; // SS_AUTODISARM bleibt (V18: die Zustellung schaltet den Stack dann ab), Linux meldet es mit
             }
         }
 
@@ -410,7 +410,7 @@ internal static partial class LinuxSyscalls
                 // V16: Pipes und Sockets warten mit dem Abbruch des Aufrufers (sie gehören oft einem anderen Prozess, der vorher enden darf).
                 _ = waitFor is ILinuxPollable pollable ? pollable.WaitPoll(waitEvents, slice, p as ILinuxAbort) : ((ILinuxInput)waitFor).WaitInput(slice);
                 ready = PollScan(p, b, (int)nfds, out _, out _, out _);
-                if (ready > 0 || Aborted(p) || waitables == 1 || (timeoutMs >= 0 && LinuxPipe.ElapsedMs(start) >= timeoutMs))
+                if (ready > 0 || LinuxInterrupt.Check(p as ILinuxAbort) || waitables == 1 || (timeoutMs >= 0 && LinuxPipe.ElapsedMs(start) >= timeoutMs))
                 {
                     break;
                 }
@@ -421,6 +421,12 @@ internal static partial class LinuxSyscalls
             // Ohne bereite Einträge schläft poll die Frist ab (sonst drehen Warteschleifen, etwa poll(NULL, 0, ms)).
             // Negative Frist (unendlich) schläft nie: es kann niemand wecken, Ergebnis 0. Ohne Host entfällt das Schlafen.
             host.SleepNanos(timeoutMs * 1_000_000L);
+        }
+
+        // V18: Ohne bereiten Eintrag unterbricht ein Signal poll wie unter Linux (-EINTR, auch mit SA_RESTART); revents bleiben dann unberührt.
+        if (ready == 0 && p is ILinuxSignalWake { SignalWaiting: true })
+        {
+            return -EINTR;
         }
 
         if (nfds > 0 && !p.Memory.TryWrite(fds, b))
@@ -587,14 +593,30 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
+        long begin = (p as ILinuxHost)?.MonotonicNanos ?? 0;
         long slept = SleepFor(p, ns);
         if (slept != 0)
         {
-            return slept;
+            return WriteRemaining(p, rem, slept, ns, begin);
         }
 
-        // Ungestört bis zum Ende geschlafen (keine Signalzustellung in S1): Rest 0.
+        // Ungestört bis zum Ende geschlafen: Rest 0.
         return rem != 0 && !p.Memory.TryWrite(rem, new byte[16]) ? -EFAULT : 0;
+    }
+
+    /// <summary>V18: Ein Signal unterbrach den Schlaf (-EINTR): Linux schreibt die Restzeit nach <c>rem</c>.</summary>
+    private static long WriteRemaining(ILinuxProcess p, ulong rem, long result, long ns, long begin)
+    {
+        if (result != -EINTR || rem == 0 || p is not ILinuxHost host || p is not ILinuxSignalWake)
+        {
+            return result;
+        }
+
+        long left = Math.Max(0, ns - (host.MonotonicNanos - begin));
+        Span<byte> ts = stackalloc byte[16];
+        BitConverter.TryWriteBytes(ts.Slice(0, 8), left / 1_000_000_000);
+        BitConverter.TryWriteBytes(ts.Slice(8, 8), left % 1_000_000_000);
+        return p.Memory.TryWrite(rem, ts) ? result : -EFAULT;
     }
 
     private static long DoClockNanosleep(ILinuxProcess p, int clock, int flags, ulong req, ulong rem)
@@ -622,10 +644,11 @@ internal static partial class LinuxSyscalls
             rem = 0; // bei absoluter Frist wird rem nie geschrieben
         }
 
+        long begin = (p as ILinuxHost)?.MonotonicNanos ?? 0;
         long slept = SleepFor(p, ns);
         if (slept != 0)
         {
-            return slept;
+            return WriteRemaining(p, rem, slept, ns, begin);
         }
 
         return rem != 0 && !p.Memory.TryWrite(rem, new byte[16]) ? -EFAULT : 0;
