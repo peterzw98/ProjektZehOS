@@ -22,10 +22,12 @@
 
 extern char **environ;
 
-/* Datenbereich des Kindes ab 0x400200 (Segment RWX): msghdr, iovec, Steuerpuffer, ein Byte, Puffer. */
+/* Code ab Dateiversatz 0xb0 (nach zwei Programmköpfen), Daten ab Datei 0x200 nach 0x401200: msghdr, iovec, Steuerpuffer, ein Byte, Puffer.
+ * Zwei Segmente R+X und R+W, weil ZehOS (W^X) ein RWX-Segment mit ENOEXEC ablehnt; Linux lädt beides. */
 #define BASE 0x400000u
+#define CODE 0xb0u
 #define DATA 0x200u
-#define D (BASE + DATA)
+#define D (BASE + 0x1000u + DATA)
 #define MSG (D + 0)
 #define IOV (D + 64)
 #define CTRL (D + 80)
@@ -36,7 +38,7 @@ extern char **environ;
 static unsigned char img[FILESIZE];
 static int len;
 
-static void b1(int v) { img[0x78 + len++] = (unsigned char)v; }
+static void b1(int v) { img[CODE + len++] = (unsigned char)v; }
 static void b4(unsigned v) { for (int i = 0; i < 4; i++) b1((int)((v >> (8 * i)) & 0xff)); }
 static void movr(int op, unsigned v) { b1(op); b4(v); } /* B8 eax, BF edi, BE esi, BA edx */
 static void sys(void) { b1(0x0f); b1(0x05); }
@@ -68,11 +70,14 @@ static int write_child(const char *path)
 
     memcpy(img, "\x7f" "ELF\x02\x01\x01", 7);
     img[16] = 2; img[18] = 62; img[20] = 1;                                     /* ET_EXEC, x86-64, Version */
-    put64(24, BASE + 0x78);
-    img[32] = 64; img[52] = 64; img[54] = 56; img[56] = 1;                      /* Programmköpfe ab 64, einer */
-    img[64] = 1; img[68] = 7;                                                   /* PT_LOAD, RWX */
+    put64(24, BASE + CODE);
+    img[32] = 64; img[52] = 64; img[54] = 56; img[56] = 2;                      /* Programmköpfe ab 64, zwei */
+    img[64] = 1; img[68] = 5;                                                   /* PT_LOAD R+X: Datei 0..0x200 */
     put64(64 + 16, BASE); put64(64 + 24, BASE);
-    put64(64 + 32, FILESIZE); put64(64 + 40, FILESIZE); put64(64 + 48, 0x1000);
+    put64(64 + 32, DATA); put64(64 + 40, DATA); put64(64 + 48, 0x1000);
+    img[120] = 1; img[124] = 6;                                                 /* PT_LOAD R+W: Datei 0x200..0x300 */
+    put64(120 + 8, DATA); put64(120 + 16, D); put64(120 + 24, D);
+    put64(120 + 32, FILESIZE - DATA); put64(120 + 40, FILESIZE - DATA); put64(120 + 48, 0x1000);
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
     if (fd < 0) return -1;
     int ok = write(fd, img, sizeof img) == (ssize_t)sizeof img;
