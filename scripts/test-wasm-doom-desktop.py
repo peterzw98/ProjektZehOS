@@ -281,6 +281,12 @@ MACHINE = ["-machine", "q35", "-m", "512M", "-vga", "std", "-boot", "d", "-displ
            "-device", "qemu-xhci,id=tabletbus", "-device", "usb-tablet,bus=tabletbus.0"]
 
 
+def disk_cache_option() -> str:
+    """Zusatz fuer -drive aus ZEHOS_QEMU_DISK_CACHE (leer: QEMU-Standard); der Aufrufer setzt ihn nur fuer Wegwerfkopien."""
+    cache = os.environ.get("ZEHOS_QEMU_DISK_CACHE")
+    return f",cache={cache}" if cache else ""
+
+
 def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm: str | None,
                memory: str | None = None) -> subprocess.Popen:
     qemu = qemu_tool("qemu-system-x86_64")
@@ -297,7 +303,7 @@ def start_qemu(iso: Path, disk: Path, work: Path, port: int, accel: str, loadvm:
     cpu = {"tcg": ["-cpu", "max"], "kvm": ["-cpu", "qemu64,+rdrand,+rdseed"]}.get(accel, [])
     arguments = [str(qemu), "-L", str(share), "-accel", accel, *cpu, *machine, "-cdrom", str(iso),
                  "-serial", f"file:{work / 'serial.log'}", "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
-                 "-drive", f"file={disk},format=qcow2,if=none,id=appdisk",
+                 "-drive", f"file={disk},format=qcow2,if=none,id=appdisk" + disk_cache_option(),
                  *(["-loadvm", loadvm] if loadvm else [])]
     if os.environ.get("ZEHOS_QEMU_SMP"):
         arguments.extend(["-smp", os.environ["ZEHOS_QEMU_SMP"]])
