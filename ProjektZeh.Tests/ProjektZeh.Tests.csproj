@@ -88,6 +88,9 @@
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxSyscallsLimits.cs" Link="Processes\Syscalls\LinuxSyscallsLimits.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxFileMetaSyscalls.cs" Link="Processes\Syscalls\LinuxFileMetaSyscalls.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxFileSyscalls.cs" Link="Processes\Syscalls\LinuxFileSyscalls.cs" />
+    <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxFileLocks.cs" Link="Processes\Syscalls\LinuxFileLocks.cs" />
+    <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxFileLockSyscalls.cs" Link="Processes\Syscalls\LinuxFileLockSyscalls.cs" />
+    <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxFileModeSyscalls.cs" Link="Processes\Syscalls\LinuxFileModeSyscalls.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxPath.cs" Link="Processes\Syscalls\LinuxPath.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxPipe.cs" Link="Processes\Syscalls\LinuxPipe.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxUnixSocket.cs" Link="Processes\Syscalls\LinuxUnixSocket.cs" />

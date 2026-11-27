@@ -52,8 +52,11 @@ internal static unsafe class CosmosLinuxRun
     private const ulong PageFault = 14;
     private const int Pid = 1;
 
-    /// <summary>Umgebung wie <c>experiments/LinuxAbi/run-linux.py</c>, damit die Ausgaben mit <c>expected/</c> vergleichbar sind.</summary>
-    public static readonly string[] Environment = ["ZEHOS_ABI=1", "LANG=C", "PATH=/usr/bin:/bin"];
+    /// <summary>
+    /// Umgebung wie <c>experiments/LinuxAbi/run-linux.py</c>, damit die Ausgaben mit <c>expected/</c> vergleichbar sind. V28b: HOME ist die
+    /// Prozesswurzel; Ladybird und fontconfig legen Profil und Cache darunter an (<c>$HOME/.local</c>, <c>$HOME/.cache</c>) und warnen sonst.
+    /// </summary>
+    public static readonly string[] Environment = ["ZEHOS_ABI=1", "LANG=C", "PATH=/usr/bin:/bin", "HOME=/"];
 
     private static int busy;
     private static bool initialized;

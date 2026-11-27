@@ -70,7 +70,7 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
 | 74, 75 | `fsync`, `fdatasync` | V14: Datei und Verzeichnis `0` (beide Speicher schreiben ungepuffert durch: `DirectoryFileStore` öffnet mit Puffergröße 1, Cosmos-FAT schreibt jeden Cluster sofort); `/dev/null`, `/dev/zero`, `/dev/tty` und das Terminal `-EINVAL` wie Linux für Zeichengeräte und Pipes |
 | 8 | `lseek` | whence 0-2 (`SEEK_DATA`/`SEEK_HOLE` `-EINVAL`); Terminal `-ESPIPE`; bei Verzeichnissen ist die Position der `getdents64`-Index (`rewinddir`, `seekdir`, `telldir`), `SEEK_END` `-EINVAL` |
 | 32, 33, 292 | `dup`, `dup2`, `dup3` | teilen die offene Datei; `dup2` schließt das Ziel still; `dup3` mit gleichen Nummern oder Flags außer `O_CLOEXEC` `-EINVAL` |
-| 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD`/`F_SETFD` führen `FD_CLOEXEC` je Nummer, `execve` schließt solche Nummern (V15); `F_GETFL` bei Dateien immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar), bei Pipe-Enden (V13), Unix-Sockets (V16), eventfd und inotify (V20) Zugriffsart mit `O_NONBLOCK`; `F_SETFL` bei Dateien ohne Wirkung (Abweichung), bei den übrigen setzt oder löscht es `O_NONBLOCK`; `F_ADD_SEALS`/`F_GET_SEALS` siehe V17; sonst `-EINVAL` |
+| 72 | `fcntl` | `F_DUPFD`, `F_DUPFD_CLOEXEC`; `F_GETFD`/`F_SETFD` führen `FD_CLOEXEC` je Nummer, `execve` schließt solche Nummern (V15); `F_GETFL` bei Dateien immer `O_RDWR` (Abweichung: Öffnungsflags sind nicht sichtbar), bei Pipe-Enden (V13), Unix-Sockets (V16), eventfd und inotify (V20) Zugriffsart mit `O_NONBLOCK`; `F_SETFL` bei Dateien ohne Wirkung (Abweichung), bei den übrigen setzt oder löscht es `O_NONBLOCK`; `F_ADD_SEALS`/`F_GET_SEALS` siehe V17; Bereichssperren `F_GETLK`/`F_SETLK`/`F_SETLKW` und `F_OFD_*` siehe V28b; sonst `-EINVAL` |
 | 79 | `getcwd` | Rückgabe Länge mit NUL; zu kleiner Puffer `-ERANGE` |
 | 80, 81 | `chdir`, `fchdir` | Ziel muss Verzeichnis sein (`-ENOTDIR`) und Suchrecht haben (`access X_OK`); cwd ist der textuell normalisierte Pfad (Symlinks bleiben darin stehen) |
 | 4, 5, 6, 262 | `stat`, `fstat`, `lstat`, `newfstatat` | `struct stat` 144 Bytes; `fstat` auf Terminal: Zeichengerät 136:0; `AT_EMPTY_PATH` mit leerem Pfad wie `fstat`, mit `AT_FDCWD` das Arbeitsverzeichnis |
@@ -80,6 +80,8 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
 | 83, 258, 84, 87, 263 | `mkdir(at)`, `rmdir`, `unlink(at)` | `AT_REMOVEDIR`; andere Flags `-EINVAL` |
 | 82, 264, 316 | `rename`, `renameat`, `renameat2` | `renameat2` nur mit Flags 0 (`RENAME_NOREPLACE`/`EXCHANGE` `-EINVAL`) |
 | 88, 266 | `symlink`, `symlinkat` | Ziel ist beliebiger Text und wird nicht aufgelöst |
+| 90, 91, 268, 452 | `chmod`, `fchmod`, `fchmodat`, `fchmodat2` | V28b: prüft nur, ob das Ziel da ist, und lässt den Modus unverändert (FAT, Abweichung); `fchmodat2` mit `AT_SYMLINK_NOFOLLOW` auf einen Link `-EOPNOTSUPP`, andere Flags als `AT_SYMLINK_NOFOLLOW`/`AT_EMPTY_PATH` `-EINVAL` |
+| 86, 265 | `link`, `linkat` | V28b: FAT kennt keine harten Links; nach den Prüfungen von Linux (Quelle fehlt `-ENOENT`, Ziel vorhanden `-EEXIST`, Elternordner fehlt `-ENOENT`) `-EPERM` wie vfat. Flags nur `AT_SYMLINK_FOLLOW`/`AT_EMPTY_PATH` |
 
 Grenzen (Review V2, bewusst offen):
 
@@ -260,7 +262,7 @@ Muss vor dem ersten js-Lauf geschlossen sein:
 
 Sollte vorher geklärt sein (Frage an den V4-Bau):
 
-4. **libedit und terminfo.** Die Umgebung von `run` setzt weder `TERM` noch `HOME` (`CosmosLinuxRun.Environment`). Ohne `TERM` nimmt libedit ein dummes
+4. **libedit und terminfo.** Die Umgebung von `run` setzt kein `TERM` (`CosmosLinuxRun.Environment`; `HOME=/` seit V28b). Ohne `TERM` nimmt libedit ein dummes
    Terminal (keine Zeilenbearbeitung); mit `TERM` braucht ein statisches ncurses eine eingebaute Beschreibung (`--with-fallbacks`) oder eine terminfo-Datei
    im Prozessdateisystem. Die Historie geht nach `$HOME/.js-history`, ohne `HOME` (und ohne `/etc/passwd`) nach `/.js-history` (`js.rs:2017-2030`).
 5. **ICU-Daten.** Liest das js-Binary ICU-Daten aus einer Datei, braucht es Dateiabbildungen (`mmap` mit fd). Erledigt mit V12 (unten).
@@ -496,7 +498,7 @@ ppoll, setzt im Helferkind `PR_SET_PDEATHSIG` und schließt vor `execve` mit `cl
 Grenzen: Die Wartemaske gilt wie jede Maske je Prozess, nicht je Thread. Warten mehrere Threads gleichzeitig in ppoll, gilt die zuletzt gesetzte Wartemaske,
 bis der letzte von ihnen zurückkehrt; erst dann gilt wieder die Maske von vor dem ersten (der Prozess zählt die wartenden Threads). `execve` mit weiteren
 Threads fehlt (kein `de_thread`); anhängige Signale gehen beim Ersetzen ohne vfork verloren (Linux behält sie). Ein fehlendes Ausführrecht ist seit V26 `-EACCES`:
-FAT kennt keine Modi, vorhandene Dateien der Datenplatte gelten als ausführbar (0755), nur im Lauf angelegte Dateien behalten ihren Modus aus `open` (Abweichung: nicht über Neustart oder `chmod`, das es dort nicht gibt).
+FAT kennt keine Modi, vorhandene Dateien der Datenplatte gelten als ausführbar (0755), nur im Lauf angelegte Dateien behalten ihren Modus aus `open` (Abweichung: nicht über Neustart; `chmod` ändert ihn nicht, V28b).
 `execve` auf den Pfad von argv[0] des Starters (Shell: Kernelpfad außerhalb der Prozesswurzel; Gastprobe: Name im Arbeitsverzeichnis), den die Wurzel nicht kennt, startet das Programm unter seinem Pfad in der Wurzel (Abweichung). `/proc/self/fd/<n>` als Link
 (`readlink`) fehlt.
 
@@ -628,3 +630,24 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxSignals.cs` (`LinuxFault`, `L
 - Grenzen: `int3` (und `int 3`) im Ring 3 ist unter Cosmos ein #GP (das Gate für #BP hat DPL 0) und wird SIGSEGV statt SIGTRAP; #DB kommt nicht vor.
   Ein Fehler im vfork-Kind vor execve bricht weiter den ganzen Lauf ab. Ein Zugriff hinter das Ende einer geteilten Datei ist SIGSEGV statt SIGBUS.
   Nur QEMU/KVM geprüft.
+
+## Bereichssperren, chmod, link, HOME (V28b)
+
+Anlass: Ladybird öffnet sein Profil `Ladybird.db` mit sqlite; ohne `fcntl(F_SETLK)` meldet sqlite „disk I/O error“ und der Hauptprozess endet (V28-Gastlauf).
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxFileLocks.cs` (Tabelle) und `LinuxFileLockSyscalls.cs` (fcntl), Hosttests `LinuxFileLockTests`.
+
+- **Befehle:** `F_GETLK` (5), `F_SETLK` (6), `F_SETLKW` (7), `F_OFD_GETLK` (36), `F_OFD_SETLK` (37), `F_OFD_SETLKW` (38) mit `struct flock` (32 Bytes). Bereich wie Linux
+  `flock_to_posix_lock`: `SEEK_SET`/`SEEK_CUR`/`SEEK_END`, `l_len` 0 bis `OFFSET_MAX`, negatives `l_len` rückwärts; Anfang unter 0 `-EINVAL`, Überlauf `-EOVERFLOW`.
+  Unbekannter Typ, `F_GETLK` mit `F_UNLCK` und OFD-Befehle mit `l_pid` ungleich 0 `-EINVAL`.
+- **Besitzer:** POSIX-Sperren gehören der PID (Threads teilen sie, `execve` behält sie), OFD-Sperren der offenen Datei (`dup` teilt sie). Die Datei erkennt die
+  Tabelle an `st_dev`/`st_ino`; zwei `open` derselben Datei sehen dieselben Sperren. Die Tabelle gilt für alle Prozesse eines Laufs (`LinuxOpenFiles.Locks`, unter
+  `FileGate`). Eigene Bereiche werden ersetzt, geteilt und mit angrenzenden gleichen Typs verschmolzen; POSIX und OFD sind verschiedene Besitzer, auch im selben Prozess.
+- **Freigabe:** POSIX bei jedem `close` einer Nummer des Prozesses auf die Datei (auch wenn eine andere Nummer sie offen hält, wie Linux), bei `dup2` auf eine belegte
+  Nummer, `FD_CLOEXEC` bei `execve` und am Prozessende; OFD beim letzten `close` der offenen Datei.
+- **`F_SETLKW`:** Konflikt bei `F_SETLK` ist `-EAGAIN`. `F_SETLKW` versucht es unter der Dateisperre, wartet bei einem Konflikt 1 ms außerhalb und versucht
+  erneut, bis es gelingt; ein Signal mit Handler gibt `-EINTR`, der Abbruch des Programms beendet das Warten.
+- **Abweichungen:** keine Erkennung von Verklemmungen (Linux `-EDEADLK`; hier wartet `F_SETLKW` bis Signal oder Abbruch); die Öffnungsart wird nicht geprüft (Linux
+  `-EBADF` für `F_WRLCK` auf eine nur lesend offene Datei); Pipes, Sockets und Terminal `-EINVAL` statt einer Sperre; ohne Sperrtabelle (Ersatzprozesse der Hosttests)
+  `-ENOLCK`. `flock(2)` (73) fehlt weiter.
+- **chmod, link:** siehe Tabelle der Dateiaufrufe (V2): `chmod` ohne Wirkung auf FAT, `link` `-EPERM` wie vfat (fontconfig fällt für seine Sperrdatei auf `mkdir` zurück).
+- **HOME:** `CosmosLinuxRun.Environment` setzt `HOME=/` (Prozesswurzel); `experiments/LinuxAbi/run-linux.py` und `expected/s1/args_env_auxv.txt` mit derselben Umgebung.

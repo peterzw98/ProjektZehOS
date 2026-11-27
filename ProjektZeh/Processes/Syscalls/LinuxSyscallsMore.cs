@@ -110,6 +110,11 @@ internal static partial class LinuxSyscalls
     /// </summary>
     private static long DispatchFileGated(ref SyscallArgs a, ILinuxProcess p, ILinuxFiles files)
     {
+        if (IsWaitingLock(ref a))
+        {
+            return DoFcntlLockWait(ref a, p, files); // V28b: wartet außerhalb der Sperre, sonst stünden alle Dateiaufrufe des Laufs
+        }
+
         lock (files.FileGate)
         {
             return DispatchFile(ref a, p, files);

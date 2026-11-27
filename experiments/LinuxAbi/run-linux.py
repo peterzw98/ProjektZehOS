@@ -26,7 +26,7 @@ import sys
 import tempfile
 
 ARGS = ["a1", "b 2"]
-ENV = {"ZEHOS_ABI": "1", "LANG": "C", "PATH": "/usr/bin:/bin"}
+ENV = {"ZEHOS_ABI": "1", "LANG": "C", "PATH": "/usr/bin:/bin", "HOME": "/"}
 TIMEOUT = 60
 STRACE_PROBLEMS = []  # Meldungen, wenn strace nichts liefert; landen im Bericht (kein Vergleichsfehler)
 
