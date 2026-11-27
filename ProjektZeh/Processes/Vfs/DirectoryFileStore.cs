@@ -616,12 +616,42 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                     _createdModes[renamed == 0 ? to : from] = movedMode;
                 }
 
+                if (renamed == 0)
+                {
+                    MoveCreatedModesUnder(from, to);
+                }
+
                 return renamed;
             }
         }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
             return Errno(exception);
+        }
+    }
+
+    /// <summary>Wird ein Verzeichnis umbenannt, wandern die gemerkten Anlegemodi der Dateien darunter mit (Schlüssel sind Pfade).</summary>
+    private void MoveCreatedModesUnder(string from, string to)
+    {
+        string prefix = from.TrimEnd('/') + "/";
+        List<KeyValuePair<string, uint>>? moved = null;
+        foreach (KeyValuePair<string, uint> entry in _createdModes)
+        {
+            if (entry.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                (moved ??= new()).Add(entry);
+            }
+        }
+
+        if (moved == null)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<string, uint> entry in moved)
+        {
+            _createdModes.Remove(entry.Key);
+            _createdModes[string.Concat(to.TrimEnd('/'), "/", entry.Key.AsSpan(prefix.Length))] = entry.Value;
         }
     }
 

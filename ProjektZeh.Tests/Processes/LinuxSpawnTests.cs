@@ -236,6 +236,22 @@ public sealed class LinuxSpawnTests
     }
 
     [TestMethod]
+    public void ExecveAufAnderesProgrammVerliertDenStartPfad()
+    {
+        var f = new Fixture();
+        f.WriteFile("/hello", Elf());
+        f.WriteFile("/anderes", Elf());
+        f.Parent.ExePath = "/hello";
+        f.Parent.StartPath = "/data/s1/hello";
+        ulong other = f.Strings(f.Mem + (3 * Page), "/anderes") + 0x100;
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        LinuxUserProcess child = f.Child!;
+        Assert.AreEqual(0, Fixture.Call(child, LinuxSyscalls.Execve, other, 0, 0));
+        Assert.AreEqual("/anderes", f.Exec!.ExePath);
+        Assert.IsNull(f.Exec.StartPath);
+    }
+
+    [TestMethod]
     public void ExecveFehlerLassenDasKindWeiterlaufen()
     {
         var f = new Fixture();

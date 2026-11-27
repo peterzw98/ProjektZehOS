@@ -309,12 +309,14 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         }
 
         long read = ReadExecutable(path, out byte[] elf);
+        bool startsSelf = ExePath != null && string.Equals(LinuxPath.Normalize(path), ExePath, StringComparison.OrdinalIgnoreCase);
         if (read == -LinuxErrno.ENOENT && ExePath != null && StartPath != null
             && string.Equals(LinuxPath.Normalize(path), StartPath, StringComparison.OrdinalIgnoreCase))
         {
             // V26: argv[0] ist der Pfad, unter dem der Starter das Programm kennt (Gastprobe: "exec" im Arbeitsverzeichnis, Shell:
             // Kernelpfad außerhalb der Prozesswurzel). Ein Programm, das sich damit selbst startet, findet es unter seinem Pfad in der Wurzel.
             path = ExePath;
+            startsSelf = true;
             read = ReadExecutable(path, out elf);
         }
 
@@ -364,7 +366,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         {
             HwCap = HwCap,
             ExePath = path,
-            StartPath = StartPath,
+            // V26: Nur ein Neustart des eigenen Programms behält den Startpfad; ein anderes Programm hat keinen (sonst würde ein späteres
+            // execve auf argv[0] fälschlich das ursprüngliche Programm statt ENOENT starten).
+            StartPath = startsSelf ? StartPath : null,
         };
         if (!next.Load(image, elf).IsOK())
         {
