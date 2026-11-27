@@ -952,8 +952,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             // Frame weg, Bereich bleibt: der nächste Zugriff füllt die Seite über den Seitenfehler mit Nullen.
             if (_pages.Unmap(page))
             {
-                _pages.FreeFrame(_frames[page]);
-                _frames.Remove(page);
+                DropFrame(page); // V17: geteilte Seiten geben nur ihren Verweis zurück, der Inhalt bleibt in der memfd
             }
             else
             {
@@ -1122,12 +1121,12 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         {
             // Erst die Tabelle: Solange sie besteht, könnte eine CPU über sie noch einen Frame erreichen.
             _pages.DestroyTable();
-            foreach (ulong frame in _frames.Values)
+            foreach (ulong page in new List<ulong>(_frames.Keys))
             {
-                _pages.FreeFrame(frame);
+                DropFrame(page); // V17: geteilte Frames leben weiter, solange Datei oder ein anderer Prozess sie hält
             }
 
-            _frames.Clear();
+            DropAllRegions();
         }
     }
 
@@ -1213,6 +1212,12 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
 
     private ulong Populate(ulong page, MapAccess access)
     {
+        ulong shared = PopulateShared(page, access, out bool isShared);
+        if (isShared)
+        {
+            return shared;
+        }
+
         ulong frame = NewFrame();
         if (frame == 0)
         {
@@ -1241,8 +1246,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             // bis Destroy die Tabelle aufgelöst hat.
             if (_pages.Unmap(page))
             {
-                _pages.FreeFrame(_frames[page]);
-                _frames.Remove(page);
+                DropFrame(page);
             }
             else
             {
@@ -1254,6 +1258,9 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         {
             return false;
         }
+
+        // V17: Geteilte Bereiche enden mit der Karte; eine gesperrte Seite (unten) behält ihren Verweis in _shared bis Destroy.
+        TrimRegions(start, end);
 
         // Eine solche Seite bleibt als gesperrter Bereich (None) belegt (V3-Review P3 a): Sonst legte ein späteres mmap oder brk
         // dort einen neuen Bereich an, und Programm wie Kernel sähen den alten, nicht genullten Frame. Die Sperre gilt nur für die

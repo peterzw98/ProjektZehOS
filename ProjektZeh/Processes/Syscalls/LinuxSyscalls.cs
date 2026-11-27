@@ -279,6 +279,7 @@ internal static partial class LinuxSyscalls
     /// dem Dateiende Nullen) und erst danach auf <paramref name="prot"/> gesetzt. Das entspricht MAP_PRIVATE bis auf eines: spätere
     /// Änderungen an der Datei sieht die Abbildung nicht. MAP_SHARED gibt es deshalb nur ohne PROT_WRITE (Ladybird bildet ICU-Daten
     /// so ab); beschreibbar geteilt bleibt -ENODEV, weil nichts in die Datei zurückfließen würde.
+    /// Ausnahme seit V17: Eine memfd (<see cref="LinuxMemFile"/>) bildet MAP_SHARED ihre eigenen Frames ab, auch beschreibbar.
     /// MAP_FIXED mit Datei lehnt der Aufruf mit -EINVAL ab: MapFixed ersetzte den alten Bereich, bevor feststeht, ob die Kopie gelingt,
     /// und ein Fehler danach hinterließe ein Loch. Nur ein dynamischer Lader braucht das, und PT_INTERP lehnt ElfLoader ab.
     /// </summary>
@@ -294,14 +295,26 @@ internal static partial class LinuxSyscalls
             return -ENODEV; // Prozess ohne Dateien (Hosttests mit Ersatzprozess)
         }
 
-        if ((flags & MapShared) != 0 && (prot & ProtWrite) != 0)
-        {
-            return -ENODEV;
-        }
-
         if ((flags & MapFixed) != 0)
         {
             return -EINVAL; // Altbestand bleibt unberührt (siehe oben)
+        }
+
+        // V17: MAP_SHARED einer memfd bildet ihre Frames selbst ab (auch beschreibbar); alle Prozesse sehen dieselben Seiten.
+        if ((flags & MapShared) != 0 && p is ILinuxSharedMemory shared)
+        {
+            lock (f.FileGate)
+            {
+                if (p.GetDescriptor(fd) is LinuxMemFile mem)
+                {
+                    return offset > long.MaxValue / 2 ? -EINVAL : shared.MapShared(mem, flen, prot, (long)(offset / 0x1000));
+                }
+            }
+        }
+
+        if ((flags & MapShared) != 0 && (prot & ProtWrite) != 0)
+        {
+            return -ENODEV;
         }
 
         if (flen > MaxUserSpan || offset > long.MaxValue - flen)
