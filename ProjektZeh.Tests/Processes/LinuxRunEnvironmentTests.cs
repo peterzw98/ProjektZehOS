@@ -126,4 +126,14 @@ public sealed class LinuxRunEnvironmentTests
         Assert.IsTrue(LinuxRunEnvironment.Split(["TMPDIR=/t", "XDG_RUNTIME_DIR=/r", "XDG_CACHE_HOME=/c", "p"], out env, out _, out error), error);
         Assert.AreEqual(0, LinuxRunEnvironment.DirectoriesFor(env).Count);
     }
+
+    [TestMethod]
+    public void DirectoriesCacheAloneAndTmpAloneAreIndependent()
+    {
+        Assert.IsTrue(LinuxRunEnvironment.Split(["TMPDIR=/tmp", "XDG_RUNTIME_DIR=/r", "XDG_CACHE_HOME=/c", "p"], out string[] env, out _, out string error), error);
+        CollectionAssert.AreEqual(new[] { ("/tmp", 0x1FFu) }, LinuxRunEnvironment.DirectoriesFor(env).ToArray());
+
+        Assert.IsTrue(LinuxRunEnvironment.Split(["TMPDIR=/t", "XDG_RUNTIME_DIR=/r", "p"], out env, out _, out error), error);
+        CollectionAssert.AreEqual(new[] { ("/.cache", 0x1EDu) }, LinuxRunEnvironment.DirectoriesFor(env).ToArray());
+    }
 }

@@ -303,7 +303,7 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_LINUX_RUN
             // Nur Testbau (-p:ZehOSLinuxRun=true, Ladybird V3): startet ein statisches Linux-Programm im Ring 3.
-            new ShellCommand("run", "run [NAME=WERT...] <datei> [argumente...]", "Testbau: startet ein statisches Linux-Programm (x86-64, musl), NAME=WERT davor setzt die Umgebung; Enter-Zeilen sind seine Eingabe, Strg+C/Esc bricht ab.", true,
+            new ShellCommand("run", "run [NAME=WERT...] <datei> [argumente...]", "Testbau: startet ein statisches Linux-Programm (x86-64, musl), NAME=WERT davor setzt die Umgebung; legt /tmp und /.cache in der Prozesswurzel an (nur bei Standardwerten); Enter-Zeilen sind seine Eingabe, Strg+C/Esc bricht ab.", true,
                 (arguments, output) => CosmosLinuxRun.RunFile(files, arguments, output, shell)),
 #endif
 #if ZEHOS_POWER_FAULT_PROBE

@@ -701,7 +701,7 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxFileLocks.cs` (Tabel
 - **HOME:** `CosmosLinuxRun.Environment` setzt `HOME=/` (Prozesswurzel); `experiments/LinuxAbi/run-linux.py` und `expected/s1/args_env_auxv.txt` mit derselben Umgebung.
 - **Umgebung (V37):** Standardwerte in `ProjektZeh/Processes/LinuxRunEnvironment.cs`: `ZEHOS_ABI=1 LANG=C PATH=/usr/bin:/bin HOME=/ TMPDIR=/tmp
   XDG_RUNTIME_DIR=/tmp/xdg-runtime XDG_CACHE_HOME=/.cache`. Vor dem Start legt `run` `/tmp` (0777, kein Sticky-Bit), `/tmp/xdg-runtime` (0700) und `/.cache`
-  (0755) in der Prozesswurzel an, aber nur für Variablen mit Standardwert. `run NAME=WERT ... <datei>` ersetzt oder ergänzt Einträge wie `env` (Name
+  (0755) in der Prozesswurzel an, aber nur für Variablen mit Standardwert; scheitert ein `mkdir` außer mit `EEXIST`, gibt `run` nur eine Warnung aus und startet trotzdem. `run NAME=WERT ... <datei>` ersetzt oder ergänzt Einträge wie `env` (Name
   `[A-Za-z_][A-Za-z0-9_]*`, sonst ist das Wort das Programm, etwa `./a=b`); kein Entfernen (`env -u`). Grenzen: 32 Zuweisungen, je 4096 Bytes, ganze Umgebung
   32 KiB, kein NUL; sonst `run:` mit Fehler und ohne Start.
 
