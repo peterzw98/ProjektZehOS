@@ -826,6 +826,29 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(-LinuxSyscalls.EINTR, f.Call(LinuxSyscalls.Futex, f.Mem + 0x600, 0, 0, f.Mem + 0x610));
     }
 
+    [TestMethod]
+    public void SigsuspendWartetMitMaskeUndEndetMitEintrBeiSignal()
+    {
+        // busybox ash wartet in wait4 per rt_sigsuspend auf SIGCHLD; ohne den Aufruf (-ENOSYS) drehte wait endlos (v46-kill-wait).
+        const long RtSigsuspend = 130;
+        var f = new Fixture();
+        SetAction(f, 10, HandlerAddr, 0);
+        f.Write32(f.Mem + 0x700, 0); // Wartemaske: nichts blockiert
+        f.Write32(f.Mem + 0x704, 0);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, f.Call(RtSigsuspend, f.Mem + 0x700, 4));
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, f.Call(RtSigsuspend, 8, 8));
+
+        SetMask(f, 2, 1UL << 9); // Signal 10 blockiert: kommt nur wegen der Wartemaske durch
+        long result = 1;
+        var t = new Thread(() => result = f.Call(RtSigsuspend, f.Mem + 0x700, 8));
+        t.Start();
+        Thread.Sleep(50);
+        Assert.IsTrue(t.IsAlive, "ohne Signal schläft rt_sigsuspend");
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        Assert.IsTrue(t.Join(5000));
+        Assert.AreEqual(-LinuxSyscalls.EINTR, result);
+    }
+
     // ---- V24 Ausnahmen im Ring 3 als Signal (LinuxFault, LinuxSignalFrame.DeliverFault) ----
 
     [TestMethod]
