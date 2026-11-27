@@ -123,7 +123,6 @@ internal static partial class LinuxSyscalls
         return threads.Futexes.Sleep(-1);
     }
 
-
     /// <summary>
     /// close_range(first, last, flags): schließt alle offenen Nummern im Bereich (last bis ~0 erlaubt) oder setzt mit CLOSE_RANGE_CLOEXEC
     /// nur FD_CLOEXEC. CLOSE_RANGE_UNSHARE ist ohne geteilte Tabellen (CLONE_FILES gibt es nicht) wirkungslos. Unter der Dateisperre.

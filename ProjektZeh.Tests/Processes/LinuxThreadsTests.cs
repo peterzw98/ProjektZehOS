@@ -833,7 +833,7 @@ public sealed class LinuxThreadsTests
         const long RtSigsuspend = 130;
         var f = new Fixture();
         SetAction(f, 10, HandlerAddr, 0);
-        f.Write32(f.Mem + 0x700, 0); // Wartemaske: nichts blockiert
+        f.Write32(f.Mem + 0x700, 1 << 11); // Wartemaske: nur Signal 12 (SIGUSR2), Signal 10 bleibt frei
         f.Write32(f.Mem + 0x704, 0);
         Assert.AreEqual(-LinuxSyscalls.EINVAL, f.Call(RtSigsuspend, f.Mem + 0x700, 4));
         Assert.AreEqual(-LinuxSyscalls.EFAULT, f.Call(RtSigsuspend, 8, 8));
@@ -847,6 +847,17 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
         Assert.IsTrue(t.Join(5000));
         Assert.AreEqual(-LinuxSyscalls.EINTR, result);
+
+        // Maske nach dem Handler: Der Rahmen trägt die alte Maske, bis rt_sigreturn sie herstellt (Linux saved_sigmask).
+        LinuxUserRegs r = Regs(f);
+        byte[] fpu = Fpu(0x1FA0);
+        After(f, ref r, fpu, RtSigsuspend, rsi: 0, r10: 0, result: -LinuxSyscalls.EINTR);
+        Assert.AreEqual(HandlerAddr, r.Rip, "Handler läuft");
+        Assert.IsFalse(f.P.MainThread.RestoreBlocked, "der Rahmen trägt die Maske");
+        Assert.AreEqual((1UL << 11) | (1UL << 9), f.P.MainThread.Blocked, "im Handler: Wartemaske plus gelieferte Signalnummer");
+        r.Rsp += 8;
+        Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, fpu));
+        Assert.AreEqual(1UL << 9, f.P.MainThread.Blocked, "nach rt_sigreturn gilt die Maske von vor rt_sigsuspend");
     }
 
     // ---- V24 Ausnahmen im Ring 3 als Signal (LinuxFault, LinuxSignalFrame.DeliverFault) ----
