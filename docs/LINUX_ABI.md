@@ -208,6 +208,13 @@ Grenzen (Review V2, bewusst offen):
   auf der Platte nur mit angemeldeter Sitzung, Schreibrecht auf die Wurzel und Verwaltungsrecht (Eigentümer oder Administrator) auf die Wurzel und jeden zugeordneten
   Eintrag darunter (höchstens 4096 Einträge). Nie Wurzel: die Verwaltungswurzel selbst, Komponenten mit `.zehos` am Anfang und im Root-Profil alles unter `/etc`, `/var`
   und `/boot`. Sonst `cause='ProcessRootDenied'`. Einträge ohne Rechtezuordnung (vom Programm angelegt) bleiben erlaubt; zwischen Prüfung und Lauf kann sich der Baum ändern.
+- Bündel auf die Platte (V28): `scripts/linux-root-disk.py <buendel.tar[.zst]> <platte.qcow2> --dest lb --strip 1` legt ein tar-Bündel als `/data/lb` auf eine
+  neue FAT32-Platte (MBR, Typ `0x0C`, jeder Name mit langem Eintrag, damit Kleinschreibung erhalten bleibt). FAT kennt keine Links: Symlinks und harte Links werden
+  zu Kopien (absolute Ziele ab der Bündelwurzel wie in der Prozesswurzel), fehlende Ziele, Ordnerkreise, Namen über 255 Zeichen, Pfade ab 4096 Bytes, in FAT
+  verbotene Zeichen, Punkt oder Leerzeichen am Ende, `.zehos`-Teile und Namen, die sich nur in der Schreibweise unterscheiden, brechen vorher ab.
+  `scripts/test-linux-root-disk-guest.py` startet ein Programm daraus im Desktop-Terminal (`cd /data/lb`, `run …`). Geprüft (27.11., KVM smp 1, Testbau `ZehOSLinuxRun`):
+  Name mit 199 Zeichen, gemischte und kleine Schreibweise in `readdir`, aufgelöste Datei- und Ordnerlinks, Datei mit 20 MB. Grenzen: Ausführungsrechte gehen
+  verloren (vorhandene Dateien melden 0755, V26), `run` lädt ELF bis 128 MiB.
 - Gastprobe: jedes Programm bekommt wie bei `run-linux.py` ein frisches Verzeichnis, `/data/linuxrun/<name>` (wenn `/data` eingehängt ist, sonst Arbeitsspeicher);
   die serielle Zeile `LINUX_RUN root <name> <wurzel|memory>` nennt es. Arbeitsverzeichnis ist der Unterordner `/w` darin (wird angelegt), weil `run-linux.py`
   ebenfalls in einem Unterordner startet: In "/" zeigte `ls .` den virtuellen Ordner `dev`, und `s1/dirs` erwartet vor `/d/e` noch einen Ordnernamen. Das Gastskript startet mit einem frischen Datenimage; ein zweiter Lauf auf demselben Image
