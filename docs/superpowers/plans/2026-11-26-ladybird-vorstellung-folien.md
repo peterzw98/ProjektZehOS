@@ -29,6 +29,7 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 2. Linux-Testsätze (`scripts/test-linux-all.py`): **12 von 13** Sätzen wie unter Linux (KVM, 1 und 4 CPUs, engineer 27.11. 09:10); einzige Abweichung `badptr` in s1, weil FAT keine symbolischen Links kennt.
 3. **Ladybirds JavaScript-Engine `js`** (statisch mit musl, 33 MB, unverändert) im ZehOS-Terminal: `1+1` → `2`, REPL mit `(7*6).toString(2)` → `"101010"`, Strg+C bricht Endlosschleife ab. Gastskript 11/11 bei 1 und 4 CPUs. Foto: `zehos-v3-out/js14-1/03-repl-antwort.png` (MSI).
 4. **Ladybird rendert eine Seite im ZehOS-Gast** (27.11., senior): `static.html` vollständig als PNG 798 × 4087 (alle 50 Absätze, Tabelle, Umlaute), 8 Ladybird-Prozesse im Ring 3, KVM: **3 von 3 Läufen mit 1 CPU und 3 von 3 mit 4 CPUs** ohne Absturz, dazu **TCG 3 von 3** (senior, 27.11. 12:25/12:39, `story/ladybird` mit V38). Demo: `scripts/ladybird-demo-run.sh`. Ladezeit im Gast noch 5–8 s.
+5. **Weitere Seiten** (27.11., senior, Gast mit 2 GB, KVM 1 und 4 CPUs, je 1 Lauf, PNG je Seite bytegleich): `css.html` (Webfonts, Verläufe, sticky-Kopf), `js.html` (Ergebnis gleich wie node auf dem Host), `img.html` (PNG dekodiert und skaliert). Mit 512 MB Gastspeicher hält der Kernel noch an (Prozesse können den Kernel-Heap leeren, V43 in Arbeit).
 
 ## 5. Zahlen zur Machbarkeit
 
