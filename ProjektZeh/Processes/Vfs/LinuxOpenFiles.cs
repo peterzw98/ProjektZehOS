@@ -270,7 +270,7 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
     }
 
     /// <summary>ioctl FIONREAD (V33): Größe minus Position wie Linux (<c>do_vfs_ioctl</c>), nie negativ; -EBADF nach close.</summary>
-    public long Readable()
+    public long BytesAvailable()
     {
         if (IsClosed)
         {

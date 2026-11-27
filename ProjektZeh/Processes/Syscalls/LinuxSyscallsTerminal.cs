@@ -199,7 +199,7 @@ internal static partial class LinuxSyscalls
         LinuxPipeEnd pipe => pipe.Pipe.Buffered,
         LinuxUnixSocket socket => socket.ReadableBytes(),
         LinuxInotify inotify => inotify.PendingBytes,
-        ProjektZeh.Processes.Vfs.LinuxRegularFile file => file.Readable(),
+        ProjektZeh.Processes.Vfs.LinuxRegularFile file => file.BytesAvailable(),
         TerminalDescriptor { IsTerminal: true } tty => tty.InputBytes,
         _ => null,
     };
