@@ -328,6 +328,20 @@ internal static partial class LinuxSyscalls
             return -SockErr.EOPNOTSUPP;
         }
 
+        // V27b: msg_namelen ist ein int (__copy_msghdr): ohne msg_name 0, negativ -EINVAL, über sockaddr_storage gekürzt; 0 heißt ohne Adresse.
+        ulong inetName = BitConverter.ToUInt64(h, 0);
+        int inetNameLen = 0;
+        if (s.IsInetDgram)
+        {
+            inetNameLen = inetName == 0 ? 0 : BitConverter.ToInt32(h, MsgNamelenAt);
+            if (inetNameLen < 0)
+            {
+                return -SockErr.EINVAL;
+            }
+
+            inetNameLen = Math.Min(inetNameLen, 128);
+        }
+
         // Stream mit Zieladresse: verbunden -EISCONN, sonst -EOPNOTSUPP (wie unix_stream_sendmsg); Seqpacket übergeht sie, TCP auch (V27).
         if (!s.IsInet && s.Type == LinuxUnixSocket.SockStream && BitConverter.ToUInt32(h, MsgNamelenAt) != 0)
         {
@@ -349,7 +363,7 @@ internal static partial class LinuxSyscalls
 
             byte[] dgram = new byte[(int)total];
             return !GatherIov(p, bases, lens, 0, dgram) ? -SockErr.EFAULT
-                : SendDatagramInet(p, s, dgram, BitConverter.ToUInt64(h, 0), BitConverter.ToUInt32(h, MsgNamelenAt));
+                : SendDatagramInet(p, s, dgram, inetNameLen == 0 ? 0 : inetName, inetNameLen);
         }
 
         // V27: AF_INET trägt keine Dateien; Hilfsdaten auf SOL_SOCKET übergeht TCP wie Linux (tcp_sendmsg wertet sie nicht aus).

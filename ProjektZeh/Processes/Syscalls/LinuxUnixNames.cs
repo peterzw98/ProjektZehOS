@@ -226,10 +226,12 @@ internal sealed class LinuxUnixNames
         return 0;
     }
 
-    /// <summary>Gibt alle Namen von <paramref name="owner"/> frei (letztes close des Sockets); die Datei eines Pfadnamens bleibt.</summary>
+    /// <summary>
+    /// Gibt alle Unix-Namen von <paramref name="owner"/> frei (letztes close des Sockets); die Datei eines Pfadnamens bleibt. Ports von AF_INET
+    /// gibt das Socket selbst über <see cref="LinuxInetPorts.Release"/> frei (V27b, ohne Durchsuchen der Porttabellen).
+    /// </summary>
     public void Release(object owner)
     {
-        Ports.Release(owner); // eigene Blattsperre, nicht unter _gate
         lock (_gate)
         {
             List<string>? drop = null;

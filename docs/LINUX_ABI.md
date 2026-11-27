@@ -414,16 +414,23 @@ wie oben, ohne `SCM_RIGHTS`); UDP hat einen eigenen Eingang je Socket. Ports gel
 | 41 | `socket` | `SOCK_STREAM` (Protokoll 0 oder 6) und `SOCK_DGRAM` (0 oder 17); anderes Protokoll `-EPROTONOSUPPORT`, andere Typen `-ESOCKTNOSUPPORT` |
 | 49 | `bind` | `sockaddr_in` ab 16 Bytes (kürzer `-EINVAL`), Familie `AF_INET` (`AF_UNSPEC` nur mit 0.0.0.0, sonst `-EAFNOSUPPORT`); Adresse 0.0.0.0 oder 127.0.0.0/8, sonst `-EADDRNOTAVAIL`; Port 0 vergibt einen aus 32768..60999; belegt `-EADDRINUSE`, schon gebunden `-EINVAL`; TCP und UDP haben getrennte Ports |
 | 50 | `listen` | ungebunden: automatisch 0.0.0.0 mit kurzlebigem Port; UDP `-EOPNOTSUPP` |
-| 42 | `connect` | TCP: Ziel 0.0.0.0 gilt als 127.0.0.1, nicht lokal `-ENETUNREACH`; ohne Lauschenden blockierend `-ECONNREFUSED`, mit `O_NONBLOCK` `-EINPROGRESS` und danach `SO_ERROR` 111 einmal, `poll` `POLLOUT|POLLERR|POLLHUP`; Erfolg sofort (auch nichtblockierend 0), ungebunden vorher automatischer Port; UDP: setzt die Gegenstelle für `send`/`write`/`getpeername` |
+| 42 | `connect` | Länge als `int` (obere Registerbits zählen nicht), negativ oder über 128 `-EINVAL`, unter 2 `-EINVAL`; `AF_UNSPEC` trennt (V27b, siehe unten). TCP: zuerst der Zustand (verbunden, angenommen oder lauschend `-EISCONN`), dann unter 16 Bytes `-EINVAL`, Familie nicht `AF_INET` `-EAFNOSUPPORT`; Ziel 0.0.0.0 gilt als 127.0.0.1, nicht lokal `-ENETUNREACH`; ohne Lauschenden blockierend `-ECONNREFUSED`, mit `O_NONBLOCK` `-EINPROGRESS` und danach `SO_ERROR` 111 einmal, `poll` `POLLOUT|POLLERR|POLLHUP`, das nächste `connect` liefert den Fehler (`-ECONNREFUSED`, schon mit `SO_ERROR` abgeholt `-ECONNABORTED`), das übernächste versucht neu; Erfolg sofort (auch nichtblockierend 0), bei vollem Rückstand nichtblockierend `-EINPROGRESS` (das nächste `connect` 0, danach `-EISCONN`); ungebunden vorher automatischer Port; UDP: bindet automatisch und setzt die Gegenstelle für `send`/`write`/`getpeername`, danach nimmt das Socket nur Datagramme von ihr an |
 | 43, 288 | `accept`, `accept4` | wie oben; Name ist die `sockaddr_in` des Verbindenden (Länge 16); das angenommene Ende trägt den Port des Lauschenden, bei 0.0.0.0 die Adresse 127.0.0.1 |
 | 51, 52 | `getsockname`, `getpeername` | `sockaddr_in`, Länge 16, gekürzt auf den Puffer; ungebunden 0.0.0.0:0; unverbunden `getpeername` `-ENOTCONN` |
-| 44, 46 | `sendto`, `sendmsg` | TCP übergeht Zieladresse und Hilfsdaten; UDP: Datagramm bis 65507 Bytes (sonst `-EMSGSIZE`), Zielport 0 `-EINVAL`, ungebunden vorher automatischer Port; ohne Empfänger oder bei vollem Eingang (212992 Bytes) verfällt es still, die Länge zählt; ohne Ziel und Gegenstelle `-EDESTADDRREQ` |
+| 44, 46 | `sendto`, `sendmsg` | TCP übergeht Zieladresse und Hilfsdaten; UDP: Adresslänge als `int`, bei `sendto` mit Adresse unter 16 Bytes (auch 0) `-EINVAL`, bei `sendmsg` `msg_namelen` negativ `-EINVAL`, über 128 gekürzt, 0 ohne Ziel; Familie `AF_INET` oder `AF_UNSPEC`; Datagramm bis 65507 Bytes (sonst `-EMSGSIZE`), Zielport 0 `-EINVAL`, ungebunden vorher automatischer Port; ohne Empfänger oder bei vollem Eingang (212992 Bytes) verfällt es still, die Länge zählt; ohne Ziel und Gegenstelle `-EDESTADDRREQ` |
 | 45, 47 | `recvfrom`, `recvmsg` | TCP wie Unix-Stream, `msg_namelen` 0; UDP ein Datagramm, Absender als `sockaddr_in`, Rest verworfen mit `MSG_TRUNC`; `MSG_PEEK`, `MSG_DONTWAIT`; `poll` `POLLIN` mit wartendem Datagramm |
 | 55, 54 | `getsockopt`, `setsockopt` | `SO_REUSEADDR`, `SO_REUSEPORT`, `SO_KEEPALIVE` und `TCP_NODELAY` werden gemerkt und gemeldet (ohne Wirkung), Puffergrößen still angenommen, `SO_TYPE`/`SO_ERROR`/`SO_ACCEPTCONN`/`SO_DOMAIN` (2)/`SO_PROTOCOL` (6, 17) wie oben; `optlen` unter 4 `-EINVAL`; alles andere, auch `IPPROTO_IP`, `-ENOPROTOOPT` |
 
 Grenzen: `SO_REUSEADDR` erlaubt kein zweites `bind` auf einen belegten Port, und es gibt kein `TIME_WAIT` (ein Port ist nach dem `close` sofort frei). Die
 Adresse gehört nicht zum Portschlüssel: 127.0.0.1:P und 127.0.0.2:P schließen sich aus. Ein verbundenes UDP-Socket erfährt nichts von einem fehlenden
 Empfänger (Linux: `ECONNREFUSED` nach ICMP). Kein `SO_LINGER`, `SO_RCVTIMEO`, `TCP_KEEPIDLE`, kein Urgent-Datum; kein `AF_INET6`.
+
+V27b (Review-Nachträge): `connect` mit `AF_UNSPEC` löst bei UDP die Gegenstelle (`udp_disconnect`: ohne `bind` mit Adresse wird sie 0.0.0.0, ohne `bind` mit
+Port ungleich 0 wird der Port frei) und lässt ein unverbundenes TCP-Socket ein verweigertes `connect` vergessen; ein lauschendes oder verbundenes TCP-Socket
+trennt Linux (Rückstand verwerfen, RST), hier `-EOPNOTSUPP`. Ein nichtblockierendes `connect` bei vollem Rückstand wird hier sofort angestellt (früher
+schreibbereit als bei Linux, das das SYN verwirft und wiederholt; kein `ETIMEDOUT`, wenn nie jemand `accept` ruft). `bind`, automatisches Binden und
+UDP-Trennen laufen unter einer Sperre je Socket (kein kurzes `-EINVAL` von `listen` neben einem `bind`); das letzte `close` gibt nur den eigenen Port frei,
+ohne die Porttabellen zu durchsuchen.
 
 ## Geteilter Speicher (V17)
 
