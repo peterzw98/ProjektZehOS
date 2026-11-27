@@ -1,23 +1,26 @@
 # Integration von `story/ladybird` in `master`
 
-Lesender Abgleich vom 27. November 2026. Untersucht wurden
+Lesender Abgleich für T6 vom 28. November 2026. Untersucht wurden
 [`master` `c042ab90`](https://github.com/peterzw98/ProjektZehOS/commit/c042ab90a96b234d8e14eab645d5e57b2ab0979e)
-und [`story/ladybird` `9d461fa7`](https://github.com/peterzw98/ProjektZehOS/commit/9d461fa733646c7ed00e871b99d687c0e58ed5f2).
+und der Freeze-Kandidat [`ff57d65b`](https://github.com/peterzw98/ProjektZehOS/commit/ff57d65b24a233ce4a37e7982e36fac30d59cd06).
+Der erfasste spätere Story-Kopf `4519757a` ergänzt Dokumentation. Bis zur
+Vorstellung am 4. Dezember bleibt der Code auf dem Vorzeigestand. V47, V49
+und die weiteren N2-Z-Torpakete werden separat geprüft und später übernommen.
 Gemeinsamer Vorfahr ist `53cba9cd`. `git merge-tree --write-tree --name-only --messages`
 lief in separaten Objektverzeichnissen. Für den kombinierten Stand stehen
-Build, Hosttests und Gastläufe aus.
+Build, Hosttests und Gastläufe aus. [T6 im N2-Z-Torplan](https://github.com/peterzw98/ProjektZehOS/blob/4519757a9e75d8af36cc08066bc30fb540aab95e/docs/superpowers/plans/2026-11-28-ladybird-n2z-tor.md)
 
 ## Umfang und Konflikte
 
 Seit dem gemeinsamen Vorfahren liegen 24 Commits auf der Master-Seite und
-370 auf der Story-Seite. Das Master-Delta umfasst 16 Dateien (+226/−19),
-das Story-Delta **279 Dateien (+53.004/−65)**.
+391 auf der Freeze-Seite. Das Master-Delta umfasst 16 Dateien (+226/−19),
+das Freeze-Delta **289 Dateien (+53.813/−76)**.
 
 | Bereich im Story-Delta | Dateien | Inhalt |
 | --- | ---: | --- |
-| `experiments/` | 124 | Vergleichsprogramme, Ladybird-Proben, Erwartungen und Referenzdaten |
+| `experiments/` | 133 | Vergleichsprogramme, Ladybird-Proben, Erwartungen und Referenzdaten |
 | `ProjektZeh/` | 79 | Linux-ELF, Linux-ABI, Speicher und Prozesse sowie Änderungen an Scheduler, Terminal und Dateidienst |
-| `ProjektZeh.Tests/` | 31 | Hostprüfungen |
+| `ProjektZeh.Tests/` | 32 | Hostprüfungen |
 | `docs/`, `scripts/` | 42 | 23 Dokumente und 19 Skripte und Tests |
 | Cosmos-Pin und SDK-Auflösung | 3 | Commit, Paketversion, `global.json` |
 
@@ -26,36 +29,57 @@ einen Pin und müssen auf dieselbe integrierte Cosmos-Paketversion zeigen.
 
 | Konflikt | Master | Story |
 | --- | --- | --- |
-| `deploy/cosmos/COMMIT` | `9b1f5778` | `053fb42d` |
-| `deploy/cosmos/VERSION` | `3.0.97-zehos.6-smp.17` | `3.0.97-zehos.0.g053fb42` |
-| `global.json`, `msbuild-sdks.Cosmos.Sdk` | `3.0.97-zehos.6-smp.17` | `3.0.97-zehos.0.g053fb42` |
+| `deploy/cosmos/COMMIT` | `9b1f5778` | `f2b64df6` |
+| `deploy/cosmos/VERSION` | `3.0.97-zehos.6-smp.17` | `3.0.97-zehos.0.gf2b64df` |
+| `global.json`, `msbuild-sdks.Cosmos.Sdk` | `3.0.97-zehos.6-smp.17` | `3.0.97-zehos.0.gf2b64df` |
 
 `deploy/cosmos/SDK` steht auf beiden Seiten auf 10.0.404. Die simulierte
 Projektdatei erhält den ZehOS-Versionspräfix 0.7 von Master. `ProjektZeh.csproj`,
 `CosmosClassScheduler.cs` und `test-wasm-doom-desktop.py` wurden automatisch
 zusammengeführt und brauchen einen inhaltlichen Abgleich.
 
+## Änderungen und Nachweise bis zum Freeze
+
+- V46 ergänzt `rt_sigsuspend` für `wait` in BusyBox `ash`. V45-P3 stellt
+  TF/RF bei `rt_sigreturn` wieder her und ergänzt die SIGTRAP- und
+  Einzelschritt-Proben. Die KVM-Abnahmen `52a2cdc4` und `d0a5b7b7` ergaben
+  jeweils 8/8 bei 2 GiB.
+- V48 begrenzt Speicherabbildungen auf 65.530 pro Adressraum. Wachstum über
+  die Grenze liefert `ENOMEM`. Auf `13d48244` liefen 7/8 KVM-Fälle durch.
+  `static` mit vier CPUs blieb einmal beim Screenshot stehen, drei
+  Wiederholungen liefen durch.
+- V50 löscht in Cosmos beim Sweep die Header toter Objekte. Mit dem
+  V50-Pin ergab `ff57d65b` auf KVM 8/8 und zusätzlich 10/10 für `static`
+  mit vier CPUs. Die separate Fangschaltung meldete damit 20/20. Die
+  Ursache des Stillstands auf `13d48244` bleibt offen.
+  [Runbook am erfassten Story-Kopf](https://github.com/peterzw98/ProjektZehOS/blob/4519757a9e75d8af36cc08066bc30fb540aab95e/docs/superpowers/plans/2026-12-04-ladybird-demo-ablauf.md#abendstand-der-abnahme)
+
 ## Cosmos zuerst integrieren
 
 - Die beiden gepinnten Cosmos-Commits haben `db6cb590` als Vorfahren und
-  unterscheiden sich um 1 Commit auf Master-Seite und 49 auf Story-Seite.
+  unterscheiden sich um 1 Commit auf Master-Seite und 53 auf Story-Seite.
   Der simulierte Merge genau dieser beiden Pins hat keine Textkonflikte.
   `9b1f5778` ist der DHCP-Broadcast-Patch aus #721. Ein Wechsel auf den
   Story-Pin allein würde diesen Commit aus der Paketbasis nehmen.
 - Der aktuelle Zweig `cosmos` ist weiter als der Master-Pin. Sein Kopf
   `ca7eed5e` enthält zusätzlich den Tick-Beobachter aus #737. Die Simulation
-  von `cosmos` gegen `story/ladybird-cosmos` (`053fb42d`) meldet einen Konflikt
-  in `src/Cosmos.Kernel.Core/PublicAPI.Unshipped.txt`. Der gemeinsame
-  Scheduler und dessen Threading-Testkernel werden automatisch gemischt.
+  von `cosmos` gegen `story/ladybird-cosmos` (`f2b64df6`) ergibt 2 zu 53
+  Commits und einen Konflikt in `src/Cosmos.Kernel.Core/PublicAPI.Unshipped.txt`.
+  Git führt den Scheduler und dessen Threading-Testkernel automatisch zusammen.
 - Der kombinierte ZehOS-Scheduler verwendet sowohl `IVoluntaryMove` und
   `VoluntaryMoveIntervalTicks` als auch `PerCpuState.SwitchIsYield`.
   Das erste Paar ist in beiden Pins vorhanden. `SwitchIsYield` fehlt im
   Master-Pin `9b1f5778`. Seine unveränderte Übernahme lässt die
   automatisch zusammengeführte Scheduler-Quelle ohne die benötigte API.
-- Der vorgesehene Weg ist ein eigener Cosmos-PR auf dem Projektzweig
-  `cosmos`. Danach aus dem integrierten Cosmos-Commit mit dem festgelegten
-  SDK Feed, SDK und Patcher bauen. Den ZehOS-PR auf **diesen** Commit und
-  eine neue zusammengehörige Paketversion pinnen.
+- Zuerst den Cosmos-PR gegen `cosmos` vorbereiten. API-Liste und automatisch
+  gemischten Scheduler prüfen, DHCP-Patch, Tick-Beobachter und V50-GC-Patch
+  erhalten. Nach Review und Freigabe aus dem integrierten Cosmos-Commit mit
+  dem festgelegten SDK Feed, Cosmos-SDK und Patcher bauen. Die tatsächliche
+  Auflösung aus diesem Feed für den folgenden ZehOS-Bau protokollieren.
+- Danach im ZehOS-PR `deploy/cosmos/COMMIT`, `deploy/cosmos/VERSION` und
+  `global.json` gemeinsam auf den integrierten Commit und seine Paketversion
+  setzen. Der Freeze-Pin ist die Ausgangsbasis für den Vergleich. Der
+  Integrationspin enthält zusätzlich die Änderungen aus `cosmos`.
   [Cosmos-Patchregeln](../../regeln/COSMOS_PATCHES.md) ·
   [Cosmos-Bauanleitung](../../../deploy/cosmos/README.md)
 
@@ -75,14 +99,20 @@ im Recovery-Bau.
 
 ## Abnahme vor der Integration
 
-1. Vor dem PR beide Remote-Köpfe erneut erfassen und alle drei Pin-Stellen
-   zusammen auflösen. Cosmos-Paketversion und Patcher mit dem Referenz-SDK
-   bauen und im Kernel tatsächlich verwenden.
-2. Hosttests mit Warnungen als Fehler sowie native Release-, Recovery- und
-   LinuxRun-Bauten auf demselben integrierten Stand durchführen. Standard-
-   und Recovery-Boot samt Desktop, Wasm und Datenträgern separat prüfen.
-3. Die QEMU-Matrix und den VMware-Standardstart prüfen, dazu die Ladybird-
-   Seiten und KVM-HTTP im LinuxRun-Bau. Bekannte Grenzen der Demo und noch
-   ausstehende Prüfungen mit Stand im PR festhalten.
-4. Unabhängiges Review und die vorgeschriebenen Freigaben für die beiden
-   PRs einholen. [Bau- und Prüfregeln](../../regeln/PRUEFEN.md)
+Vor dem PR die Remote-Köpfe erneut erfassen. Alle ZehOS-Zeilen der Matrix
+beziehen sich auf denselben kombinierten Stand mit dem neuen Cosmos-Pin.
+
+| Bau und Plattform | Prüfungen |
+| --- | --- |
+| Cosmos, Host und Gast | GC-Regression für Header am Segmentanfang, Bump-Reset und lebenden Nachbarn. Scheduler-/Threading-Tests und DHCP mit neuer Paketbasis. |
+| ZehOS, Host | `dotnet test` in Release mit Warnungen als Fehler. Native Builds für Standard, Recovery und LinuxRun dokumentieren. |
+| Standard, QEMU/KVM und TCG je 1 und 4 CPUs | Desktop und `SMP_PROBE` oder E7e-Matrix. Boot, Terminal, Fokus und Eingabe, Datenplatte, Wasm-Rechner, Doom und AOT, DHCP und Paketkatalog prüfen. Je Zelle ein Lauf, bei Fehlschlag zwei Wiederholungen. |
+| Recovery, QEMU | Boot, Shell und F4-Rückfall prüfen. `scripts/test-power-commands.ps1` mit isolierter Datenplatte für Aushängen, Neustart und Shutdown ausführen. |
+| Standard, VMware | Boot, Bildschirm und Eingabe prüfen. Ergebnisse und Grenzen getrennt von QEMU festhalten. |
+| LinuxRun, QEMU/KVM 1 und 4 CPUs, TCG mindestens 1 CPU | Den Linux-ABI-Referenzvergleich (T2), Fehlerisolation (T3) und 1.000 Starts mit Speichermessung nach GC (T1) nach Torplan auf dem integrierten Stand belegen. KVM-Abnahme für `static`, `css`, `js` und `img` mit 2 GiB wiederholen, dazu `static` mit vier CPUs und HTTP-Loopback mit einer CPU. |
+
+Die vorgesehenen T3- und T4-Läufe auf dem Freeze-Kandidaten liefern Vergleichswerte. Für die
+Integration die Ergebnisse der Matrix auf dem neuen Pin festhalten.
+Unabhängiges Review und vorgeschriebene Freigaben gelten für beide PRs.
+Der Merge nach `master` wartet auf Peters Freigabe.
+[Bau- und Prüfregeln](../../regeln/PRUEFEN.md)
