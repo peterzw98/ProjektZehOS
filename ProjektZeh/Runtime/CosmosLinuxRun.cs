@@ -1452,6 +1452,10 @@ internal static unsafe class CosmosLinuxRun
             process.ReportEnd(process.WaitStatusOf(9));
             process.Destroy();
             ReleaseSlot(run, b);
+            if (FrameReclaim.ShouldCollectAtExit(UserPageTable.FreePages, UserPageTable.TotalPages, UserPageTable.ReservedPages))
+            {
+                GC.Collect();
+            }
         }
     }
 
@@ -1658,7 +1662,8 @@ internal static unsafe class CosmosLinuxRun
 
         public UserPageTable Table => _table;
 
-        public ulong AllocateFrame() => UserPageTable.AllocateFrame();
+        // V47: vor ENOMEM einmal sammeln, der Heap hält sonst Seiten, die nur der GC freigibt.
+        public ulong AllocateFrame() => FrameReclaim.Allocate(UserPageTable.AllocateFrame, static () => GC.Collect());
 
         public void FreeFrame(ulong frame) => UserPageTable.FreeFrame(frame);
 
