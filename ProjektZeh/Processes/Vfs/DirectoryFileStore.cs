@@ -312,7 +312,7 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
                     mode = (info.Attributes & FileAttributes.ReadOnly) != 0 ? created & ~0x92u : created;
                 }
 
-                return new LinuxStoreNode(kind, info.Length, mode, ToNanos(info.LastWriteTimeUtc));
+                return new LinuxStoreNode(kind, info.Length, mode, FileTimeNanos(info.LastWriteTimeUtc));
             case LinuxNodeKind.Directory:
                 return new LinuxStoreNode(kind, 4096, DirectoryMode, 0);
             case LinuxNodeKind.Symlink:
@@ -829,6 +829,19 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     }
 
     private static long ToNanos(DateTime utc) => (utc.Ticks - DateTime.UnixEpoch.Ticks) * 100;
+
+    /// <summary>
+    /// Ersatzzeit für Dateien, deren Laufwerk keine Zeit führt: Cosmos-FAT meldet st_mtime fest 0 (COSMOS_SUPPORT.md, WASI-Zeitstempel).
+    /// Fontconfig nimmt eine Cache-Datei aber nur, wenn sie strikt neuer als 0 s ist (FcDirCacheMapHelper), und verwarf unter /tmp deshalb
+    /// in jedem Prozess den Cache. Der Wert ist fest (eine Sekunde nach 1970), damit zwei stat-Aufrufe dasselbe sehen.
+    /// </summary>
+    internal const long UnknownFileTimeNanos = 1_000_000_000L;
+
+    internal static long FileTimeNanos(DateTime utc)
+    {
+        long nanos = ToNanos(utc);
+        return nanos > 0 ? nanos : UnknownFileTimeNanos;
+    }
 
     internal static long Errno(Exception exception) => exception switch
     {

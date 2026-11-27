@@ -27,6 +27,18 @@ internal sealed class MemoryFileStore : ILinuxFileStore
     private long _totalBytes;
     private long _clock;
 
+    /// <summary>
+    /// Änderungszeit: Wanduhr in Nanosekunden seit 1970, nie rückwärts und je Änderung mindestens eins weiter. Ein bloßer Zähler (1, 2, ...)
+    /// ergab st_mtime 0: Fontconfig nimmt eine Cache-Datei nur, wenn sie strikt neuer als 0 s ist (FcDirCacheMapHelper), und verwarf
+    /// deshalb den Cache unter /tmp in jedem Prozess.
+    /// </summary>
+    private long Stamp()
+    {
+        long now = (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) * 100;
+        _clock = now > _clock ? now : _clock + 1;
+        return _clock;
+    }
+
     public MemoryFileStore(long maxFileBytes = 16L << 20, long maxTotalBytes = 64L << 20, int maxNodes = 65536)
     {
         MaxFileBytes = maxFileBytes;
@@ -220,7 +232,7 @@ internal sealed class MemoryFileStore : ILinuxFileStore
 
         _nodes[Parent(from)].Children!.Remove(Name(from));
         newParent.Children.Add(Name(to));
-        n.Mtime = ++_clock;
+        n.Mtime = Stamp();
         if (n.Children is null)
         {
             _nodes.Remove(from);
@@ -275,7 +287,7 @@ internal sealed class MemoryFileStore : ILinuxFileStore
             return -LinuxErrno.ENOSPC;
         }
 
-        node.Mtime = ++_clock;
+        node.Mtime = Stamp();
         _nodes[path] = node;
         parent.Children.Add(Name(path));
         added = node;
@@ -372,7 +384,7 @@ internal sealed class MemoryFileStore : ILinuxFileStore
             }
 
             src.Slice(0, count).CopyTo(_node.Data.AsSpan((int)offset));
-            _node.Mtime = ++_store._clock;
+            _node.Mtime = _store.Stamp();
             return count;
         }
 
@@ -401,7 +413,7 @@ internal sealed class MemoryFileStore : ILinuxFileStore
             Array.Clear(_node.Data, (int)length, (int)(_node.Length - length));
             _store._totalBytes -= _node.Length - length;
             _node.Length = length;
-            _node.Mtime = ++_store._clock;
+            _node.Mtime = _store.Stamp();
             return 0;
         }
 
