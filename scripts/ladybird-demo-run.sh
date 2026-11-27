@@ -17,7 +17,7 @@ set -u
 R=$(cd "$(dirname "$0")/.." && pwd)
 BUNDLE=$(ls -t "$HOME"/ladybird-bundle/lb-headless-*.tar.gz 2>/dev/null | head -1)
 OUT=$HOME/ladybird-demo-out/$(date +%Y%m%d-%H%M%S)
-URL=file:///share/zehos-probe/static.html; DELAY=5; SMP=1; TIMEOUT=600; SKIPC=0; SKIPB=0; ISO=; DISK=; ACCEL=kvm; WSCALE=; MEM=
+URL=file:///share/zehos-probe/static.html; DELAY=30; SMP=1; TIMEOUT=600; SKIPC=0; SKIPB=0; ISO=; DISK=; ACCEL=kvm; WSCALE=; MEM=
 while [ $# -gt 0 ]; do case $1 in
   -b) BUNDLE=$2; shift 2;; -o) OUT=$2; shift 2;; -u) URL=$2; shift 2;; -s) DELAY=$2; shift 2;;
   --smp) SMP=$2; shift 2;; --timeout) TIMEOUT=$2; shift 2;; --skip-cosmos) SKIPC=1; shift;; --skip-build) SKIPB=1; shift;;
