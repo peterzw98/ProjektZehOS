@@ -112,7 +112,11 @@
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.CpuTickHook.Handler.set -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.AllocateFrame() -> ulong
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.FreeFrame(ulong physical) -> void
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.FreePages.get -> ulong
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ReservedPages.get -> ulong
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ReservedPages.set -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ShareKernelHalf() -> bool
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.TotalPages.get -> ulong
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.TryCreate() -> Cosmos.Kernel.Core.Memory.UserPageTable?
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.UnbindCurrentThread() -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Scheduler.CpuSet.All.get -> Cosmos.Kernel.Core.Scheduler.CpuSet

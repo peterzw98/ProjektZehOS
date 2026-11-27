@@ -548,7 +548,30 @@ public sealed unsafe class UserPageTable : IDisposable
         }
     }
 
-    /// <summary>Allocates one zeroed frame.</summary>
+    // ZehOS patch user-frame-reserve, see PATCHES.md
+    /// <summary>Pages <see cref="AllocateFrame"/> leaves free for the kernel; 0 (the default) keeps none.</summary>
+    private static ulong s_reservedPages;
+
+    /// <summary>
+    /// Pages that <see cref="AllocateFrame"/> leaves free for the kernel: a
+    /// frame that would take one of them is refused (0), so a program that
+    /// fills the memory fails on its own instead of leaving the kernel heap
+    /// without pages. Every other allocation may still use them. 0, the
+    /// default, keeps none. Set by the system's policy, from any thread.
+    /// </summary>
+    public static ulong ReservedPages
+    {
+        get => Volatile.Read(ref s_reservedPages);
+        set => Volatile.Write(ref s_reservedPages, value);
+    }
+
+    /// <summary>Pages the page allocator manages, free or not; fixed after boot.</summary>
+    public static ulong TotalPages => PageAllocator.TotalPageCount;
+
+    /// <summary>Pages free at this moment, the reserve included; a snapshot without the lock.</summary>
+    public static ulong FreePages => PageAllocator.FreePageCount;
+
+    /// <summary>Allocates one zeroed frame, never one of the <see cref="ReservedPages"/>.</summary>
     /// <returns>Its physical address, or 0 without memory or on a platform without user page tables.</returns>
     public static ulong AllocateFrame()
     {
@@ -557,7 +580,7 @@ public sealed unsafe class UserPageTable : IDisposable
             return 0;
         }
 
-        void* page = PageAllocator.AllocPages(PageType.Unmanaged, 1, zero: true);
+        void* page = PageAllocator.AllocPages(PageType.Unmanaged, 1, zero: true, aKeepFree: ReservedPages);
         return page == null ? 0 : PageAllocator.VirtualToPhysical((ulong)page);
     }
 
