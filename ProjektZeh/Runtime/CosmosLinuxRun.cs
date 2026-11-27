@@ -324,6 +324,8 @@ internal static unsafe class CosmosLinuxRun
         bool started = false;
         try
         {
+            // Auch der Shell-Weg (run, Ladybird-Demo) braucht die Reserve, nicht nur Run().
+            ReserveKernelPages();
             if (!Prepare(elf, arguments, envp, root, out UserImage? image, out string why))
             {
                 return ResultErr.CreateFailure(ResultCode.Failure, "run: " + why);
