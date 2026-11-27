@@ -74,6 +74,9 @@ internal static unsafe class CosmosLinuxRun
         /// <summary>Programmpfad im Prozess für /proc/self/exe (V12) oder null, wenn das Programm außerhalb der Wurzel liegt.</summary>
         public string? ExePath;
 
+        /// <summary>V26: argv[0] als absoluter Pfad im Prozess; execve darauf startet <see cref="ExePath"/> (siehe <see cref="LinuxUserProcess.StartPath"/>).</summary>
+        public string? StartPath;
+
         /// <summary>Gesetzt bei einem Vordergrundprogramm der Shell; dann meldet der Programmthread das Ende selbst.</summary>
         public LinuxTerminalSession? Session;
         public LinuxUserProcess? Process;
@@ -240,6 +243,17 @@ internal static unsafe class CosmosLinuxRun
     /// Startet das Programm als Vordergrundprogramm der Shell und kehrt sofort zurück. Das Ende meldet der Programmthread selbst
     /// (Statuszeile in der Sitzung, LINUXRUN END im seriellen Protokoll).
     /// </summary>
+    /// <summary>V26: argv[0] als Pfad im Prozess (relativ zum Start-Arbeitsverzeichnis); null ohne Programmpfad in der Wurzel.</summary>
+    private static string? StartPathOf(string[] argv, string? cwd, string? exePath)
+    {
+        if (exePath == null || argv.Length == 0 || argv[0].Length == 0)
+        {
+            return null;
+        }
+
+        return LinuxPath.Normalize(argv[0][0] == '/' ? argv[0] : (cwd ?? "/") + "/" + argv[0]);
+    }
+
     private static ResultErr StartForeground(byte[] elf, string[] arguments, ShellService shell, string? root, string? exePath)
     {
         if (shell.HasForeground)
@@ -268,6 +282,7 @@ internal static unsafe class CosmosLinuxRun
                 Session = session,
                 Root = root,
                 ExePath = exePath,
+                StartPath = StartPathOf(arguments, null, exePath),
 
                 // Nur der Programmthread gibt busy frei; die Shell wartet nicht auf ihn.
                 Owners = 1,
@@ -431,7 +446,7 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, why);
             }
 
-            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd, ExePath = exePath };
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, StartCwd = cwd, ExePath = exePath, StartPath = StartPathOf(argv, cwd, exePath) };
             var thread = new Thread(() => Body(started, image!, elf));
             thread.Start();
             run = started;
@@ -571,6 +586,7 @@ internal static unsafe class CosmosLinuxRun
         var process = new LinuxUserProcess(new CosmosUserPages(table), run.Terminal, Pid, MaxBytes, Host, fileSystem)
         {
             ExePath = run.ExePath,
+            StartPath = run.StartPath,
             HwCap = (uint)X86Base.CpuId(1, 0).Edx,
         };
         Wire(run, table, process);
