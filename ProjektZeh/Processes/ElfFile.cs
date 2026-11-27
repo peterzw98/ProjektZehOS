@@ -16,6 +16,9 @@ internal sealed class ElfLoadException : FormatException
 
     /// <summary>Art des Fehlers, damit Aufrufer ihn ohne Textvergleich unterscheiden können (E2BIG als -E2BIG melden).</summary>
     public ElfLoadError Kind { get; }
+
+    /// <summary>Fehlernummer (positiv) bei <see cref="ElfLoadError.InterpreterUnavailable"/>, sonst 0.</summary>
+    public long Errno { get; init; }
 }
 
 /// <summary>Grobe Fehlerart des Laders.</summary>
@@ -32,6 +35,9 @@ internal enum ElfLoadError
 
     /// <summary>Keine Zufallsquelle für AT_RANDOM übergeben.</summary>
     NoRandom,
+
+    /// <summary>V25: Der Interpreter aus PT_INTERP ließ sich nicht lesen; die Fehlernummer steht in <see cref="ElfLoadException.Errno"/> (meist ENOENT).</summary>
+    InterpreterUnavailable,
 }
 
 /// <summary>Ein Programmkopf (ELF64 Phdr), unverändert aus der Datei.</summary>

@@ -321,7 +321,16 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         UserImage image;
         try
         {
-            image = ElfLoader.Load(elf, argv, envp, new ElfLoadOptions { Random = random, HwCap = HwCap, ExecFn = path, Uid = _uid, Gid = _gid });
+            // V25: Der Interpreter (PT_INTERP) kommt wie das Programm aus dem Dateisystem des Prozesses.
+            image = ElfLoader.Load(elf, argv, envp, new ElfLoadOptions
+            {
+                Random = random,
+                HwCap = HwCap,
+                ExecFn = path,
+                Uid = _uid,
+                Gid = _gid,
+                ReadInterpreter = ReadExecutable,
+            });
         }
         catch (ElfLoadException exception)
         {
@@ -329,6 +338,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             {
                 ElfLoadError.ArgumentsTooLong => -E2Big,
                 ElfLoadError.InvalidArgument => -LinuxSyscalls.EINVAL,
+                ElfLoadError.InterpreterUnavailable => -exception.Errno,
                 _ => -ENoExec,
             };
         }

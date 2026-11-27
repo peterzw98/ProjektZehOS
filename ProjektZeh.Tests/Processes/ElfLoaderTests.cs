@@ -438,6 +438,136 @@ public sealed class ElfLoaderTests
         AssertRejected(Build(b => b.Add(ElfProgramHeader.ProgramHeaders, R, 64, 0x900000, 56, 56)));
     }
 
+    // V25: dynamisch gelinktes PIE wie bei Alpine: PT_INTERP im ersten Segment, Interpreter ist ein ET_DYN (hier dasselbe Muster wie Pie()).
+    private const string Ldso = "/lib/ld-musl-x86_64.so.1";
+    private const ulong AtPhdr = 3, AtPhnum = 5, AtBase = 7, AtEntry = 9;
+
+    private static ElfBuilder Dynamic(string interp = Ldso, bool terminate = true)
+    {
+        ElfBuilder b = Pie();
+        byte[] path = Encoding.UTF8.GetBytes(interp);
+        path.CopyTo(b.Body, 0x180);
+        b.Body[0x180 + path.Length] = 0;
+        b.Add(ElfProgramHeader.Interpreter, R, 0x180, 0x180, (ulong)path.Length + (terminate ? 1UL : 0UL), (ulong)path.Length + 1);
+        return b;
+    }
+
+    private static byte[] Interp()
+    {
+        ElfBuilder b = Pie();
+        b.Entry = 0x1010;
+        for (int i = 0; i < b.Body.Length; i++)
+        {
+            b.Body[i] = (byte)(i * 13 + 5); // anderes Muster als das Programm
+        }
+
+        return b.Build();
+    }
+
+    private static ElfLoadOptions DynOptions(byte[]? interp, long error = 0, List<string>? asked = null) => new()
+    {
+        Random = FixedRandom,
+        StackSize = 64 * 1024,
+        ReadInterpreter = (string path, out byte[] content) =>
+        {
+            asked?.Add(path);
+            content = interp ?? [];
+            return error;
+        },
+    };
+
+    [TestMethod]
+    public void DynamicLoadsInterpreterAndAuxv()
+    {
+        byte[] elf = Dynamic().Build();
+        byte[] interp = Interp();
+        var asked = new List<string>();
+        UserImage image = ElfLoader.Load(elf, ["p"], [], DynOptions(interp, asked: asked));
+
+        CollectionAssert.AreEqual(new[] { Ldso }, asked);
+        Assert.AreEqual(ElfLoader.InterpreterBase, image.InterpreterBias);
+        Assert.AreEqual(ElfLoader.InterpreterBase + 0x1010, image.Entry, "Einsprung beim Interpreter");
+        Assert.AreEqual(ElfLoader.PieBase, image.LoadBias);
+        Assert.AreEqual(ElfLoader.PieBase + 0x5000, image.BreakStart, "brk hinter dem Programm, nicht hinter dem Interpreter");
+        Assert.AreSame(interp, image.Interpreter);
+
+        Dictionary<ulong, byte[]> mem = Materialize(image, elf);
+        StartStack stack = ParseStack(mem, image.StackPointer);
+        Assert.AreEqual(ElfLoader.InterpreterBase, stack.Aux[AtBase]);
+        Assert.AreEqual(ElfLoader.PieBase + 0x1000, stack.Aux[AtEntry], "AT_ENTRY ist das Programm");
+        Assert.AreEqual(ElfLoader.PieBase + 64, stack.Aux[AtPhdr]);
+        Assert.AreEqual(5UL, stack.Aux[AtPhnum]);
+
+        // Seiten: Programm mit Programmbytes, Interpreter mit Interpreterbytes, .bss beider null.
+        Assert.AreEqual(elf[Page + 5], ReadByte(mem, ElfLoader.PieBase + 0x1005));
+        Assert.AreEqual(interp[Page + 5], ReadByte(mem, ElfLoader.InterpreterBase + 0x1005));
+        Assert.AreEqual(interp[3 * Page + 0x20], ReadByte(mem, ElfLoader.InterpreterBase + 0x3020));
+        Assert.AreEqual(0, ReadByte(mem, ElfLoader.InterpreterBase + 0x3100), ".bss des Interpreters");
+        Assert.AreNotEqual(elf[Page + 5], interp[Page + 5], "Muster unterscheiden sich");
+
+        // Bereiche sortiert, überlappungsfrei, Interpreter ausführbar an seinem Einsprung.
+        for (int i = 1; i < image.Regions.Count; i++)
+        {
+            Assert.IsTrue(image.Regions[i - 1].End <= image.Regions[i].Start, "sortiert bei " + i);
+        }
+
+        Assert.IsTrue(image.Regions.Any(r => r.Start <= image.Entry && image.Entry < r.End && r.Access == MapAccess.ReadExecute));
+        Assert.AreEqual(3, image.Segments.Count(s => s.Interpreter));
+    }
+
+    [TestMethod]
+    public void StaticHasNoInterpreter()
+    {
+        UserImage image = Load(Pie().Build());
+        Assert.IsNull(image.Interpreter);
+        Assert.AreEqual(0UL, image.InterpreterBias);
+        StartStack stack = ParseStack(Materialize(image, Pie().Build()), image.StackPointer);
+        Assert.AreEqual(0UL, stack.Aux[AtBase]);
+        Assert.AreEqual(image.Entry, stack.Aux[AtEntry]);
+    }
+
+    [TestMethod]
+    public void DynamicInterpreterMissingGivesErrno()
+    {
+        byte[] elf = Dynamic().Build();
+        var none = Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], [], Options()));
+        Assert.AreEqual(ElfLoadError.InterpreterUnavailable, none.Kind);
+        Assert.AreEqual(2L, none.Errno, "ohne Dateisystem ENOENT");
+        var denied = Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], [], DynOptions(null, -13)));
+        Assert.AreEqual(ElfLoadError.InterpreterUnavailable, denied.Kind);
+        Assert.AreEqual(13L, denied.Errno);
+    }
+
+    [TestMethod]
+    public void DynamicRejectsBadInterpreter()
+    {
+        byte[] interp = Interp();
+        void Rejected(byte[] elf, byte[] i)
+        {
+            var e = Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(elf, ["p"], [], DynOptions(i)));
+            Assert.AreEqual(ElfLoadError.Invalid, e.Kind);
+        }
+
+        Rejected(Dynamic(terminate: false).Build(), interp);       // ohne abschließende Null
+        Rejected(Dynamic("lib/ld.so").Build(), interp);           // relativ
+        Rejected(Dynamic("").Build(), interp);                    // leer (nur die Null): zu kurz
+        Rejected(Dynamic().Build(), Static().Build());            // Interpreter ET_EXEC
+        Rejected(Dynamic().Build(), Dynamic().Build());           // Interpreter mit eigenem PT_INTERP
+        Rejected(Dynamic().Build(), [1, 2, 3]);                   // kein ELF
+        ElfBuilder outside = Dynamic();
+        outside.Headers[^1] = (ElfProgramHeader.Interpreter, R, 0x10_0000, 0, 10, 10);
+        Rejected(outside.Build(), interp);                        // außerhalb der Datei
+
+        // W^X im Interpreter gilt wie im Programm.
+        ElfBuilder wx = Pie();
+        wx.Headers[2] = (ElfProgramHeader.Load, R | W | X, Page, 0x1000, Page, Page);
+        Rejected(Dynamic().Build(), wx.Build());
+
+        // Programm und Interpreter zusammen über MaxImageSize.
+        var small = new ElfLoadOptions { Random = FixedRandom, StackSize = 64 * 1024, MaxImageSize = 5 * Page, ReadInterpreter = DynOptions(interp).ReadInterpreter };
+        Assert.ThrowsException<ElfLoadException>(() => ElfLoader.Load(Dynamic().Build(), ["p"], [], small));
+    }
+
     [TestMethod]
     public void RejectsBadArguments()
     {

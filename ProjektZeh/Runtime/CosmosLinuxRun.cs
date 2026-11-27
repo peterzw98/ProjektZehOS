@@ -1,5 +1,6 @@
 #if ZEHOS_LINUX_RUN
 using System;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
@@ -256,7 +257,7 @@ internal static unsafe class CosmosLinuxRun
         bool started = false;
         try
         {
-            if (!Prepare(elf, arguments, Environment, out UserImage? image, out string why))
+            if (!Prepare(elf, arguments, Environment, root, out UserImage? image, out string why))
             {
                 return ResultErr.CreateFailure(ResultCode.Failure, "run: " + why);
             }
@@ -378,7 +379,7 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>Initialisiert den Ring 3 und lädt das Abbild (Kernelseite, noch ohne Programmthread).</summary>
-    private static bool Prepare(byte[] elf, string[] argv, string[] envp, out UserImage? image, out string why)
+    private static bool Prepare(byte[] elf, string[] argv, string[] envp, string? root, out UserImage? image, out string why)
     {
         image = null;
         if (!Initialize(out why))
@@ -395,6 +396,7 @@ internal static unsafe class CosmosLinuxRun
             {
                 Random = random,
                 HwCap = (uint)X86Base.CpuId(1, 0).Edx,
+                ReadInterpreter = root == null ? null : (string path, out byte[] content) => ReadFromRoot(root, path, out content),
             });
             return true;
         }
@@ -408,6 +410,48 @@ internal static unsafe class CosmosLinuxRun
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// V25: liest den Interpreter des ersten Programms aus der Prozesswurzel (Kernelpfad). Das Dateisystem des Prozesses gibt es zu
+    /// diesem Zeitpunkt noch nicht; deshalb direkt über die Datenplatte. Grenze: Verweise der Prozesswurzel (CosmosLinuxDiskLinks) folgt
+    /// das nicht; Alpines ld-musl-x86_64.so.1 ist eine gewöhnliche Datei. Spätere execve lesen über das Dateisystem des Prozesses.
+    /// </summary>
+    private static long ReadFromRoot(string root, string path, out byte[] content)
+    {
+        content = [];
+        const long ENOENT = 2, EACCES = 13, ENOMEM = 12;
+        foreach (string part in path.Split('/'))
+        {
+            if (part == "..")
+            {
+                return -EACCES; // nie aus der Wurzel heraus
+            }
+        }
+
+        string full = root + path;
+        byte[]? bytes = StorageLock.Run(() =>
+        {
+            if (!File.Exists(full))
+            {
+                return null;
+            }
+
+            long length = new FileInfo(full).Length;
+            return length > LinuxUserProcess.MaxExecFileSize ? [] : File.ReadAllBytes(full);
+        });
+        if (bytes == null)
+        {
+            return -ENOENT;
+        }
+
+        if (bytes.Length == 0)
+        {
+            return -ENOMEM;
+        }
+
+        content = bytes;
+        return 0;
     }
 
     private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
@@ -426,7 +470,7 @@ internal static unsafe class CosmosLinuxRun
         Running? run = null;
         try
         {
-            if (!Prepare(elf, argv, envp, out UserImage? image, out string why))
+            if (!Prepare(elf, argv, envp, root, out UserImage? image, out string why))
             {
                 return new Outcome(false, string.Empty, why);
             }

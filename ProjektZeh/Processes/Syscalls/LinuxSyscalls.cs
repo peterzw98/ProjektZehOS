@@ -306,8 +306,9 @@ internal static partial class LinuxSyscalls
     /// Änderungen an der Datei sieht die Abbildung nicht. MAP_SHARED gibt es deshalb nur ohne PROT_WRITE (Ladybird bildet ICU-Daten
     /// so ab); beschreibbar geteilt bleibt -ENODEV, weil nichts in die Datei zurückfließen würde.
     /// Ausnahme seit V17: Eine memfd (<see cref="LinuxMemFile"/>) bildet MAP_SHARED ihre eigenen Frames ab, auch beschreibbar.
-    /// MAP_FIXED mit Datei lehnt der Aufruf mit -EINVAL ab: MapFixed ersetzte den alten Bereich, bevor feststeht, ob die Kopie gelingt,
-    /// und ein Fehler danach hinterließe ein Loch. Nur ein dynamischer Lader braucht das, und PT_INTERP lehnt ElfLoader ab.
+    /// V25: MAP_FIXED mit Datei (der dynamische Lader von musl bildet jedes Segment einer Bibliothek so in seine Reservierung ab, auch
+    /// mit PROT_EXEC). Der alte Bereich wird ersetzt, bevor feststeht, ob die Kopie gelingt; scheitert sie, bleibt an der Stelle ein Loch.
+    /// Das tut Linux ebenso (mmap_region gibt den Altbestand vor dem Neuabbilden frei). Ausnahme: MAP_SHARED|MAP_FIXED einer memfd bleibt -EINVAL.
     /// </summary>
     private static long MapFile(ILinuxProcess p, ulong addr, ulong flen, int prot, int flags, int fd, ulong offset)
     {
@@ -321,9 +322,10 @@ internal static partial class LinuxSyscalls
             return -ENODEV; // Prozess ohne Dateien (Hosttests mit Ersatzprozess)
         }
 
-        if ((flags & MapFixed) != 0)
+        bool fixedAt = (flags & MapFixed) != 0;
+        if (fixedAt && ((addr & 0xfff) != 0 || addr > MaxUserSpan || flen > MaxUserSpan - addr))
         {
-            return -EINVAL; // Altbestand bleibt unberührt (siehe oben)
+            return -EINVAL;
         }
 
         // V17: MAP_SHARED einer memfd bildet ihre Frames selbst ab (auch beschreibbar); alle Prozesse sehen dieselben Seiten.
@@ -333,6 +335,11 @@ internal static partial class LinuxSyscalls
             {
                 if (p.GetDescriptor(fd) is LinuxMemFile mem)
                 {
+                    if (fixedAt)
+                    {
+                        return -EINVAL; // geteilte Frames an fester Stelle gibt es nicht (siehe oben)
+                    }
+
                     // Wie Linux 6.12 (file_mmap_ok mit MAX_LFS_FILESIZE): Offset plus Länge über LONG_MAX gibt -EOVERFLOW; darunter
                     // passt die Dateiseite in long und der Bereich hinter dem Dateiende scheitert erst beim Zugriff.
                     return flen > long.MaxValue || offset / 0x1000 > (ulong)(long.MaxValue - (long)flen) >> 12
@@ -366,8 +373,24 @@ internal static partial class LinuxSyscalls
                 return -ENODEV; // Terminal und Verzeichnisse lassen sich unter Linux auch nicht abbilden
             }
 
-            // Zum Füllen beschreibbar, ohne PROT_EXEC (W^X); den gewünschten Schutz setzt erst Protect.
-            ulong at = p.MapAnonymous(flen, ProtReadWrite);
+            // Vor dem Ersetzen prüfen, was Linux vorab prüft (Datei zum Lesen offen): Ein O_WRONLY-Deskriptor lässt den Altbestand stehen.
+            if (fixedAt)
+            {
+                if ((prot & 0x6) == 0x6)
+                {
+                    return -ENOMEM; // W^X wie MapFixed bei anonymen Bereichen, aber bevor der Altbestand weicht
+                }
+
+                long readable = ProbeReadable(file, (long)offset);
+                if (readable < 0)
+                {
+                    return readable;
+                }
+            }
+
+            // Zum Füllen beschreibbar, ohne PROT_EXEC (W^X); den gewünschten Schutz setzt erst Protect. MAP_FIXED ersetzt den Altbestand
+            // (Frames frei, Bereich neu und leer), sodass die Kopie in genullte Seiten geht wie bei einem frischen Bereich.
+            ulong at = fixedAt ? (p.MapFixed(addr, flen, ProtReadWrite) ? addr : 0) : p.MapAnonymous(flen, ProtReadWrite);
             if (at == 0)
             {
                 return -ENOMEM;
@@ -381,12 +404,32 @@ internal static partial class LinuxSyscalls
 
             if (result < 0)
             {
-                p.Unmap(at, flen); // frisch belegter Bereich: keine teilgefüllte Abbildung bleibt zurück
+                p.Unmap(at, flen); // keine teilgefüllte Abbildung bleibt zurück; bei MAP_FIXED ein Loch wie bei Linux
                 return result;
             }
 
             return unchecked((long)at);
         }
+    }
+
+    /// <summary>Liest ein Byte ab <paramref name="offset"/> zur Probe (0 oder -errno; nur zum Schreiben offen ergibt -EACCES). Die Dateiposition bleibt.</summary>
+    private static long ProbeReadable(ILinuxFile file, long offset)
+    {
+        long saved = file.Seek(0, 1);
+        if (saved < 0)
+        {
+            return saved;
+        }
+
+        long r = file.Seek(offset, 0);
+        if (r >= 0)
+        {
+            Span<byte> one = stackalloc byte[1];
+            r = file.Read(one);
+        }
+
+        file.Seek(saved, 0);
+        return r == -EBADF ? -EACCES : r < 0 ? r : 0;
     }
 
     /// <summary>Liest wie pread ab <paramref name="offset"/> nach <paramref name="at"/>; 0 oder -errno. Die Dateiposition bleibt.</summary>
