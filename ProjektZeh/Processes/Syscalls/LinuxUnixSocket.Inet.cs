@@ -366,13 +366,13 @@ internal sealed partial class LinuxUnixSocket
         lock (_inboxGate)
         {
             // Linux zählt den Eingang gegen SO_RCVBUF und verwirft, was nicht mehr passt.
-            if (_inboxBytes + data.Length > Capacity || (data.Length == 0 && _inbox.Count >= MaxEmptyQueue))
+            if (_inboxBytes + data.Length + MessageOverhead > Capacity || (data.Length == 0 && _inbox.Count >= MaxEmptyQueue))
             {
                 return;
             }
 
             _inbox.Enqueue(new Datagram(data, fromAddr, fromPort));
-            _inboxBytes += data.Length;
+            _inboxBytes += data.Length + MessageOverhead;
             _inboxSeq++;
             Monitor.PulseAll(_inboxGate);
         }
@@ -398,7 +398,7 @@ internal sealed partial class LinuxUnixSocket
                     Datagram d = peek ? _inbox.Peek() : _inbox.Dequeue();
                     if (!peek)
                     {
-                        _inboxBytes -= d.Data.Length;
+                        _inboxBytes -= d.Data.Length + MessageOverhead;
                     }
 
                     int n = Math.Min(dst.Length, d.Data.Length);
