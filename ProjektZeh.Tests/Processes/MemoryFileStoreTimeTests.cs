@@ -28,4 +28,15 @@ public sealed class MemoryFileStoreTimeTests
         Assert.AreEqual(DirectoryFileStore.UnknownFileTimeNanos, DirectoryFileStore.FileTimeNanos(System.DateTime.UnixEpoch));
         Assert.AreEqual(DirectoryFileStore.UnknownFileTimeNanos, DirectoryFileStore.FileTimeNanos(System.DateTime.UnixEpoch));
     }
+
+    [TestMethod]
+    public void RootAndDirectoriesHaveMtimeOverOneSecond()
+    {
+        var store = new MemoryFileStore();
+        Assert.AreEqual(0, store.Lookup("", out LinuxStoreNode root));
+        Assert.IsTrue(root.MtimeNanos >= MemoryFileStore.MinStampNanos, "Wurzel " + root.MtimeNanos);
+        Assert.AreEqual(0, store.CreateDirectory("/d", 0x1ED));
+        Assert.AreEqual(0, store.Lookup("/d", out LinuxStoreNode dir));
+        Assert.IsTrue(dir.MtimeNanos >= MemoryFileStore.MinStampNanos);
+    }
 }
