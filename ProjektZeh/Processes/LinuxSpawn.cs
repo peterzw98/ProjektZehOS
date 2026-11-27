@@ -151,6 +151,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         StartPath = parent.StartPath;
         HwCap = parent.HwCap;
         CopySignals(parent.Signals, Signals, resetHandlers: false);
+        MainThread.Blocked = parent.CurrentThread.Blocked; // V38: Maske des Threads, der vfork ruft
         InheritFiles(parent);
     }
 
@@ -528,6 +529,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
         // Linux: Handler fallen auf SIG_DFL, SIG_IGN und die Signalmaske bleiben, der Alternativstack nicht.
         CopySignals(from.Signals, Signals, resetHandlers: true);
+        MainThread.Blocked = from.CurrentThread.Blocked; // V38: Maske des Threads, der execve ruft (im vfork-Kind dessen Hauptthread)
         TakeOverGroup(from); // V35: Gruppe und Sitzung bleiben, setpgid des Elternprozesses ist ab hier -EACCES
         CloseOnExec();
     }
@@ -567,7 +569,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             to.Mask[sig] = keep ? from.Mask[sig] : 0;
         }
 
-        to.Blocked = from.Blocked;
+        to.Blocked = from.Blocked; // nur Buchführung; die Maske eines LinuxUserProcess trägt seit V38 der Thread (LinuxThread.Blocked)
         if (!resetHandlers)
         {
             to.AltSp = from.AltSp;

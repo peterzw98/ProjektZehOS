@@ -28,6 +28,22 @@ internal sealed class LinuxThread
     public bool Exited { get; set; }
 
     /// <summary>
+    /// V38: Signalmaske dieses Threads (Linux <c>task_struct.blocked</c>), Bit = Nummer - 1. Bis V37 galt eine Maske je Prozess: Ladybird
+    /// blockiert beim Starten eines Kinds kurz alle Signale (<c>pthread_sigmask(SIG_SETMASK, all, &amp;old)</c>) und stellt danach
+    /// <c>old</c> her; lief dazwischen auf einem anderen Thread ein Handler (Maske mit dem Signal), blieb so die Maske eines fremden
+    /// Zeitpunkts stehen und der Hub sah nie wieder SIGCHLD. Schreiben nur der eigene Thread (sigprocmask, Handler, rt_sigreturn, Wartemaske)
+    /// unter <c>_threadGate</c> oder mit <see cref="Volatile"/>; andere Threads lesen sie bei der Zustellung unter <c>_threadGate</c>.
+    /// Neue Threads und Prozesse (clone, fork, vfork, execve) erben die Maske des aufrufenden Threads.
+    /// </summary>
+    public ulong Blocked;
+
+    /// <summary>
+    /// V38: an diesen Thread gerichtete anhängige Signale (tgkill, tkill; Linux <c>task_struct.pending</c>), Bit = Nummer - 1, unter
+    /// <c>_threadGate</c>. Nur dieser Thread nimmt sie; Signale an den Prozess stehen beim Prozess.
+    /// </summary>
+    public ulong Pending;
+
+    /// <summary>
     /// V19 ppoll: Maske vor dem Warten, solange die Wartemaske gilt (Linux: saved_sigmask mit TIF_RESTORE_SIGMASK). Nur der eigene Thread
     /// schreibt und liest sie (Aufruf und Rücksprung desselben Threads), deshalb ohne Sperre.
     /// </summary>

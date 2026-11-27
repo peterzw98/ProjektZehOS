@@ -40,6 +40,7 @@ internal sealed class LinuxSignalState
     public readonly ulong[] Flags = new ulong[65];
     public readonly ulong[] Restorer = new ulong[65];
     public readonly ulong[] Mask = new ulong[65];
+    /// <summary>Maske eines Prozesses ohne Threads (Testattrappen); <see cref="ProjektZeh.Processes.LinuxUserProcess"/> führt sie seit V38 je Thread (<see cref="ProjektZeh.Processes.LinuxThread.Blocked"/>).</summary>
     public ulong Blocked;
     public ulong AltSp, AltSize;
     public int AltFlags = 2; // SS_DISABLE
@@ -263,6 +264,17 @@ internal static partial class LinuxSyscalls
 
     private static LinuxSignalState Signals(ILinuxProcess p) => p.Signals;
 
+    /// <summary>V38: Maske des aufrufenden Threads (Linux je Thread); ein Prozess ohne Threads hat nur die eine in <see cref="LinuxSignalState"/>.</summary>
+    private static ref ulong BlockedOf(ILinuxProcess p)
+    {
+        if (p is ILinuxThreads threads)
+        {
+            return ref threads.CurrentThread.Blocked;
+        }
+
+        return ref p.Signals.Blocked;
+    }
+
     private static long DoSigaction(ILinuxProcess p, int sig, ulong act, ulong oact, ulong sigsetsize)
     {
         if (sigsetsize != 8 || sig < 1 || sig > 64)
@@ -324,7 +336,7 @@ internal static partial class LinuxSyscalls
             return -EINVAL;
         }
 
-        var st = Signals(p);
+        ref ulong blocked = ref BlockedOf(p);
         Span<byte> b = stackalloc byte[8];
         ulong value = 0;
         if (set != 0)
@@ -339,7 +351,7 @@ internal static partial class LinuxSyscalls
 
         if (oldset != 0)
         {
-            BitConverter.TryWriteBytes(b, st.Blocked);
+            BitConverter.TryWriteBytes(b, System.Threading.Volatile.Read(ref blocked));
             if (!p.Memory.TryWrite(oldset, b))
             {
                 return -EFAULT;
@@ -348,8 +360,9 @@ internal static partial class LinuxSyscalls
 
         if (set != 0)
         {
-            ulong next = how == 0 ? st.Blocked | value : how == 1 ? st.Blocked & ~value : value;
-            st.Blocked = next & ~SigKillStopMask;
+            ulong old = System.Threading.Volatile.Read(ref blocked);
+            ulong next = how == 0 ? old | value : how == 1 ? old & ~value : value;
+            System.Threading.Volatile.Write(ref blocked, next & ~SigKillStopMask);
 
             // Ein freigegebenes anhängiges Signal (tgkill während der Blockade) folgt jetzt seiner Standardaktion.
             (p as ILinuxThreads)?.SignalStateChanged();
@@ -374,7 +387,7 @@ internal static partial class LinuxSyscalls
             return -ENOSYS;
         }
 
-        ulong value = threads.PendingSignals & Signals(p).Blocked;
+        ulong value = threads.PendingSignals & System.Threading.Volatile.Read(ref BlockedOf(p));
         Span<byte> b = stackalloc byte[8];
         BitConverter.TryWriteBytes(b, value);
         int n = (int)Math.Min(sigsetsize, 8UL);

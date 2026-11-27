@@ -169,7 +169,7 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
         : base(fs, "/" + storePath, read, write)
     {
         _file = file;
-        _shared = new LinuxSharedStoreFile(file);
+        _shared = new LinuxSharedStoreFile(file, "/" + storePath);
         _node = node;
         _append = append;
         // Am Deskriptor festhalten: fstat nach unlink oder rename meldet weiter dieselbe Datei.

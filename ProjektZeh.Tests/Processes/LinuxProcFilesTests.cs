@@ -157,7 +157,7 @@ public sealed class LinuxProcFilesTests
     public void SignalmaskenInStatus()
     {
         var f = new Fixture();
-        f.Parent.Signals.Blocked = 1UL << 9;
+        f.Parent.MainThread.Blocked = 1UL << 9;
         f.Parent.Signals.Handler[13] = 1; // SIGPIPE ignoriert
         f.Parent.Signals.Handler[15] = 0x401000; // SIGTERM abgefangen
         string status = f.ReadFile(f.Parent, "/proc/self/status");

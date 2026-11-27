@@ -73,6 +73,7 @@ internal sealed partial class LinuxUserProcess
         }
 
         CopySignals(Signals, child.Signals, resetHandlers: false);
+        child.MainThread.Blocked = me.Blocked; // V38: Maske des Threads, der fork ruft
         child.InheritFiles(this);
 
         // Linux schreibt die TID vor dem ersten Lauf: CLONE_CHILD_SETTID in den Speicher des Kinds, CLONE_PARENT_SETTID in den der Eltern

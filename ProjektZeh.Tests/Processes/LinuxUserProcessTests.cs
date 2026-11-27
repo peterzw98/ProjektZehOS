@@ -21,7 +21,7 @@ public sealed class LinuxUserProcessTests
     private const ulong NotPresentRead = 0x4, NotPresentWrite = 0x6, NotPresentFetch = 0x14, PresentWrite = 0x7;
 
     /// <summary>Seitentabelle als Wörterbuch; zählt, was der Prozess abbildet und freigibt.</summary>
-    private sealed class FakePages : IUserPages
+    private sealed class FakePages : IUserPages, IUserPagesQuery
     {
         public readonly Dictionary<ulong, byte[]> Frames = new();
         public readonly Dictionary<ulong, (ulong Frame, MapAccess Access)> Mapped = new();
@@ -56,6 +56,8 @@ public sealed class LinuxUserProcessTests
             Mapped[page] = (frame, access);
             return true;
         }
+
+        public bool MapsTo(ulong page, ulong frame) => Mapped.TryGetValue(page, out var m) && m.Frame == frame;
 
         public bool Unmap(ulong page)
         {
@@ -159,7 +161,11 @@ public sealed class LinuxUserProcessTests
         Assert.IsFalse(process.HandlePageFault(image.StackBottom - Page, NotPresentRead), "Schutzseite");
         Assert.IsFalse(process.HandlePageFault(0x10_0000_0000, NotPresentRead), "unbelegt");
         Assert.IsFalse(process.HandlePageFault(ElfLoader.UserEnd + 5, NotPresentRead), "über dem Benutzerraum");
-        Assert.IsFalse(process.HandlePageFault(Data + Page, NotPresentWrite), "schon abgebildet");
+        // V38: "nicht vorhanden" auf einer inzwischen abgebildeten Seite: ein anderer Thread war schneller, der Befehl wird wiederholt.
+        Assert.IsTrue(process.HandlePageFault(Data + Page, NotPresentWrite), "schon abgebildet (gleichzeitiger Fehler)");
+        Assert.AreEqual(MapAccess.ReadWrite, pages.Mapped[Data + Page].Access);
+        Assert.IsTrue(process.HandlePageFault(Code, NotPresentFetch), "Codeseite, die ein anderer Thread schon holte (WebContent)");
+        Assert.IsFalse(process.HandlePageFault(Data + Page, PresentWrite), "Fehler auf vorhandener Seite holt nichts nach");
         Assert.IsTrue(process.HandlePageFault(image.StackBottom, NotPresentWrite), "Stack wächst bei Bedarf");
     }
 
@@ -1020,6 +1026,29 @@ public sealed class LinuxUserProcessTests
         extents.Clear();
         Assert.AreEqual(1, shared.References);
         Assert.AreEqual(0L, shared.ReleaseChecked());
+    }
+
+    [TestMethod]
+    public void AdresseBeschreibenNenntDateiVersatzOderBereich()
+    {
+        // V38: Für die Serial-Zeile einer Ausnahme ohne Handler: Datei mit Dateioffset und Versatz ab der Abbildung mit Offset 0, ein Ausschnitt
+        // ab Offset 0x1000 an anderer Stelle nennt nur den Dateioffset, anonymer Speicher seinen Bereich, Unbelegtes "ungemappt".
+        var (process, _) = StartWithFile(3 * (int)Page);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        long at = Sys(process, LinuxSyscalls.Mmap, 0, 3 * Page, ProtR, MapPrivateFlag, (ulong)fd, 0);
+        Assert.IsTrue(at > 0, "mmap " + at);
+        ulong b = (ulong)at;
+        Assert.AreEqual("/icu.dat Dateioffset 0x1010 Basis 0x" + b.ToString("x", System.Globalization.CultureInfo.InvariantCulture) + "+0x1010", process.DescribeAddress(b + Page + 0x10));
+
+        ulong anon = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtRW, MapAnon, ulong.MaxValue, 0);
+        string anonText = process.DescribeAddress(anon + 8);
+        StringAssert.StartsWith(anonText, "anon 0x"); // Nachbarn gleicher Rechte verschmelzen, die Grenzen hängen vom Aufbau ab
+        StringAssert.EndsWith(anonText, " rw-");
+        Assert.AreEqual("ungemappt", process.DescribeAddress(0x7000_0000_0000));
+
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Munmap, b, Page), "Abbildung mit Offset 0 weg");
+        Assert.AreEqual("/icu.dat Dateioffset 0x2004", process.DescribeAddress(b + (2 * Page) + 4));
+        process.Destroy();
     }
 
     private sealed class FailingSource : ILinuxPageSource

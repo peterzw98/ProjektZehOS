@@ -179,7 +179,7 @@ public sealed class LinuxSpawnTests
         ulong envp = f.Strings(f.Mem + (6 * Page), "A=1");
         f.Parent.Signals.Handler[2] = 0x1234; // Handler fällt bei execve auf SIG_DFL
         f.Parent.Signals.Handler[13] = 1;     // SIG_IGN bleibt
-        f.Parent.Signals.Blocked = 0x10;
+        f.Parent.MainThread.Blocked = 0x10;
         Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
         LinuxUserProcess child = f.Child!;
         Assert.AreEqual(0, Fixture.Call(child, LinuxSyscalls.Execve, path, argv, envp));
@@ -191,7 +191,7 @@ public sealed class LinuxSpawnTests
         Assert.AreSame(next, f.Parent.Children[0].Process);
         Assert.AreEqual(0UL, next.Signals.Handler[2]);
         Assert.AreEqual(1UL, next.Signals.Handler[13]);
-        Assert.AreEqual(0x10UL, next.Signals.Blocked);
+        Assert.AreEqual(0x10UL, next.MainThread.Blocked);
         Assert.AreEqual(Code, f.Image!.Entry);
         Assert.IsNotNull(next.GetDescriptor(1), "Terminal geerbt");
         Assert.IsNull(child.GetDescriptor(1), "Tabelle ist ins neue Abbild gewandert");
@@ -388,7 +388,7 @@ public sealed class LinuxSpawnTests
         Assert.AreEqual(4, OpenFile(f, f.Parent, "/hello", 0x80000)); // O_CLOEXEC
         f.Parent.Signals.Handler[12] = 0x1234;
         f.Parent.Signals.Handler[10] = 1;
-        f.Parent.Signals.Blocked = 1UL << 14;
+        f.Parent.MainThread.Blocked = 1UL << 14;
         Assert.AreEqual(0, Fixture.Call(f.Parent, Prctl, 1, 10));
 
         // Ein laufendes Kind (vfork + execve) und ein beendetes ziehen mit um.
@@ -416,7 +416,7 @@ public sealed class LinuxSpawnTests
         Assert.IsNull(f.Parent.GetDescriptor(3));
         Assert.AreEqual(0UL, next.Signals.Handler[12]);
         Assert.AreEqual(1UL, next.Signals.Handler[10]);
-        Assert.AreEqual(1UL << 14, next.Signals.Blocked);
+        Assert.AreEqual(1UL << 14, next.MainThread.Blocked);
         Assert.AreEqual(10, next.ParentDeathSignal, "PDEATHSIG bleibt über execve");
         Assert.AreEqual(2, next.Children.Length);
         Assert.AreEqual(0, f.Parent.Children.Length);
@@ -541,18 +541,18 @@ public sealed class LinuxSpawnTests
         ulong ts = f.Mem + 128, mask = f.Mem + 160;
         Assert.IsTrue(f.Parent.TryWrite(ts, new byte[16]));
         Assert.IsTrue(f.Parent.TryWrite(mask, BitConverter.GetBytes(Term)));
-        f.Parent.Signals.Blocked = Usr1;
+        f.Parent.MainThread.Blocked = Usr1;
 
         // Ergebnis ohne Signal: die alte Maske gilt sofort wieder.
         Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 8));
-        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+        Assert.AreEqual(Usr1, f.Parent.MainThread.Blocked);
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 4));
         Assert.AreEqual(-LinuxSyscalls.EFAULT, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, 8, mask, 8));
         Assert.AreEqual(-LinuxSyscalls.EFAULT, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, 8, 8));
         Assert.IsTrue(f.Parent.TryWrite(ts + 8, BitConverter.GetBytes(1_000_000_000L)));
         Assert.AreEqual(-LinuxSyscalls.EINVAL, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 8));
         Assert.IsTrue(f.Parent.TryWrite(ts + 8, new byte[8]));
-        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+        Assert.AreEqual(Usr1, f.Parent.MainThread.Blocked);
 
         // SIGUSR1 mit Handler wartet blockiert; ppoll gibt es frei: -EINTR, der Handler läuft unter der Wartemaske, der Rahmen trägt die alte.
         f.Parent.Signals.Handler[10] = 0x401000;
@@ -560,61 +560,56 @@ public sealed class LinuxSpawnTests
         f.Parent.Signals.Flags[10] = LinuxUserProcess.SaRestorer;
         Assert.AreEqual(0, Fixture.Call(f.Parent, LinuxSyscalls.Tkill, (ulong)Pid, 10));
         Assert.AreEqual(-LinuxSyscalls.EINTR, Fixture.Call(f.Parent, LinuxSyscalls.Ppoll, 0, 0, ts, mask, 8));
-        Assert.AreEqual(Term, f.Parent.Signals.Blocked, "Wartemaske bis zum Rücksprung");
+        Assert.AreEqual(Term, f.Parent.MainThread.Blocked, "Wartemaske bis zum Rücksprung");
         var r = new LinuxUserRegs { Rsp = f.Mem + (12 * Page), Rip = Code, Rflags = 0x202 };
         LinuxUserRegs entry = r;
         entry.Rax = (ulong)LinuxSyscalls.Ppoll;
         LinuxSignalFrame.AfterSyscall(f.Parent, ref r, new byte[512], entry.ToSyscallArgs(), -LinuxSyscalls.EINTR, f.Parent.SignalsTaken);
         Assert.AreEqual(0x401000UL, r.Rip, "Handler angesprungen");
-        Assert.AreEqual(Term | Usr1, f.Parent.Signals.Blocked, "Wartemaske und das Signal selbst");
+        Assert.AreEqual(Term | Usr1, f.Parent.MainThread.Blocked, "Wartemaske und das Signal selbst");
         byte[] saved = new byte[8];
         Assert.IsTrue(f.Parent.TryRead(r.Rsp + 304, saved), "uc_sigmask im Rahmen");
         Assert.AreEqual(Usr1, BitConverter.ToUInt64(saved));
 
         // -EINTR ohne Handler-Rahmen (das Signal nahm niemand): die alte Maske gilt nach dem Rücksprung.
-        f.Parent.Signals.Blocked = Usr1;
+        f.Parent.MainThread.Blocked = Usr1;
         f.Parent.BeginWaitMask(f.Parent.CurrentThread, Term);
         r = new LinuxUserRegs { Rsp = f.Mem + (12 * Page), Rip = Code, Rflags = 0x202 };
         LinuxSignalFrame.AfterSyscall(f.Parent, ref r, new byte[512], entry.ToSyscallArgs(), -LinuxSyscalls.EINTR, f.Parent.SignalsTaken);
-        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+        Assert.AreEqual(Usr1, f.Parent.MainThread.Blocked);
         Assert.AreEqual(Code, r.Rip);
     }
 
     [TestMethod]
-    public void PpollWartemaskeZweierThreadsStelltDieAlteErstAmEndeHer()
+    public void PpollWartemaskeGiltNurFuerDenWartendenThread()
     {
+        // V38: Die Maske gilt je Thread. Jeder Thread merkt sich seine eigene Maske vor dem Warten und stellt genau sie wieder her, egal in
+        // welcher Reihenfolge die Threads enden; die Maske eines anderen Threads bleibt unberührt (bis V37 zählte der Prozess die Wartenden).
         var f = new Fixture();
-        const ulong Usr1 = 1UL << 9, Term = 1UL << 14, Usr2 = 1UL << 11;
-        var a = new LinuxThread(1001);
-        var b = new LinuxThread(1002);
+        const ulong Usr1 = 1UL << 9, Term = 1UL << 14, Usr2 = 1UL << 11, Chld = 1UL << 16;
+        var a = new LinuxThread(1001) { Blocked = Usr1 };
+        var b = new LinuxThread(1002) { Blocked = Chld };
+        f.Parent.MainThread.Blocked = 0;
 
-        // A endet zuerst: B wartet noch, seine Maske bleibt; erst B stellt die Maske von vor A her (nicht A's Wartemaske).
-        f.Parent.Signals.Blocked = Usr1;
         f.Parent.BeginWaitMask(a, Term);
         f.Parent.BeginWaitMask(b, Usr2);
-        Assert.AreEqual(Usr1, b.SavedBlocked, "B merkt die Maske vor A, nicht A's Wartemaske");
+        Assert.AreEqual(Usr1, a.SavedBlocked);
+        Assert.AreEqual(Chld, b.SavedBlocked, "B merkt seine eigene Maske, nicht die von A");
+        Assert.AreEqual(Term, a.Blocked);
+        Assert.AreEqual(Usr2, b.Blocked);
+        Assert.AreEqual(0UL, f.Parent.MainThread.Blocked, "andere Threads unberührt");
         f.Parent.EndWaitMask(a);
-        Assert.AreEqual(Usr2, f.Parent.Signals.Blocked, "B wartet noch");
+        Assert.AreEqual(Usr1, a.Blocked);
+        Assert.AreEqual(Usr2, b.Blocked, "B wartet noch");
         f.Parent.EndWaitMask(b);
-        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
+        Assert.AreEqual(Chld, b.Blocked);
 
-        // B endet zuerst.
+        // Über einen Signalrahmen (restore: false) bleibt die Wartemaske bis rt_sigreturn; ein zweites Ende ist wirkungslos.
         f.Parent.BeginWaitMask(a, Term);
-        f.Parent.BeginWaitMask(b, Usr2);
-        f.Parent.EndWaitMask(b);
-        f.Parent.EndWaitMask(a);
-        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
-
-        // A verlässt die Wartemaske über einen Signalrahmen (zählt nur ab), B stellt am Ende her; ein zweites Ende ist wirkungslos.
-        f.Parent.BeginWaitMask(a, Term);
-        f.Parent.BeginWaitMask(b, Usr2);
         Assert.IsTrue(f.Parent.LeaveWaitMask(a, restore: false));
-        f.Parent.EndWaitMask(b);
-        Assert.AreEqual(Usr1, f.Parent.Signals.Blocked);
-        Assert.IsFalse(f.Parent.LeaveWaitMask(b, restore: true));
-        f.Parent.Signals.Blocked = Usr2;
-        f.Parent.EndWaitMask(a);
-        Assert.AreEqual(Usr2, f.Parent.Signals.Blocked, "kein Thread in einer Wartemaske: nichts herzustellen");
+        Assert.AreEqual(Term, a.Blocked);
+        Assert.IsFalse(f.Parent.LeaveWaitMask(a, restore: true));
+        Assert.AreEqual(Term, a.Blocked, "nichts herzustellen");
     }
 
     [TestMethod]
@@ -627,7 +622,7 @@ public sealed class LinuxSpawnTests
         Assert.IsTrue(f.Parent.TryWrite(ts, BitConverter.GetBytes(Sec)));
         Assert.IsTrue(f.Parent.TryWrite(ts + 8, BitConverter.GetBytes(5L)));
         Assert.IsTrue(f.Parent.TryWrite(mask, new byte[8]));
-        f.Parent.Signals.Blocked = Usr1;
+        f.Parent.MainThread.Blocked = Usr1;
         f.Parent.Signals.Handler[10] = 0x401000;
         f.Parent.Signals.Restorer[10] = 0x401000;
         f.Parent.Signals.Flags[10] = LinuxUserProcess.SaRestorer;

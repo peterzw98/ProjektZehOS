@@ -114,7 +114,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcView
             Threads = threads,
             CpuNanos = ProcessCpuNanos,
             SigPending = pending,
-            SigBlocked = Signals.Blocked,
+            SigBlocked = MainThread.Blocked, // V38: Maske je Thread; /proc/<pid>/status zeigt die des Gruppenführers
             SigIgnored = ignored,
             SigCaught = caught,
             RssAnonPages = zombie ? 0 : anon,
