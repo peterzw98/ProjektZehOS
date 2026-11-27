@@ -170,6 +170,9 @@ internal static unsafe partial class GarbageCollector
         freeBlock->MethodTable = s_freeMethodTable;
         freeBlock->Size = (int)size;
         freeBlock->Next = null;
+        // ZehOS DIAG gc-poison (nie mergen): freie Bytes mit Muster 0xDD statt 0 fuellen; ein Use-after-free liest dann 0xDDDD... (nicht kanonisch, GP)
+        // statt stillschweigend null. AllocFromFreeListRaw nullt, was es ausgibt.
+        MemoryOp.MemSet((byte*)freeBlock + sizeof(FreeBlock), 0xDD, (int)size - sizeof(FreeBlock));
         AddToFreeList(freeBlock, 's');
     }
 
