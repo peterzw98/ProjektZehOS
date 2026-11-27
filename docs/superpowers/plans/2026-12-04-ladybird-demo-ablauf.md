@@ -2,33 +2,57 @@
 
 ## Vor der Vorführung
 
-Auf dem MSI den mit der Probe verwendeten ZehOSLinuxRun-ISO-Pfad als `ISO`
-setzen. Einen freien KVM-Slot absprechen. Das Bündel mit `ImageDecoder` und die
-fertigen PNGs bereitlegen.
+Aus dem Repository-Stamm arbeiten und den absoluten Pfad zum vorbereiteten
+ZehOSLinuxRun-ISO als `ISO` setzen. Ein frischer Klon enthält weder das ISO
+noch die Demo-Archive und Referenzbilder. Diese vorab privat bereitstellen.
+`LADYBIRD_DEMO_ASSETS` kann auf den lokalen Ordner für Bündel und Demo-ZIP
+zeigen. Mit `LADYBIRD_STATIC_REF` lässt sich das Gast-Referenzbild angeben.
 
 | Lokales Archiv auf dem MSI | Bytes | SHA-256 |
 | --- | ---: | --- |
 | `ladybird-static-with-images.tar.gz` (Standard für die Demo) | 147158521 | `cd2fb1d7b5d90807791a41b9bf3f64818821ce1512d6169c703c28d6fa69cdd6` |
 | `ladybird-static-absolute.tar.zst` (schlanke Variante für `static.html`) | 118500639 | `a3f867b5ee3d05428eb4194c93e8a1750fe6a6b593ae7638dfcf41f079aa1283` |
-| `ladybird-loopback-demo.tar.gz` (HTTP-Erweiterung zum Bündel mit Bildern) | 2779980 | `94199579d9a7c06f00af47e11c148e222d42fa370894a195d67b125b0e32748a` |
+| `ladybird-loopback-demo.tar.gz` (Inhalt der HTTP-Erweiterung) | 2779980 | `94199579d9a7c06f00af47e11c148e222d42fa370894a195d67b125b0e32748a` |
+| `bundle-http.tar.gz` (kombiniertes, getestetes Bündel für Schritt 3) | 147287387 | `7a0c1b2239fb09c8cce6b261bb30204e311d6ac0a8649d7bbb72d8174c7c5674` |
 
 ```bash
-bundle="$HOME/ladybird-bundle/ladybird-static-with-images.tar.gz"
-demos="$HOME/ladybird-bundle/zehos-freitag-demos.zip"
-out=$(mktemp -d "${TMPDIR:-/tmp}/ladybird-demo.XXXXXX")
-static_ref="$HOME/zehos-v3-out/v38/diag2/shot.png"
-test -s "$ISO" && test -s "$bundle" && test -s "$static_ref"
-printf '%s  %s\n' cd2fb1d7b5d90807791a41b9bf3f64818821ce1512d6169c703c28d6fa69cdd6 "$bundle" | sha256sum -c -
-printf '%s  %s\n' 42c8c8db73245555c557c17d5a849209a9e36d6539546d0138c72b53683b0f5d "$demos" | sha256sum -c -
-unzip -q "$demos" -d "$out/png"
-cp -- "$static_ref" "$out/png/static-gast.png"
-file "$out/png/static-gast.png" "$out/png/zehos-projekt.png" "$out/png/canvas.png"
+assets=${LADYBIRD_DEMO_ASSETS:-"$HOME/ladybird-bundle"}
+bundle="$assets/ladybird-static-with-images.tar.gz"
+demos="$assets/zehos-freitag-demos.zip"
+static_ref=${LADYBIRD_STATIC_REF:-"$HOME/zehos-v3-out/v38/diag2/shot.png"}
+unset out
+prepare_demo() {
+  local missing=0 input tool
+  for input in "${ISO:-}" "$bundle" "$demos" "$static_ref"; do
+    if [ ! -f "$input" ] || [ ! -s "$input" ]; then
+      printf 'Fehlende Datei: %s\n' "${input:-ISO (Variable setzen)}" >&2
+      missing=1
+    fi
+  done
+  for tool in python3 qemu-system-x86_64 qemu-img mcopy mdir file unzip sha256sum; do
+    if ! command -v "$tool" >/dev/null; then
+      printf 'Fehlendes Werkzeug: %s\n' "$tool" >&2
+      missing=1
+    fi
+  done
+  [ "$missing" -eq 0 ] || return 1
+  printf '%s  %s\n' cd2fb1d7b5d90807791a41b9bf3f64818821ce1512d6169c703c28d6fa69cdd6 "$bundle" | sha256sum -c - || return 1
+  printf '%s  %s\n' 42c8c8db73245555c557c17d5a849209a9e36d6539546d0138c72b53683b0f5d "$demos" | sha256sum -c - || return 1
+  out=$(mktemp -d "${TMPDIR:-/tmp}/ladybird-demo.XXXXXX") || return 1
+  unzip -q "$demos" -d "$out/png" &&
+    cp -- "$static_ref" "$out/png/static-gast.png" &&
+    file "$out/png/static-gast.png" "$out/png/zehos-projekt.png" "$out/png/canvas.png"
+}
+prepare_demo
 ```
 
-Erwartet werden drei lesbare PNGs mit 798 × 4087, 798 × 720 und 798 × 639
+Erst nach erfolgreicher Vorbereitung den Gast starten. Erwartet werden drei
+lesbare PNGs mit 798 × 4087, 798 × 720 und 798 × 639
 Pixeln. Vor der Vorführung alle drei öffnen und in dieser Reihenfolge im
 Bildbetrachter oder in den Folien bereitlegen. `python3 scripts/png-nonwhite.py <png>`
 zählt die nicht-weißen Pixel (Exit 1 bei weißem Bild).
+Das ZIP enthält außerdem das Bild `zehos-desktop.png` der Projektseite
+(720 × 480 Pixel).
 
 **Ein Gast gleichzeitig.** Das Skript bricht ab, solange irgendein
 `qemu-system-*` läuft, auch ein Gast aus einem anderen Slot, und nennt dessen
@@ -68,7 +92,20 @@ fehlendes PNG hinterlassen.
    mit Kernelbau (41 s) und Plattenbau (3 s), der Gastlauf selbst 67 s;
    mit fertigem ISO (`--iso`) also etwa 70 s (V42, `89d389776`, 2 GiB, `~/ladybird-demo-out/m28-*`).
    Der vollständige Screenshot mit 30 s Wartezeit ist zusätzlich durch
-   V38 belegt (`cbcdb6bb`, KVM smp1, `$static_ref`).
+   V38 belegt (`cbcdb6bb`, KVM smp1, `~/zehos-v3-out/v38/diag2/shot.png`).
+
+   **Generalprobe unter WSL ohne KVM.** Nach derselben Vorbereitung
+   `static.html` mit TCG prüfen. Für diese Probe gilt das längere Zeitlimit.
+
+   ```bash
+   bash scripts/ladybird-demo-run.sh --iso "$ISO" -b "$bundle" \
+     -o "$out/static-tcg" --accel tcg --smp 1 --memory 2G --page static -s 30 \
+     --timeout 600
+   file "$out/static-tcg/shot.png"
+   ```
+
+   Die WSL-Generalprobe mit QEMU 10.0.13 dauerte zweimal 104 s gesamt
+   (96 s im Gast). Das PNG war bytegleich zur MSI-KVM-Referenz.
 
 2. **Projektseite und Canvas zeigen.** Die beiden Linux-PNGs aus dem ZIP zeigen
    Navigation, Grid und PNG-Illustration sowie Canvas bei Frame 90. Falls die
@@ -84,9 +121,54 @@ fehlendes PNG hinterlassen.
      -u 'file:///share/zehos-probe/canvas.html?frame=90' --timeout 180
    ```
 
-   Am 27. November unter Linux gerendert und visuell geprüft. Canvas Frame 90
-   war in zwei Läufen bytegleich. Gastdauer für beide neuen Seiten steht bis
-   zur Gastprobe aus.
+   Bei der MSI-Generalprobe auf `ca0e3238` (KVM, 1 CPU, 2 GiB) dauerten
+   beide ZehOS-Läufe je 81 s im Gast und 88 s gesamt. Das Projekt-PNG im
+   Gast misst 798 × 653 Pixel. Die Linux-Referenz mit 798 × 720 Pixeln
+   zeigt denselben Inhalt mit zusätzlichem leerem Rand unten.
+   Canvas Frame 90 war bytegleich zum Linux-Referenzbild (798 × 639).
+
+3. **Projektseite über HTTP zeigen.** Auf dem MSI mit freiem KVM-Slot eine
+   eigene Platte aus `bundle-http.tar.gz` aufbauen. Das kombinierte Bündel
+   der HTTP-Abnahme in den Asset-Ordner legen oder dessen absoluten Pfad
+   als `LADYBIRD_HTTP_BUNDLE` setzen.
+
+   ```bash
+   (
+     set -euo pipefail
+     if pgrep -a '^qemu-system-'; then
+       echo "KVM-Slot belegt" >&2
+       exit 1
+     fi
+     http_bundle=${LADYBIRD_HTTP_BUNDLE:-"$assets/bundle-http.tar.gz"}
+     printf '%s  %s\n' 7a0c1b2239fb09c8cce6b261bb30204e311d6ac0a8649d7bbb72d8174c7c5674 "$http_bundle" | sha256sum -c -
+     http=$(mktemp -d "$out/http.XXXXXX")
+     cat > "$http/go.sh" <<'SH'
+   bin/busybox httpd -f -p 127.0.0.1:8080 -h /share/zehos-probe &
+   server=$!
+   bin/busybox sleep 1
+   bin/Hub --headless=screenshot --disable-sandbox --force-cpu-painting \
+     --window-width 798 --window-height 720 --screenshot-delay 30 \
+     --screenshot-path /shot-http.png http://127.0.0.1:8080/zehos-projekt.html
+   bin/busybox kill "$server"
+   SH
+     : > "$http/keep"
+     python3 scripts/linux-root-disk.py "$http_bundle" "$http/lb.qcow2" \
+       --dest lb --skip-dangling --add /tmp/keep="$http/keep" --add /go.sh="$http/go.sh"
+     python3 scripts/test-linux-root-disk-guest.py "$ISO" "$http/lb.qcow2" "$http/guest" \
+       --dest lb --run 'bin/busybox sh go.sh' --accel kvm --smp 1 --memory 2G \
+       --disk-cache unsafe --timeout 400 --fetch lb/shot-http.png --out "$http/shot.png"
+     python3 scripts/png-nonwhite.py "$http/shot.png"
+     file "$http/shot.png"
+   )
+   ```
+
+   BusyBox-`httpd` und Ladybird laufen im selben LinuxRun-Prozessbaum.
+   Der Wrapper öffnet `http://127.0.0.1:8080/zehos-projekt.html`, schreibt
+   `/shot-http.png` in die Prozesswurzel und beendet danach den HTTP-Server.
+   Erwartet werden `LINUXRUN END exit 0` und ein lesbares PNG mit 798 × 720
+   Pixeln. Bei der [HTTP-Abnahme](2026-11-26-ladybird-vorstellung-folien.md)
+   gelangen alle drei KVM-Läufe (68–91 s). Für die Vorführung gilt die
+   Drei-Minuten-Grenze im Rückfallplan.
 
 ## Rückfall während der Vorführung
 

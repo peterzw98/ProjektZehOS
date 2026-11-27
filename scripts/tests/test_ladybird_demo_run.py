@@ -75,7 +75,8 @@ class LadybirdDemoRunTests(unittest.TestCase):
         args = [] if use_default else ["-b", str(self.bundle)]
         return subprocess.run(
             ["bash", str(self.runner), "--iso", str(self.iso), "-o", str(self.output), *args],
-            env={"HOME": str(self.home), "DOTNET_ROOT": str(self.bin), "PATH": os.environ["PATH"]},
+            env={"HOME": str(self.home), "DOTNET_ROOT": str(self.bin),
+                 "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}"},
             capture_output=True,
             text=True,
             timeout=15,
@@ -109,12 +110,18 @@ class LadybirdDemoRunTests(unittest.TestCase):
         self.assertEqual(args[args.index("--strip") + 1], "1")
         self.assertFalse(any(arg.startswith("/etc/fonts/") for arg in args), args)
 
-    def test_prepared_fonts_without_tmp_cache_warn(self):
+    def test_prepared_fonts_with_xdg_cache_are_accepted(self):
+        self.make_bundle("./etc/fonts/", ABSOLUTE + b'<cachedir prefix="xdg">fontconfig</cachedir>\n')
+        result = self.run_demo()
+        self.disk_args(result)
+        self.assertNotIn("WARNUNG", result.stdout)
+
+    def test_prepared_fonts_without_cache_warn(self):
         self.make_bundle("./etc/fonts/", ABSOLUTE)
         result = self.run_demo()
         self.disk_args(result)
         self.assertIn("WARNUNG", result.stdout)
-        self.assertIn("/tmp/fontconfig", result.stdout)
+        self.assertIn("<cachedir>", result.stdout)
 
     def test_legacy_relative_fonts(self):
         self.make_bundle("./", RELATIVE)

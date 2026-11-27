@@ -93,8 +93,8 @@ if [ -z "$DISK" ]; then
     # Die fertige Konfiguration samt Aliassen liegt bereits an ihrem Ziel im Gast.
     grep -Eq "^(\./)?${BUNDLE_PREFIX}etc/fonts/conf\.d/[^/]+\.conf$" "$OUT/bundle-members.txt" || die "etc/fonts/conf.d leer"
     tar -xOf "$BUNDLE" "$FONT_CONF" > "$OUT/fonts-prepared.conf" || die "etc/fonts/fonts.conf aus Buendel"
-    if ! grep -Eq '<cachedir>[[:space:]]*/tmp/fontconfig/?[[:space:]]*</cachedir>' "$OUT/fonts-prepared.conf"; then
-      step "WARNUNG: fonts.conf nennt /tmp/fontconfig nicht als Cache-Ordner"
+    if ! grep -Eq '<cachedir([[:space:]]|>)' "$OUT/fonts-prepared.conf"; then
+      step "WARNUNG: fonts.conf enthaelt keinen Cache-Ordner (<cachedir>)"
     fi
   else
     # Aeltere Buendel erwarten relative Pfade ab Buendelwurzel. Im Gast liegt die Kopie jedoch unter /etc/fonts.
