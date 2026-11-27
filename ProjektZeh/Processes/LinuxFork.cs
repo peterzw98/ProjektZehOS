@@ -55,6 +55,7 @@ internal sealed partial class LinuxUserProcess
         {
             HwCap = HwCap,
             ExePath = ExePath,
+            StartPath = StartPath,
         };
         child.Parent = this;
         child._uid = _uid;

@@ -37,7 +37,81 @@ internal struct LinuxUserRegs
 }
 
 /// <summary>Ein Signal, das ein Thread jetzt anspringt: Handler und Flags im Augenblick der Zustellung, Maske davor, siginfo.</summary>
-internal readonly record struct LinuxSignalDelivery(int Signal, ulong Handler, ulong Flags, ulong Restorer, ulong OldBlocked, int Code, int Pid, int Status);
+internal readonly record struct LinuxSignalDelivery(int Signal, ulong Handler, ulong Flags, ulong Restorer, ulong OldBlocked, int Code, int Pid, int Status)
+{
+    /// <summary>V24: gesetzt bei einem Signal aus einer Ausnahme im Ring 3; dann trägt siginfo si_addr statt si_pid, sigcontext err, trapno, cr2.</summary>
+    public LinuxFault? Fault { get; init; }
+}
+
+/// <summary>
+/// V24: Signal, si_code und si_addr einer Ausnahme im Ring 3 wie Linux x86-64 (<c>arch/x86/kernel/traps.c</c>, <c>arch/x86/mm/fault.c</c>),
+/// dazu die Felder, die Linux in den sigcontext schreibt (trapno, err, cr2).
+/// </summary>
+internal readonly record struct LinuxFault(int Signal, int Code, ulong Address, ulong Vector, ulong Error, ulong Cr2)
+{
+    public const int SiKernel = 0x80, SegvMaperr = 1, SegvAccerr = 2, IllIllopn = 2, FpeIntdiv = 1, BusAdraln = 1, TrapTrace = 2;
+    private const int FpeFltdiv = 3, FpeFltovf = 4, FpeFltund = 5, FpeFltres = 6, FpeFltinv = 7;
+
+    /// <summary>Signal der Ausnahme <paramref name="vector"/> (auch für den Wartestatus, wenn kein Handler sie nimmt).</summary>
+    public static int SignalOf(ulong vector) => vector switch
+    {
+        0 or 9 or 16 or 19 => 8, // #DE, Koprozessor-Segmentüberlauf, #MF, #XM: SIGFPE
+        6 => 4,                  // #UD: SIGILL
+        1 or 3 => 5,             // #DB, #BP: SIGTRAP
+        11 or 12 or 17 => 7,     // #NP, #SS, #AC: SIGBUS
+        _ => 11,                 // #GP, #PF, #TS und der Rest: SIGSEGV
+    };
+
+    /// <summary>
+    /// Beschreibt die Ausnahme. <paramref name="mapped"/>: Liegt die Fehleradresse eines Seitenfehlers in einem Bereich (auch PROT_NONE)?
+    /// Dann SEGV_ACCERR, sonst SEGV_MAPERR. <paramref name="fpu"/> ist das fxsave-Abbild beim Fehler (für den si_code von #MF und #XM).
+    /// </summary>
+    public static LinuxFault Of(ulong vector, ulong error, ulong address, ulong rip, bool mapped, ReadOnlySpan<byte> fpu)
+    {
+        int signal = SignalOf(vector);
+        return vector switch
+        {
+            14 => new LinuxFault(signal, mapped ? SegvAccerr : SegvMaperr, address, vector, error, address),
+            0 => new LinuxFault(signal, FpeIntdiv, rip, vector, error, 0),
+            6 => new LinuxFault(signal, IllIllopn, rip, vector, error, 0),
+            1 => new LinuxFault(signal, TrapTrace, rip, vector, error, 0),
+            17 => new LinuxFault(signal, BusAdraln, 0, vector, error, 0),
+            16 => new LinuxFault(signal, MathCode(Fx16(fpu, 2) & ~Fx16(fpu, 0) & 0x7F), rip, vector, error, 0), // FSW ohne maskierte Bits der FCW
+            19 => new LinuxFault(signal, MathCode(Fx32(fpu, 24) & ~(Fx32(fpu, 24) >> 7) & 0x3F), rip, vector, error, 0), // MXCSR: Flags ohne Masken
+            _ => new LinuxFault(signal, SiKernel, 0, vector, error, 0), // #GP, #BP, #SS, ...: force_sig, si_addr 0
+        };
+    }
+
+    // Linux fpu__exception_code: Reihenfolge der Prüfung wie dort (ungültig vor Division durch null vor Überlauf ...).
+    private static int MathCode(uint err)
+    {
+        if ((err & 0x001) != 0)
+        {
+            return FpeFltinv;
+        }
+
+        if ((err & 0x004) != 0)
+        {
+            return FpeFltdiv;
+        }
+
+        if ((err & 0x008) != 0)
+        {
+            return FpeFltovf;
+        }
+
+        if ((err & 0x012) != 0)
+        {
+            return FpeFltund;
+        }
+
+        return (err & 0x020) != 0 ? FpeFltres : 0;
+    }
+
+    private static uint Fx16(ReadOnlySpan<byte> fpu, int offset) => fpu.Length >= offset + 2 ? (uint)BitConverter.ToUInt16(fpu.Slice(offset, 2)) : 0;
+
+    private static uint Fx32(ReadOnlySpan<byte> fpu, int offset) => fpu.Length >= offset + 4 ? BitConverter.ToUInt32(fpu.Slice(offset, 4)) : 0;
+}
 
 /// <summary>
 /// V18 Signalzustellung (LibCore und Ladybird setzen Handler für SIGCHLD, SIGINT, SIGPIPE). Anhängige Signale liegen je Prozess
@@ -47,7 +121,8 @@ internal readonly record struct LinuxSignalDelivery(int Signal, ulong Handler, u
 /// Abweichungen von Linux: Maske, Alternativstack und anhängige Signale gelten je Prozess, nicht je Thread (wie seit V10); ein Handler
 /// blockiert sein Signal deshalb für alle Threads des Prozesses, bis rt_sigreturn die Maske zurücksetzt. Echtzeitsignale (32 bis 64)
 /// reihen sich nicht mehrfach ein. Zugestellt wird nur beim Rücksprung aus einem Aufruf, nicht in einer Rechenschleife ohne Aufruf
-/// (Cosmos bietet keinen Haken am Rücksprung eines Interrupts in den Ring 3); wartende Aufrufe kehren dafür mit -EINTR zurück.
+/// (Cosmos bietet keinen Haken am Rücksprung eines Interrupts in den Ring 3); wartende Aufrufe kehren dafür mit -EINTR zurück. Seit V24 zusätzlich
+/// beim Rücksprung aus einer Ausnahme mit Handler (<see cref="TakeFaultSignal"/>, <see cref="LinuxSignalFrame.DeliverFault"/>).
 /// </para>
 /// </summary>
 internal sealed partial class LinuxUserProcess : ILinuxSignalWake
@@ -131,6 +206,41 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// V24: Signal einer Ausnahme im Ring 3 (Linux force_sig_fault): Es wird sofort zugestellt, nicht eingereiht, und geht anhängigen Signalen
+    /// vor. Ist es blockiert oder ignoriert oder hat es keinen Handler, endet der Prozess damit (Linux setzt dann SIG_DFL und gibt es frei);
+    /// false heißt genau das. Sonst wie <see cref="TakeSignal"/>: Maske für den Handler, SA_RESETHAND. Der Zähler <see cref="SignalsTaken"/>
+    /// bleibt: Das Signal stammt nicht aus der Warteschlange und kann keinen Aufruf eines anderen Threads unterbrochen haben.
+    /// </summary>
+    public bool TakeFaultSignal(in LinuxFault fault, out LinuxSignalDelivery delivery)
+    {
+        delivery = default;
+        int sig = fault.Signal;
+        ulong bit = 1UL << (sig - 1);
+        lock (_threadGate)
+        {
+            if (Signals.Handler[sig] <= 1 || (Signals.Blocked & bit) != 0)
+            {
+                return false;
+            }
+
+            ulong flags = Signals.Flags[sig];
+            delivery = new LinuxSignalDelivery(sig, Signals.Handler[sig], flags, Signals.Restorer[sig], Signals.Blocked, fault.Code, 0, 0)
+            {
+                Fault = fault,
+            };
+            ulong add = Signals.Mask[sig] | ((flags & SaNodefer) != 0 ? 0 : bit);
+            Volatile.Write(ref Signals.Blocked, (Signals.Blocked | add) & ~KillStopBits);
+            if ((flags & SaResethand) != 0)
+            {
+                Signals.Handler[sig] = 0;
+                Signals.Flags[sig] = flags & ~SaSiginfo;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Ein Signal an den eigenen Prozess (SIGPIPE nach -EPIPE), wie kill auf sich selbst.</summary>
@@ -239,7 +349,8 @@ internal static class LinuxSignalFrame
     private const int RedZone = 128;
 
     // sigcontext_64: r8..r15, rdi, rsi, rbp, rbx, rdx, rax, rcx, rsp, rip, eflags (je 8), cs/gs/fs/ss (je 2), err, trapno, oldmask, cr2, fpstate.
-    private const int McRsp = 120, McRip = 128, McFlags = 136, McCs = 144, McSs = 150, McOldmask = 168, McFpstate = 184;
+    private const int McRsp = 120, McRip = 128, McFlags = 136, McCs = 144, McSs = 150, McErr = 152, McTrapno = 160, McOldmask = 168, McCr2 = 176,
+        McFpstate = 184;
 
     // Flags, die ein Handler über den Rahmen ändern darf (Linux FIX_EFLAGS ohne TF und RF): CF, PF, AF, ZF, SF, DF, OF, AC.
     private const ulong FixFlags = 0x1 | 0x4 | 0x10 | 0x40 | 0x80 | 0x400 | 0x800 | 0x40000;
@@ -320,6 +431,34 @@ internal static class LinuxSignalFrame
         {
             Rewind(ref r, number);
         }
+    }
+
+    /// <summary>
+    /// V24: Ausnahme im Ring 3 mit Handler. true: Die Register zeigen auf den Handler (Rahmen wie <see cref="Setup"/>, siginfo mit si_addr),
+    /// danach folgen wie nach einem Aufruf weitere wartende Signale; der Befehl läuft nicht noch einmal, sondern der Handler. false: Der Prozess
+    /// endet mit dem Signal (kein Handler, blockiert, ignoriert, Prozess endet schon) oder, wenn der Rahmen nicht auf den Stapel passt, mit
+    /// SIGSEGV (<see cref="LinuxUserProcess.ForceSegv"/>, wie Linux force_sigsegv). Register und FPU bleiben dann unverändert.
+    /// </summary>
+    public static bool DeliverFault(LinuxUserProcess p, ref LinuxUserRegs r, Span<byte> fpu, in LinuxFault fault)
+    {
+        if (p.IsAborted || !p.TakeFaultSignal(fault, out LinuxSignalDelivery d))
+        {
+            return false;
+        }
+
+        LinuxUserRegs regs = r;
+        Span<byte> image = stackalloc byte[FpuSize];
+        fpu.CopyTo(image);
+        if (!Setup(p, ref regs, image, d))
+        {
+            p.ForceSegv();
+            return false;
+        }
+
+        r = regs;
+        image.CopyTo(fpu);
+        AfterSyscall(p, ref r, fpu, new SyscallArgs { Number = -1 }, 0, 0);
+        return true;
     }
 
     /// <summary>
@@ -473,16 +612,31 @@ internal static class LinuxSignalFrame
         BitConverter.TryWriteBytes(mc.Slice(McCs, 2), (ushort)0x33); // Linux' Selektoren; rt_sigreturn übernimmt sie nicht
         BitConverter.TryWriteBytes(mc.Slice(McSs, 2), (ushort)0x2b);
         Put(mc, McOldmask, d.OldBlocked);
+        if (d.Fault is LinuxFault fault)
+        {
+            Put(mc, McErr, fault.Error);
+            Put(mc, McTrapno, fault.Vector);
+            Put(mc, McCr2, fault.Cr2);
+        }
+
         Put(mc, McFpstate, fpAddr);
         Put(f, SigmaskOffset, d.OldBlocked);
 
-        // siginfo: si_signo, si_errno, si_code; ab 16 si_pid, si_uid, bei SIGCHLD si_status (utime/stime 0).
+        // siginfo: si_signo, si_errno, si_code; ab 16 si_pid, si_uid, bei SIGCHLD si_status (utime/stime 0). Aus einer Ausnahme (V24) steht
+        // ab 16 stattdessen si_addr (_sigfault).
         Span<byte> info = f.Slice(InfoOffset, 128);
         BitConverter.TryWriteBytes(info.Slice(0, 4), d.Signal);
         BitConverter.TryWriteBytes(info.Slice(8, 4), d.Code);
-        BitConverter.TryWriteBytes(info.Slice(16, 4), d.Pid);
-        BitConverter.TryWriteBytes(info.Slice(20, 4), (uint)p.Uid);
-        BitConverter.TryWriteBytes(info.Slice(24, 4), d.Status);
+        if (d.Fault is LinuxFault sigfault)
+        {
+            Put(info, 16, sigfault.Address);
+        }
+        else
+        {
+            BitConverter.TryWriteBytes(info.Slice(16, 4), d.Pid);
+            BitConverter.TryWriteBytes(info.Slice(20, 4), (uint)p.Uid);
+            BitConverter.TryWriteBytes(info.Slice(24, 4), d.Status);
+        }
 
         if (!p.Memory.TryWrite(fpAddr, image) || !p.Memory.TryWrite(frame, f))
         {

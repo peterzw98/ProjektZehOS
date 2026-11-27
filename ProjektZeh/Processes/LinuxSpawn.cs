@@ -142,6 +142,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         _uid = parent._uid;
         _gid = parent._gid;
         ExePath = parent.ExePath;
+        StartPath = parent.StartPath;
         HwCap = parent.HwCap;
         CopySignals(parent.Signals, Signals, resetHandlers: false);
         InheritFiles(parent);
@@ -307,6 +308,15 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         }
 
         long read = ReadExecutable(path, out byte[] elf);
+        if (read == -LinuxErrno.ENOENT && ExePath != null && StartPath != null
+            && string.Equals(LinuxPath.Normalize(path), StartPath, StringComparison.OrdinalIgnoreCase))
+        {
+            // V26: argv[0] ist der Pfad, unter dem der Starter das Programm kennt (Gastprobe: "exec" im Arbeitsverzeichnis, Shell:
+            // Kernelpfad außerhalb der Prozesswurzel). Ein Programm, das sich damit selbst startet, findet es unter seinem Pfad in der Wurzel.
+            path = ExePath;
+            read = ReadExecutable(path, out elf);
+        }
+
         if (read < 0)
         {
             return read;
@@ -321,7 +331,16 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         UserImage image;
         try
         {
-            image = ElfLoader.Load(elf, argv, envp, new ElfLoadOptions { Random = random, HwCap = HwCap, ExecFn = path, Uid = _uid, Gid = _gid });
+            // V25: Der Interpreter (PT_INTERP) kommt wie das Programm aus dem Dateisystem des Prozesses.
+            image = ElfLoader.Load(elf, argv, envp, new ElfLoadOptions
+            {
+                Random = random,
+                HwCap = HwCap,
+                ExecFn = path,
+                Uid = _uid,
+                Gid = _gid,
+                ReadInterpreter = ReadExecutable,
+            });
         }
         catch (ElfLoadException exception)
         {
@@ -329,6 +348,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             {
                 ElfLoadError.ArgumentsTooLong => -E2Big,
                 ElfLoadError.InvalidArgument => -LinuxSyscalls.EINVAL,
+                ElfLoadError.InterpreterUnavailable => -exception.Errno,
                 _ => -ENoExec,
             };
         }
@@ -343,6 +363,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         {
             HwCap = HwCap,
             ExePath = path,
+            StartPath = StartPath,
         };
         if (!next.Load(image, elf).IsOK())
         {
@@ -393,6 +414,12 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 }
 
                 if ((st.Mode & LinuxMode.TypeMask) != LinuxMode.Regular)
+                {
+                    return -LinuxSyscalls.EACCES;
+                }
+
+                // Kein Ausführrecht in keinem der drei Teile: -EACCES (Linux), vor der Größen- und ELF-Prüfung.
+                if ((st.Mode & 0x49) == 0)
                 {
                     return -LinuxSyscalls.EACCES;
                 }

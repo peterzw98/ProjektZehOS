@@ -733,4 +733,123 @@ public sealed class LinuxThreadsTests
         SetMask(f, 2, 0);
         Assert.AreEqual(-LinuxSyscalls.EINTR, f.Call(LinuxSyscalls.Futex, f.Mem + 0x600, 0, 0, f.Mem + 0x610));
     }
+
+    // ---- V24 Ausnahmen im Ring 3 als Signal (LinuxFault, LinuxSignalFrame.DeliverFault) ----
+
+    [TestMethod]
+    public void AusnahmeTabelleWieLinux()
+    {
+        byte[] fpu = Fpu(0x1F80);
+        Assert.AreEqual(new LinuxFault(11, LinuxFault.SegvMaperr, 0x1234, 14, 4, 0x1234), LinuxFault.Of(14, 4, 0x1234, 0x400000, false, fpu));
+        Assert.AreEqual(new LinuxFault(11, LinuxFault.SegvAccerr, 0x5000, 14, 7, 0x5000), LinuxFault.Of(14, 7, 0x5000, 0x400000, true, fpu));
+        Assert.AreEqual(new LinuxFault(11, LinuxFault.SiKernel, 0, 13, 0, 0), LinuxFault.Of(13, 0, 0, 0x400000, false, fpu), "#GP: si_addr 0");
+        Assert.AreEqual(new LinuxFault(4, LinuxFault.IllIllopn, 0x400010, 6, 0, 0), LinuxFault.Of(6, 0, 0, 0x400010, false, fpu));
+        Assert.AreEqual(new LinuxFault(8, LinuxFault.FpeIntdiv, 0x400020, 0, 0, 0), LinuxFault.Of(0, 0, 0, 0x400020, false, fpu));
+        Assert.AreEqual(5, LinuxFault.Of(3, 0, 0, 0x400030, false, fpu).Signal, "int3: SIGTRAP");
+        Assert.AreEqual(7, LinuxFault.Of(12, 0, 0, 0x400030, false, fpu).Signal, "#SS: SIGBUS");
+        Assert.AreEqual(7, LinuxFault.Of(17, 0, 0, 0x400030, false, fpu).Signal, "#AC: SIGBUS");
+
+        // #XM: MXCSR mit gesetztem ZE (Bit 2) und freigegebener Maske ZM (Bit 9): FPE_FLTDIV; mit IE zusätzlich: FPE_FLTINV geht vor.
+        Assert.AreEqual(3, LinuxFault.Of(19, 0, 0, 0x400040, false, Fpu(0x1F80 & ~0x200u | 0x4)).Code);
+        Assert.AreEqual(7, LinuxFault.Of(19, 0, 0, 0x400040, false, Fpu(0x1F80 & ~0x280u | 0x5)).Code);
+        Assert.AreEqual(0x400040UL, LinuxFault.Of(19, 0, 0, 0x400040, false, fpu).Address, "SIGFPE: si_addr = RIP");
+    }
+
+    [TestMethod]
+    public void SeitenfehlerMitHandlerBautRahmenMitSiAddr()
+    {
+        var f = new Fixture();
+        ulong none = f.P.MapAnonymous(Page, 0);
+        Assert.AreNotEqual(0UL, none);
+        Assert.IsTrue(f.P.HasMapping(none + 17), "PROT_NONE ist ein Bereich");
+        Assert.IsFalse(f.P.HasMapping(0), "Adresse 0 nicht");
+
+        SetAction(f, 11, HandlerAddr, LinuxUserProcess.SaSiginfo);
+        LinuxUserRegs r = Regs(f);
+        LinuxUserRegs before = r;
+        byte[] fpu = Fpu(0x1FA0);
+        byte[] fpuBefore = (byte[])fpu.Clone();
+        LinuxFault fault = LinuxFault.Of(14, 4, none + 17, r.Rip, f.P.HasMapping(none + 17), fpu);
+        Assert.IsTrue(LinuxSignalFrame.DeliverFault(f.P, ref r, fpu, fault));
+
+        Assert.AreEqual(HandlerAddr, r.Rip);
+        Assert.AreEqual(11UL, r.Rdi);
+        Assert.AreEqual(11, f.Read32(r.Rsi), "si_signo");
+        Assert.AreEqual(2, f.Read32(r.Rsi + 8), "SEGV_ACCERR");
+        Assert.AreEqual(none + 17, Read64(f, r.Rsi + 16), "si_addr");
+        Assert.AreEqual(4UL, Read64(f, r.Rdx + 40 + 152), "sigcontext err");
+        Assert.AreEqual(14UL, Read64(f, r.Rdx + 40 + 160), "sigcontext trapno");
+        Assert.AreEqual(none + 17, Read64(f, r.Rdx + 40 + 176), "sigcontext cr2");
+        Assert.AreEqual(before.Rip, Read64(f, r.Rdx + 40 + 128), "RIP des fehlerhaften Befehls im Rahmen");
+        Assert.AreEqual(1UL << 10, f.P.Signals.Blocked, "SIGSEGV im Handler blockiert");
+        Assert.AreEqual(0x1F80, BitConverter.ToInt32(fpu, 24), "Handler mit frischem MXCSR");
+        Assert.IsNull(f.P.TerminatedBySignal);
+
+        // Zweiter Fehler im Handler (SIGSEGV blockiert): Linux setzt SIG_DFL, der Prozess endet; Register bleiben.
+        LinuxUserRegs inHandler = r;
+        Assert.IsFalse(LinuxSignalFrame.DeliverFault(f.P, ref r, fpu, LinuxFault.Of(14, 4, 0, r.Rip, false, fpu)));
+        Assert.AreEqual(inHandler.Rip, r.Rip);
+
+        // Rückkehr per rt_sigreturn: wieder am fehlerhaften Befehl, Maske und FPU zurück.
+        r.Rsp += 8;
+        Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, fpu));
+        Assert.AreEqual(before.Rip, r.Rip);
+        Assert.AreEqual(before.Rsp, r.Rsp);
+        Assert.AreEqual(0UL, f.P.Signals.Blocked);
+        CollectionAssert.AreEqual(fpuBefore, fpu);
+    }
+
+    [TestMethod]
+    public void AusnahmeOhneHandlerIgnoriertOderBlockiertBeendet()
+    {
+        var f = new Fixture();
+        LinuxUserRegs r = Regs(f);
+        byte[] fpu = Fpu(0x1F80);
+        LinuxFault ud = LinuxFault.Of(6, 0, 0, r.Rip, false, fpu);
+        Assert.IsFalse(LinuxSignalFrame.DeliverFault(f.P, ref r, fpu, ud), "SIG_DFL");
+
+        SetAction(f, 4, 1, 0); // SIG_IGN
+        Assert.IsFalse(LinuxSignalFrame.DeliverFault(f.P, ref r, fpu, ud), "ignoriert: Linux erzwingt SIG_DFL");
+
+        SetAction(f, 4, HandlerAddr, 0);
+        SetMask(f, 0, 1UL << 3); // SIG_BLOCK SIGILL
+        Assert.IsFalse(LinuxSignalFrame.DeliverFault(f.P, ref r, fpu, ud), "blockiert");
+        Assert.AreEqual(0x400123UL, r.Rip);
+
+        SetMask(f, 1, 1UL << 3);
+        Assert.IsTrue(LinuxSignalFrame.DeliverFault(f.P, ref r, fpu, ud));
+        Assert.AreEqual(HandlerAddr, r.Rip);
+        Assert.AreEqual(4UL, r.Rdi);
+        Assert.AreEqual(2, f.Read32(r.Rsi + 8), "ILL_ILLOPN");
+        Assert.AreEqual(0x400123UL, Read64(f, r.Rsi + 16), "si_addr = RIP");
+    }
+
+    [TestMethod]
+    public void AusnahmeOhnePlatzFuerRahmenEndetMitSigsegv()
+    {
+        var f = new Fixture();
+        SetAction(f, 8, HandlerAddr, 0);
+        LinuxUserRegs r = Regs(f);
+        r.Rsp = 0x2000; // unbelegt: der Rahmen lässt sich nicht schreiben
+        byte[] fpu = Fpu(0x1F80);
+        Assert.IsFalse(LinuxSignalFrame.DeliverFault(f.P, ref r, fpu, LinuxFault.Of(0, 0, 0, r.Rip, false, fpu)));
+        Assert.AreEqual(11, f.P.TerminatedBySignal, "force_sigsegv statt SIGFPE");
+        Assert.AreEqual(0x2000UL, r.Rsp);
+    }
+
+    [TestMethod]
+    public void AusnahmeVorWartendenSignalenDieseLaufenZuerst()
+    {
+        // Linux stellt das Ausnahmesignal zuerst zu, danach in derselben Schleife die anhängigen; deren Rahmen liegt oben und läuft zuerst.
+        var f = new Fixture();
+        SetAction(f, 11, HandlerAddr, LinuxUserProcess.SaSiginfo);
+        SetAction(f, 10, HandlerAddr + 0x40, 0);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        LinuxUserRegs r = Regs(f);
+        byte[] fpu = Fpu(0x1F80);
+        Assert.IsTrue(LinuxSignalFrame.DeliverFault(f.P, ref r, fpu, LinuxFault.Of(13, 0, 0, r.Rip, false, fpu)));
+        Assert.AreEqual(HandlerAddr + 0x40, r.Rip, "SIGUSR1 oben");
+        Assert.AreEqual(HandlerAddr, Read64(f, r.Rdx + 40 + 128), "darunter der SIGSEGV-Handler");
+        Assert.IsFalse(f.P.SignalWaiting);
+    }
 }
