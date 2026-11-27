@@ -24,6 +24,17 @@ erlaubt; Erwartungen entstehen nie von Hand. Binärdateien (`out/`) werden nicht
 
 Im Gast kommt dieselbe Ausgabe über denselben Aufruf (Argumente und Umgebung sind fest) zustande; `run-linux.py` selbst läuft nur auf Linux.
 
+### Alle Gastsätze mit einem Befehl
+
+```sh
+CC=<musl-gcc> python3 -I scripts/test-linux-all.py [--sets s1 s3 ...] [--configs kvm:1 kvm:4 tcg:1] [--work <ordner>]
+```
+
+Baut je Satz mit `build.sh`, packt das Bündel, baut den Kernel (`-warnaserror`, `-p:ZehOSLinuxRunProbe=true`) und fährt das ISO je Stufe
+(Standard KVM smp1, KVM smp4, TCG smp1) gegen `expected/`; am Ende steht eine Tabelle Satz × Stufe, Exit 0 nur bei lauter PASS. Logs und ISOs liegen im
+`--work`-Ordner (Standard `.tools/linux-all/<Zeit>`). Besonderheiten (spin aus `v3neg`, `v7b` nur mit Status, `v7bfull` mit Füllplatte nur KVM) stehen in
+`SPECIAL` des Skripts. Nicht enthalten: Desktop-Terminal-Tests (`test-linux-stdin.py`, `test-linux-js.py`) und der Satz `tools`.
+
 ## Satz S1
 
 | Programm | prüft |
