@@ -1,0 +1,26 @@
+global ctor
+sortiert c++,ladybird,musl,os,zeh,
+a=5;b=2;c=1;d=1;r=2;
+gefangen: tief geworfen
+out_of_range ok
+thread 49 haupt 7
+global dtor
+dyn_cxx exit 0
+posix_spawn dyn_cxx rc=0
+posix_spawn ohne_interp rc=ENOENT
+hello dynamic argc=3 argv0=dyn_hello
+at_base gesetzt
+at_entry ok
+at_phdr ok
+malloc ok x
+dlsym ok
+objekte +1
+dyn_hello exit 0
+execve selbst
+hello dynamic argc=3 argv0=dyn_hello
+at_base gesetzt
+at_entry ok
+at_phdr ok
+malloc ok x
+dlsym ok
+objekte +1
