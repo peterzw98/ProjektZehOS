@@ -1,6 +1,6 @@
 # Ladybird N2-Z: Torpakete nach dem Vorzeigestand
 
-Stand 28. November 2026. Auftrag Peter (Terminal, 28.11.): nach dem Vorzeigestand mit dem Gesamtplan weitermachen. Grundlage: [Übersicht](2026-11-24-ladybird-nativ.md) (Tor N2-Z), [N2-Umriss](2026-11-24-ladybird-n2-prozesse.md), [Zeitplanentwurf](2026-12-04-ladybird-n2-n6-zeitplan.md) auf `docs/lb-plan-nach-demo` (wartet auf Entscheidung Peter).
+Stand 28. November 2026. Auftrag Peter (Terminal, 28.11.): nach dem Vorzeigestand mit dem Gesamtplan weitermachen. Grundlage: [Übersicht](2026-11-24-ladybird-nativ.md) (Tor N2-Z), [N2-Umriss](2026-11-24-ladybird-n2-prozesse.md), [Zeitplanentwurf](https://github.com/peterzw98/ProjektZehOS/blob/ddf9c2d642515a832a85277c11918b9be3d654bb/docs/superpowers/plans/2026-12-04-ladybird-n2-n6-zeitplan.md) auf `docs/lb-plan-nach-demo` (wartet auf Entscheidung Peter).
 
 ## Rahmen
 
