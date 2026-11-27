@@ -4,11 +4,13 @@
 Je Satz: Programme mit experiments/LinuxAbi/build.sh bauen (musl-gcc), zu einem Buendel packen
 (scripts/test-linux-run.py bundle), den Kernel mit -p:ZehOSLinuxRunProbe=true bauen (-warnaserror) und das ISO je
 Beschleuniger/SMP-Stufe im Gast gegen experiments/LinuxAbi/expected laufen lassen (scripts/test-linux-run.py run).
-Am Ende steht eine Tabelle Satz x Stufe; Exit 0 nur, wenn alle ausgefuehrten Laeufe PASS sind.
+Am Ende steht eine Tabelle Satz x Stufe; Exit 0 nur, wenn alle ausgefuehrten Laeufe PASS sind. Strg+C gibt die
+Tabelle der bisherigen Laeufe aus und endet mit Exit 130. Aufraeumen: Die Datenplatten (data.qcow2 unter
+.tools/linux-run/) und die Satz-ISOs im Arbeitsordner werden nach jedem Lauf geloescht; --keep-images behaelt sie.
 
 Nutzung (aus dem Repository-Wurzelordner):
   python3 -I scripts/test-linux-all.py [--sets s1 s3 ...] [--configs kvm:1 kvm:4 tcg:1] [--work <ordner>]
-                                       [--cosmos-tools <ordner>] [--keep-going-on-build-error]
+                                       [--cosmos-tools <ordner>] [--timeout <s>] [--keep-images]
 
 Voraussetzungen: musl-gcc (oder $CC), dotnet (DOTNET_ROOT/PATH), Cosmos-Werkzeuge (Standard: neuester Ordner unter
 .tools/cosmos-tools), QEMU/KVM. Ein Gast zur selben Zeit (die Stufen laufen nacheinander).
@@ -53,11 +55,39 @@ SKIPPED = {"v3neg": "Hilfsprogramme fuer v3 (spin)", "v3stdin": "Desktop-Termina
            "tools": "eigener Bau (toybox/Rust), kein Buendellauf"}
 
 
+BUILD_TIMEOUT = 3600  # Sekunden je build.sh-/dotnet-Aufruf
+
+
 def run(cmd, log, env=None, cwd=ROOT, timeout=None):
     with open(log, "w", encoding="utf-8") as f:
         f.write("$ " + " ".join(str(c) for c in cmd) + "\n")
         f.flush()
-        return subprocess.run([str(c) for c in cmd], stdout=f, stderr=subprocess.STDOUT, env=env, cwd=cwd, timeout=timeout).returncode
+        try:
+            return subprocess.run([str(c) for c in cmd], stdout=f, stderr=subprocess.STDOUT, env=env, cwd=cwd, timeout=timeout).returncode
+        except subprocess.TimeoutExpired:
+            f.write(f"\nZeitlimit {timeout} s ueberschritten\n")
+            return 124
+
+
+def rel(p) -> str:
+    """Pfad relativ zum Repository (keine Hostpfade/Benutzernamen in der Ausgabe)."""
+    try:
+        return str(Path(p).resolve().relative_to(ROOT))
+    except ValueError:
+        return Path(p).name
+
+
+def drop_images(before):
+    """Loescht die Datenplatten der Laeufe, die seit der Momentaufnahme entstanden sind."""
+    base = ROOT / ".tools/linux-run"
+    if base.is_dir():
+        for d in set(base.iterdir()) - before:
+            (d / "data.qcow2").unlink(missing_ok=True)
+
+
+def image_dirs():
+    base = ROOT / ".tools/linux-run"
+    return set(base.iterdir()) if base.is_dir() else set()
 
 
 def cosmos_tools(explicit):
@@ -76,7 +106,8 @@ def summary_line(log: Path) -> str:
     """Letzte 'Lauf'-Zeile des Laufskripts (PASS/FAIL mit Grund), sonst das Ende des Logs."""
     text = log.read_text(encoding="utf-8", errors="replace").splitlines() if log.exists() else []
     lines = [l for l in text if l.startswith("Lauf ")]
-    return (lines[-1] if lines else (text[-1] if text else "kein Log"))[:200]
+    last = lines[-1] if lines else (text[-1] if text else "kein Log")
+    return last.replace(str(ROOT), ".").replace(str(Path.home()), "~")[:200]
 
 
 def main(argv=None) -> int:
@@ -86,6 +117,7 @@ def main(argv=None) -> int:
     ap.add_argument("--work", type=Path, help="Ausgabeordner (Standard: .tools/linux-all/<Zeit>)")
     ap.add_argument("--cosmos-tools", help="Werkzeugordner (Standard: .tools/cosmos-tools/<deploy/cosmos/VERSION>)")
     ap.add_argument("--timeout", type=float, default=300, help="Sekunden je Gastlauf")
+    ap.add_argument("--keep-images", action="store_true", help="Datenplatten und Satz-ISOs nicht loeschen")
     args = ap.parse_args(argv)
 
     configs = []
@@ -117,62 +149,81 @@ def main(argv=None) -> int:
         for b in SPECIAL.get(s, {}).get("build", [s]):
             if b not in need:
                 need.append(b)
-    if run(["sh", ABI / "build.sh", *need], work / "build.sh.log", env=env) != 0:
-        print(f"build.sh fehlgeschlagen, siehe {work / 'build.sh.log'}", file=sys.stderr)
+    if run(["sh", ABI / "build.sh", *need], work / "build.sh.log", env=env, timeout=BUILD_TIMEOUT) != 0:
+        print(f"build.sh fehlgeschlagen, siehe {rel(work / 'build.sh.log')}", file=sys.stderr)
         return 2
 
-    for s in sets:
-        cfg = SPECIAL.get(s, {})
-        row = results[s] = {}
-        if "files" in cfg:
-            files = [ABI / "out" / d / n for d, n in cfg["files"]]
-        else:
-            files = sorted(p for p in (ABI / "out" / s).iterdir() if p.is_file())
-        files += [ABI / "out" / d / n for d, n in cfg.get("extra", [])]
-        programs = [f.name for f in files]
-        bundle = work / f"{s}.bundle"
-        if run([sys.executable, "-I", RUN, "bundle", bundle, *files], work / f"{s}.bundle.log", env=env) != 0:
-            row["*"] = (False, "Buendel fehlgeschlagen")
-            continue
-        build = ["dotnet", "build", ROOT / "ProjektZeh/ProjektZeh.csproj", "--configuration", "Release", "-warnaserror",
-                 "-p:ZehOSLinuxRunProbe=true", f"-p:ZehOSLinuxRunBundle={bundle}"]
-        if run(build, work / f"{s}.build.log", env=env) != 0:
-            row["*"] = (False, "Kernelbau fehlgeschlagen")
-            continue
-        iso = work / f"{s}.iso"
-        shutil.copy2(ISO, iso)
-        expected = ["--expected", ABI / "expected" / s] if cfg.get("expected", True) is not None else []
-        status = [x for n, v in cfg.get("status", {}).items() for x in ("--status", f"{n}={v}")]
-        for accel, smp in configs:
-            key = f"{accel}{smp}"
-            if "accel" in cfg and accel not in cfg["accel"]:
-                row[key] = (None, "entfaellt")
+    interrupted = False
+    try:
+        for s in sets:
+            cfg = SPECIAL.get(s, {})
+            row = results[s] = {}
+            if "files" in cfg:
+                files = [ABI / "out" / d / n for d, n in cfg["files"]]
+            else:
+                files = sorted(p for p in (ABI / "out" / s).iterdir() if p.is_file())
+            files += [ABI / "out" / d / n for d, n in cfg.get("extra", [])]
+            programs = [f.name for f in files]
+            bundle = work / f"{s}.bundle"
+            if run([sys.executable, "-I", RUN, "bundle", bundle, *files], work / f"{s}.bundle.log", env=env) != 0:
+                row["*"] = (False, "Buendel fehlgeschlagen")
                 continue
-            log = work / f"{s}.{key}.log"
-            runner = cfg.get("runner", RUN)
-            cmd = [sys.executable, "-I", runner, "run", "--iso", iso, *expected, *status, "--programs", *programs,
-                   "--accel", accel, "--smp", smp, "--timeout", args.timeout]
-            rc = run(cmd, log, env=env)
-            row[key] = (rc == 0, summary_line(log))
-        print(f"{s}: " + " ".join(f"{k}={'PASS' if v[0] else 'FAIL' if v[0] is False else '-'}" for k, v in row.items()), flush=True)
+            build = ["dotnet", "build", ROOT / "ProjektZeh/ProjektZeh.csproj", "--configuration", "Release", "-warnaserror",
+                     "-p:ZehOSLinuxRunProbe=true", f"-p:ZehOSLinuxRunBundle={bundle}"]
+            ISO.unlink(missing_ok=True)  # kein Alt-ISO, falls der Bau still nichts erzeugt
+            if run(build, work / f"{s}.build.log", env=env, timeout=BUILD_TIMEOUT) != 0:
+                row["*"] = (False, "Kernelbau fehlgeschlagen")
+                continue
+            if not ISO.exists():
+                row["*"] = (False, "Kernelbau lieferte kein ISO")
+                continue
+            iso = work / f"{s}.iso"
+            shutil.copy2(ISO, iso)
+            expected = ["--expected", ABI / "expected" / s] if cfg.get("expected", True) is not None else []
+            status = [x for n, v in cfg.get("status", {}).items() for x in ("--status", f"{n}={v}")]
+            for accel, smp in configs:
+                key = f"{accel}{smp}"
+                if "accel" in cfg and accel not in cfg["accel"]:
+                    row[key] = (None, "entfaellt")
+                    continue
+                log = work / f"{s}.{key}.log"
+                runner = cfg.get("runner", RUN)
+                cmd = [sys.executable, "-I", runner, "run", "--iso", iso, *expected, *status, "--programs", *programs,
+                       "--accel", accel, "--smp", smp, "--timeout", args.timeout]
+                before = image_dirs()
+                try:
+                    rc = run(cmd, log, env=env)
+                finally:
+                    if not args.keep_images:
+                        drop_images(before)
+                row[key] = (rc == 0, summary_line(log))
+            if not args.keep_images:
+                iso.unlink(missing_ok=True)
+            print(f"{s}: " + " ".join(f"{k}={'PASS' if v[0] else 'FAIL' if v[0] is False else '-'}" for k, v in row.items()), flush=True)
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\nAbbruch durch Strg+C, Tabelle der bisherigen Laeufe:", file=sys.stderr)
 
     # Tabelle
     cols = [f"{a}{n}" for a, n in configs]
     print(f"\n| Satz | {' | '.join(cols)} |\n| --- |{' --- |' * len(cols)}")
     failed = []
+    total = 0
     for s, row in results.items():
         cells = []
         for c in cols:
-            ok, _ = row.get(c, row.get("*", (False, "")))
+            ok, text = row.get(c, row.get("*", (False, "")))
             cells.append("PASS" if ok else "-" if ok is None else "FAIL")
+            if ok is not None:
+                total += 1
             if ok is False:
-                failed.append((s, c, row.get(c, row.get("*"))[1]))
+                failed.append((s, c, text))
         print(f"| {s} | {' | '.join(cells)} |")
-    total = sum(1 for r in results.values() for v in r.values() if v[0] is not None)
-    bad = len(failed)
-    print(f"\n{total - bad}/{total} Laeufe PASS in {time.time() - t0:.0f} s; Logs: {work}")
+    print(f"\n{total - len(failed)}/{total} Laeufe PASS in {time.time() - t0:.0f} s; Logs: {rel(work)}")
     for s, c, text in failed:
         print(f"FAIL {s} {c}: {text}")
+    if interrupted:
+        return 130
     return 1 if failed or not results else 0
 
 
