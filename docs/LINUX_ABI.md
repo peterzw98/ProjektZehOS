@@ -470,11 +470,11 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
   (uc_stack, sigcontext mit allen Registern, uc_sigmask), dann `siginfo`; darüber das fxsave-Abbild (fpstate, 64-Byte-ausgerichtet). Der Handler
   beginnt mit rdi = Signal, rsi = &siginfo, rdx = &ucontext, RSP ≡ 8 (mod 16), 128 Byte rote Zone frei, DF/TF gelöscht, FPU im Grundzustand.
   Ohne `SA_RESTORER` oder wenn der Rahmen nicht passt, endet der Prozess mit SIGSEGV (Linux: force_sigsegv).
-- **`rt_sigreturn` (15)**: Register, RFLAGS (nur CF, PF, AF, ZF, SF, DF, OF, AC), Maske, Alternativstack und FPU aus dem Rahmen; MXCSR wird mit
+- **`rt_sigreturn` (15)**: Register, RFLAGS (nur CF, PF, AF, ZF, SF, TF, DF, OF, RF, AC wie Linux `FIX_EFLAGS`; TF seit V45-P3: der Befehl nach der Rückkehr fängt SIGTRAP `TRAP_TRACE`), Maske, Alternativstack und FPU aus dem Rahmen; MXCSR wird mit
   der MXCSR-Maske der CPU gefiltert (ein ungültiges Bit wäre bei fxrstor im Ring 0 ein #GP). Seit V45 (Cosmos-Patch `sigreturn-iretq`) kommen auch
   rcx und r11 aus dem Rahmen: Der Rückweg nimmt `sysretq` nur, wenn rcx = RIP und r11 = RFLAGS (ohne RF, TF), sonst `iretq` mit allen Registern. Das
   braucht ein Handler für eine Ausnahme (V24), der zurückkehrt statt `siglongjmp`; vorher kamen rcx und r11 als RIP und RFLAGS zurück. Gastprogramm
-  `experiments/LinuxAbi/src/v45/sigret.c` (Erwartung Linux 6.12 in `expected/v45`).
+  `experiments/LinuxAbi/src/v45/sigret.c`, dazu `sigret_flags.c` (V45-P3: nur rcx = RIP, nur r11 = RFLAGS, beide, TF und RF im Rahmen; Erwartung Linux 6.12 in `expected/v45`).
   Ein Handler, der RSP im Rahmen verbiegt: nichtkanonisch endet der Prozess mit SIGBUS (Linux: #SS beim ersten Stapelzugriff), ein Wert in der
   Kernelhälfte mit SIGSEGV, weil `UserMode.Prepare` jede Rückkehr mit RIP oder RSP ab `0x0000_8000_0000_0000` ablehnt (Gastprogramm `v18/badrsp.c`,
   als `rspnc` und `rspkern`).

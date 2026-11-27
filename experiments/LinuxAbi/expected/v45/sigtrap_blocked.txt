@@ -1,0 +1,7 @@
+Handler, frei (exit 11 = ein SIGTRAP): exit 11
+Handler, blockiert (sigprocmask): signal 5
+SIG_IGN: signal 5
+SIG_DFL: signal 5
+TF und Blockade ueber rt_sigreturn: signal 5
+Handler, frei, nochmal: exit 11
+fertig

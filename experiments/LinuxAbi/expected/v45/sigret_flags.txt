@@ -1,0 +1,78 @@
+nur rcx = rip: Treffer=1
+  rip hinter ud2=1
+  rcx wie im Rahmen=1
+  rcx = rip=1
+  rcx unveraendert=0
+  r11 wie im Rahmen=1
+  r11 unveraendert=1
+  rdx erhalten=1
+  cf=0
+  SIGTRAP=0
+nur r11 = rflags: Treffer=1
+  rip hinter ud2=1
+  rcx wie im Rahmen=1
+  rcx = rip=0
+  rcx unveraendert=1
+  r11 wie im Rahmen=1
+  r11 unveraendert=0
+  rdx erhalten=1
+  cf=0
+  SIGTRAP=0
+rcx = rip und r11 = rflags: Treffer=1
+  rip hinter ud2=1
+  rcx wie im Rahmen=1
+  rcx = rip=1
+  rcx unveraendert=0
+  r11 wie im Rahmen=1
+  r11 unveraendert=0
+  rdx erhalten=1
+  cf=0
+  SIGTRAP=0
+TF im Rahmen: Treffer=1
+  rip hinter ud2=1
+  rcx wie im Rahmen=1
+  rcx = rip=0
+  rcx unveraendert=1
+  r11 wie im Rahmen=1
+  r11 unveraendert=1
+  rdx erhalten=1
+  cf=0
+  SIGTRAP=1
+    si_code=2
+    rip - Ziel=3
+    si_addr - Ziel=3
+TF, rcx = rip, r11 = rflags: Treffer=1
+  rip hinter ud2=1
+  rcx wie im Rahmen=1
+  rcx = rip=1
+  rcx unveraendert=0
+  r11 wie im Rahmen=1
+  r11 unveraendert=0
+  rdx erhalten=1
+  cf=0
+  SIGTRAP=1
+    si_code=2
+    rip - Ziel=3
+    si_addr - Ziel=3
+RF im Rahmen: Treffer=1
+  rip hinter ud2=1
+  rcx wie im Rahmen=1
+  rcx = rip=0
+  rcx unveraendert=1
+  r11 wie im Rahmen=1
+  r11 unveraendert=1
+  rdx erhalten=1
+  cf=0
+  SIGTRAP=0
+RF, rcx = rip, r11 = rflags: Treffer=1
+  rip hinter ud2=1
+  rcx wie im Rahmen=1
+  rcx = rip=1
+  rcx unveraendert=0
+  r11 wie im Rahmen=1
+  r11 unveraendert=0
+  rdx erhalten=1
+  cf=0
+  SIGTRAP=0
+50 x TF, rcx = rip, r11 = rflags: ein Schritt=50
+fertig

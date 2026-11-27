@@ -677,6 +677,28 @@ public sealed class LinuxThreadsTests
     }
 
     [TestMethod]
+    public void RtSigreturnUebernimmtTfUndRfAberNichtIoplNtOderIf()
+    {
+        // V45-P3: Linux FIX_EFLAGS nimmt TF und RF aus dem Rahmen (TF fängt danach einen Schritt), IOPL, NT, IF und ID nie.
+        var f = new Fixture();
+        SetAction(f, 10, HandlerAddr, LinuxUserProcess.SaSiginfo);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        LinuxUserRegs r = Regs(f);
+        After(f, ref r, Fpu(0x1F80), LinuxSyscalls.Kill, rsi: 0, r10: 0, result: 0);
+        Assert.AreEqual(0UL, r.Rflags & 0x10100, "Handler ohne TF und RF");
+
+        const ulong Tf = 0x100, Rf = 0x10000, Cf = 0x1, Iopl = 0x3000, Nt = 0x4000, If = 0x200, Id = 0x200000;
+        ulong flags = Tf | Rf | Cf | Iopl | Nt | Id; // IF absichtlich aus
+        f.Write32(r.Rdx + 40 + 136, (int)(uint)flags);
+        f.Write32(r.Rdx + 40 + 140, (int)(uint)(flags >> 32));
+        r.Rsp += 8;
+        Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, Fpu(0x1F80)));
+        Assert.AreEqual(Tf | Rf | Cf, r.Rflags & (Tf | Rf | Cf), "TF, RF und CF aus dem Rahmen");
+        Assert.AreEqual(0UL, r.Rflags & (Iopl | Nt | Id), "IOPL, NT und ID nicht");
+        Assert.AreEqual(If, r.Rflags & If, "IF bleibt");
+    }
+
+    [TestMethod]
     public void SaRestartStartetReadNeuOhneLiefertEintr()
     {
         var f = new Fixture();
