@@ -215,7 +215,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     private readonly List<LinuxThread> _threads = new();
     private int _liveThreads;
 
-    // Anhängige Signale (Bit = Nummer - 1), unter _threadGate: tgkill eines blockierten Signals; je Prozess wie Signals.Blocked.
+    // Anhängige Signale (Bit = Nummer - 1), unter _threadGate: tgkill eines blockierten Signals; je Prozess (die Maske seit V38 je Thread).
     private ulong _pendingSignals;
 
     /// <summary>Liefert den Thread des laufenden Aufrufs; im Kernel über den Kernelthread, ohne Brücke der Hauptthread.</summary>
@@ -332,6 +332,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
                 StackPointer = stack,
                 FsBase = (flags & CloneSettls) != 0 ? tls : CurrentThread.FsBase,
                 ClearChildTid = (flags & CloneChildCleartid) != 0 ? childTid : 0,
+                Blocked = CurrentThread.Blocked, // V38: ein neuer Thread erbt die Maske des Threads, der clone ruft (Linux copy_process)
             };
             _threads.Add(child);
             _liveThreads++;
@@ -479,14 +480,14 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             return -LinuxSyscalls.ESRCH;
         }
 
-        return DeliverSignal(signal, fromOutside: false, SiTkill, Pid);
+        return DeliverSignal(signal, fromOutside: false, SiTkill, Pid, target: target);
     }
 
     /// <summary>
     /// Zustellen an den Prozess (tgkill, tkill, kill). <paramref name="fromOutside"/>: Der Aufrufer ist ein Thread eines anderen Prozesses
     /// (kill aus LinuxWait.cs); dann verlässt nicht der aufrufende Thread den Ring 3, sondern die Threads dieses Prozesses (<see cref="OnKilled"/>).
     /// </summary>
-    private long DeliverSignal(int signal, bool fromOutside, int code = SiUser, int senderPid = 0, int status = 0)
+    private long DeliverSignal(int signal, bool fromOutside, int code = SiUser, int senderPid = 0, int status = 0, LinuxThread? target = null)
     {
         if (signal == 0)
         {
@@ -503,14 +504,17 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         // Blockiert oder mit Handler (V18): anhängig, bis ein Thread den Ring 3 nach einem Aufruf wieder betritt (TakeSignal, LinuxSignals.cs),
         // sigprocmask es freigibt oder sigaction es ignoriert (Linux reiht auch ignorierte blockierte ein, denn der Handler kann sich bis zur
         // Freigabe ändern). Prüfen und Eintragen unter derselben Sperre wie SignalStateChanged und TakeSignal.
+        // V38: Maske je Thread. An den Prozess: blockiert heißt in jedem lebenden Thread, sonst kann einer es nehmen. An einen Thread (tgkill):
+        // dessen Maske; ohne Handler und frei beendet es trotzdem den ganzen Prozess wie bei Linux.
         ulong bit = 1UL << (signal - 1);
         bool wake = false;
         lock (_threadGate)
         {
-            if ((Signals.Blocked & bit) != 0 || Signals.Handler[signal] > 1)
+            bool blocked = ((target?.Blocked ?? BlockedEverywhereLocked()) & bit) != 0;
+            if (blocked || Signals.Handler[signal] > 1)
             {
-                Queue(signal, code, senderPid, status);
-                wake = (Signals.Blocked & bit) == 0;
+                Queue(signal, code, senderPid, status, target);
+                wake = !blocked;
                 if (!wake)
                 {
                     return 0;
@@ -551,7 +555,14 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         {
             lock (_threadGate)
             {
-                return _pendingSignals;
+                // V38: mit den an Threads gerichteten (rt_sigpending und /proc nennen sie zusammen; Linux je Thread, hier für alle).
+                ulong all = _pendingSignals;
+                foreach (LinuxThread t in _threads)
+                {
+                    all |= t.Exited ? 0 : t.Pending;
+                }
+
+                return all;
             }
         }
     }
@@ -563,32 +574,47 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// </summary>
     public void SignalStateChanged()
     {
-        if (SignalWaiting)
-        {
-            Futexes.Kick(); // andere Threads, die warten, sollen es ebenfalls sehen
-        }
-
         int deliver = 0;
+        bool kick;
         lock (_threadGate)
         {
-            for (int sig = 1; sig <= 64 && _pendingSignals != 0; sig++)
+            // V38: Frei ist ein Signal an den Prozess, sobald es ein Thread nicht blockiert, eins an einen Thread, wenn dieser es nicht
+            // blockiert; wartende Threads sollen es sehen.
+            ulong all = _pendingSignals;
+            ulong free = _pendingSignals & ~BlockedEverywhereLocked();
+            foreach (LinuxThread t in _threads)
+            {
+                if (!t.Exited)
+                {
+                    all |= t.Pending;
+                    free |= t.Pending & ~t.Blocked;
+                }
+            }
+
+            kick = free != 0;
+            for (int sig = 1; sig <= 64 && all != 0; sig++)
             {
                 ulong bit = 1UL << (sig - 1);
-                if ((_pendingSignals & bit) == 0)
+                if ((all & bit) == 0)
                 {
                     continue;
                 }
 
-                if (IsIgnored(sig))
+                if (IsIgnored(sig) || (deliver == 0 && (free & bit) != 0 && Signals.Handler[sig] == 0))
                 {
+                    deliver = IsIgnored(sig) ? deliver : sig;
                     _pendingSignals &= ~bit;
-                }
-                else if (deliver == 0 && (Signals.Blocked & bit) == 0 && Signals.Handler[sig] == 0)
-                {
-                    _pendingSignals &= ~bit;
-                    deliver = sig;
+                    foreach (LinuxThread t in _threads)
+                    {
+                        t.Pending &= ~bit;
+                    }
                 }
             }
+        }
+
+        if (kick)
+        {
+            Futexes.Kick(); // andere Threads, die warten, sollen es ebenfalls sehen
         }
 
         // Außerhalb der Sperre: Exit nimmt _threadGate selbst und weckt die futex-Tabelle.

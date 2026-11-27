@@ -128,9 +128,10 @@ internal readonly record struct LinuxFault(int Signal, int Code, ulong Address, 
 /// (<see cref="_pendingSignals"/>, Bit = Nummer - 1) mit einer siginfo je Nummer; die Brücke holt nach jedem Aufruf mit
 /// <see cref="TakeSignal"/> das niedrigste freigegebene mit Handler und baut den Rahmen (<see cref="LinuxSignalFrame"/>).
 /// <para>
-/// Abweichungen von Linux: Maske, Alternativstack und anhängige Signale gelten je Prozess, nicht je Thread (wie seit V10); ein Handler
-/// blockiert sein Signal deshalb für alle Threads des Prozesses, bis rt_sigreturn die Maske zurücksetzt. Echtzeitsignale (32 bis 64)
-/// reihen sich nicht mehrfach ein. Zugestellt wird nur beim Rücksprung aus einem Aufruf, nicht in einer Rechenschleife ohne Aufruf
+/// Die Maske gilt seit V38 je Thread wie bei Linux (<see cref="LinuxThread.Blocked"/>): Ein Signal an den Prozess nimmt der erste Thread, der
+/// es nicht blockiert und aus einem Aufruf zurückkehrt; eins an einen Thread (tgkill, tkill) steht bei ihm (<see cref="LinuxThread.Pending"/>).
+/// Abweichungen von Linux: Der Alternativstack gilt je Prozess, die siginfo je Signalnummer (nicht je Warteschlange). Echtzeitsignale
+/// (32 bis 64) reihen sich nicht mehrfach ein. Zugestellt wird nur beim Rücksprung aus einem Aufruf, nicht in einer Rechenschleife ohne Aufruf
 /// (Cosmos bietet keinen Haken am Rücksprung eines Interrupts in den Ring 3); wartende Aufrufe kehren dafür mit -EINTR zurück. Seit V24 zusätzlich
 /// beim Rücksprung aus einer Ausnahme mit Handler (<see cref="TakeFaultSignal"/>, <see cref="LinuxSignalFrame.DeliverFault"/>).
 /// </para>
@@ -150,35 +151,46 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     private readonly int[] _infoPid = new int[65];
     private readonly int[] _infoStatus = new int[65];
 
-    // V19 ppoll: Threads, deren Wartemaske gerade gilt, und die Maske vor der ersten davon; beide unter _threadGate.
-    private int _waitMaskThreads;
-    private ulong _waitMaskBase;
-
     // Zahl der genommenen Signale (TakeSignal), nur wachsend: die Brücke liest sie vor einem Aufruf, AfterSyscall erkennt daran, ob während
     // des Aufrufs ein anderer Thread ein Signal nahm (dann ist ein -EINTR ohne eigenes Signal einer, den Linux still neu startet).
     private long _signalsTaken;
 
     public long SignalsTaken => Interlocked.Read(ref _signalsTaken);
 
-    /// <summary>Unter _threadGate: als anhängig eintragen.</summary>
-    private void Queue(int signal, int code, int senderPid, int status)
+    /// <summary>Unter _threadGate: als anhängig eintragen, beim Prozess oder (V38, tgkill) bei <paramref name="target"/>.</summary>
+    private void Queue(int signal, int code, int senderPid, int status, LinuxThread? target)
     {
         ulong bit = 1UL << (signal - 1);
-        if ((_pendingSignals & bit) == 0)
+        if (((target?.Pending ?? _pendingSignals) & bit) == 0)
         {
             _infoCode[signal] = code;
             _infoPid[signal] = senderPid;
             _infoStatus[signal] = status;
         }
 
-        Volatile.Write(ref _pendingSignals, _pendingSignals | bit);
+        if (target != null)
+        {
+            Volatile.Write(ref target.Pending, target.Pending | bit);
+        }
+        else
+        {
+            Volatile.Write(ref _pendingSignals, _pendingSignals | bit);
+        }
     }
 
     /// <summary>
-    /// true, solange ein anhängiges Signal nicht blockiert ist; anhängig und frei ist nur eins mit Handler (Standardaktion "beenden" endet
-    /// sofort, ignorierte fallen weg). Nur flüchtige Lesezugriffe: Warteschleifen fragen das unter ihren eigenen Sperren.
+    /// true, solange ein anhängiges Signal für den aufrufenden Thread nicht blockiert ist; anhängig und frei ist nur eins mit Handler
+    /// (Standardaktion "beenden" endet sofort, ignorierte fallen weg). Fragen nur Threads dieses Prozesses in ihren Warteschleifen (V38: ein
+    /// Thread, der das Signal blockiert, wartet weiter, ein anderer nimmt es). Nur flüchtige Lesezugriffe.
     /// </summary>
-    public bool SignalWaiting => (Volatile.Read(ref _pendingSignals) & ~Volatile.Read(ref Signals.Blocked)) != 0;
+    public bool SignalWaiting
+    {
+        get
+        {
+            LinuxThread me = CurrentThread;
+            return ((Volatile.Read(ref _pendingSignals) | Volatile.Read(ref me.Pending)) & ~Volatile.Read(ref me.Blocked)) != 0;
+        }
+    }
 
     /// <summary>
     /// Nimmt das niedrigste anhängige, freigegebene Signal mit Handler und stellt die Maske für den Handler ein (sa_mask, ohne SA_NODEFER
@@ -187,9 +199,10 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     public bool TakeSignal(out LinuxSignalDelivery delivery)
     {
         delivery = default;
+        LinuxThread me = CurrentThread;
         lock (_threadGate)
         {
-            ulong ready = _pendingSignals & ~Signals.Blocked;
+            ulong ready = (_pendingSignals | me.Pending) & ~me.Blocked;
             for (int sig = 1; sig <= 64 && ready != 0; sig++)
             {
                 ulong bit = 1UL << (sig - 1);
@@ -198,13 +211,22 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
                     continue;
                 }
 
-                Volatile.Write(ref _pendingSignals, _pendingSignals & ~bit);
+                // Erst das an diesen Thread gerichtete (Linux dequeue_signal: task->pending vor shared_pending).
+                if ((me.Pending & bit) != 0)
+                {
+                    Volatile.Write(ref me.Pending, me.Pending & ~bit);
+                }
+                else
+                {
+                    Volatile.Write(ref _pendingSignals, _pendingSignals & ~bit);
+                }
+
                 Interlocked.Increment(ref _signalsTaken);
                 ulong flags = Signals.Flags[sig];
-                delivery = new LinuxSignalDelivery(sig, Signals.Handler[sig], flags, Signals.Restorer[sig], Signals.Blocked,
+                delivery = new LinuxSignalDelivery(sig, Signals.Handler[sig], flags, Signals.Restorer[sig], me.Blocked,
                     _infoCode[sig], _infoPid[sig], _infoStatus[sig]);
                 ulong add = Signals.Mask[sig] | ((flags & SaNodefer) != 0 ? 0 : bit);
-                Volatile.Write(ref Signals.Blocked, (Signals.Blocked | add) & ~KillStopBits);
+                Volatile.Write(ref me.Blocked, (me.Blocked | add) & ~KillStopBits);
                 if ((flags & SaResethand) != 0)
                 {
                     Signals.Handler[sig] = 0;
@@ -229,20 +251,21 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
         delivery = default;
         int sig = fault.Signal;
         ulong bit = 1UL << (sig - 1);
+        LinuxThread me = CurrentThread; // der Thread der Ausnahme
         lock (_threadGate)
         {
-            if (Signals.Handler[sig] <= 1 || (Signals.Blocked & bit) != 0)
+            if (Signals.Handler[sig] <= 1 || (me.Blocked & bit) != 0)
             {
                 return false;
             }
 
             ulong flags = Signals.Flags[sig];
-            delivery = new LinuxSignalDelivery(sig, Signals.Handler[sig], flags, Signals.Restorer[sig], Signals.Blocked, fault.Code, 0, 0)
+            delivery = new LinuxSignalDelivery(sig, Signals.Handler[sig], flags, Signals.Restorer[sig], me.Blocked, fault.Code, 0, 0)
             {
                 Fault = fault,
             };
             ulong add = Signals.Mask[sig] | ((flags & SaNodefer) != 0 ? 0 : bit);
-            Volatile.Write(ref Signals.Blocked, (Signals.Blocked | add) & ~KillStopBits);
+            Volatile.Write(ref me.Blocked, (me.Blocked | add) & ~KillStopBits);
             if ((flags & SaResethand) != 0)
             {
                 Signals.Handler[sig] = 0;
@@ -266,11 +289,10 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     public void ForceBus() => Terminate(7);
 
     /// <summary>
-    /// V19 ppoll: <paramref name="mask"/> gilt ab jetzt (SIGKILL und SIGSTOP bleiben frei), die bisherige merkt sich <paramref name="thread"/>.
-    /// Ein schon anhängiges, jetzt freigegebenes Signal mit Standardaktion "beenden" wirkt sofort wie nach sigprocmask; eins mit Handler lässt
-    /// das folgende Warten mit -EINTR enden. Abweichung wie bei der Maske überhaupt: Sie gilt je Prozess, nicht je Thread. Deshalb zählt der
-    /// Prozess die Threads in einer Wartemaske: Der erste merkt sich die Maske davor, jeder weitere übernimmt sie (nicht die Wartemaske des
-    /// ersten, sonst bliebe diese nach dem Ende beider dauerhaft), und erst der letzte stellt sie wieder her (Review V19, P2).
+    /// V19 ppoll: <paramref name="mask"/> gilt ab jetzt für <paramref name="thread"/> (SIGKILL und SIGSTOP bleiben frei), die bisherige merkt
+    /// er sich. Ein schon anhängiges, jetzt freigegebenes Signal mit Standardaktion "beenden" wirkt sofort wie nach sigprocmask; eins mit
+    /// Handler lässt das folgende Warten mit -EINTR enden. Seit V38 je Thread wie bei Linux; das Zählen der Threads in einer Wartemaske
+    /// (V19, als die Maske je Prozess galt) entfällt.
     /// </summary>
     public void BeginWaitMask(LinuxThread thread, ulong mask)
     {
@@ -280,18 +302,11 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
             LeaveWaitMask(thread, restore: false); // nicht beendete Wartemaske desselben Threads (darf nicht vorkommen) nicht doppelt zählen
         }
 
-        // Lesen der alten und Schreiben der neuen Maske unter derselben Sperre wie das Zählen: Sonst merkte sich ein zweiter Thread
-        // zwischen beiden Schritten die Wartemaske des ersten als "alt".
         lock (_threadGate)
         {
-            if (_waitMaskThreads++ == 0)
-            {
-                _waitMaskBase = Signals.Blocked;
-            }
-
-            thread.SavedBlocked = _waitMaskBase;
+            thread.SavedBlocked = thread.Blocked;
             thread.RestoreBlocked = true;
-            Volatile.Write(ref Signals.Blocked, mask & ~KillStopBits);
+            Volatile.Write(ref thread.Blocked, mask & ~KillStopBits);
         }
 
         SignalStateChanged();
@@ -305,9 +320,8 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
     }
 
     /// <summary>
-    /// V19: <paramref name="thread"/> verlässt seine Wartemaske. Mit <paramref name="restore"/> gilt die Maske von vorher wieder, sobald
-    /// kein anderer Thread mehr in einer Wartemaske ist; ohne (ein Signalrahmen trägt sie, rt_sigreturn stellt sie her) wird nur gezählt.
-    /// false, wenn der Thread keine Wartemaske hatte.
+    /// V19: <paramref name="thread"/> verlässt seine Wartemaske. Mit <paramref name="restore"/> gilt seine Maske von vorher wieder; ohne
+    /// (ein Signalrahmen trägt sie, rt_sigreturn stellt sie her) bleibt die Wartemaske bis dahin. false, wenn der Thread keine Wartemaske hatte.
     /// </summary>
     internal bool LeaveWaitMask(LinuxThread thread, bool restore)
     {
@@ -317,29 +331,49 @@ internal sealed partial class LinuxUserProcess : ILinuxSignalWake
         }
 
         thread.RestoreBlocked = false;
-        bool changed = false;
-        lock (_threadGate)
+        if (restore)
         {
-            if (_waitMaskThreads > 0 && --_waitMaskThreads == 0 && restore)
+            lock (_threadGate)
             {
-                Volatile.Write(ref Signals.Blocked, thread.SavedBlocked & ~KillStopBits);
-                changed = true;
+                Volatile.Write(ref thread.Blocked, thread.SavedBlocked & ~KillStopBits);
             }
-        }
 
-        if (changed)
-        {
             SignalStateChanged();
         }
 
         return true;
     }
 
-    /// <summary>rt_sigreturn: Maske aus dem Rahmen; ein jetzt freigegebenes Signal folgt seiner Aktion wie nach sigprocmask.</summary>
+    /// <summary>rt_sigreturn: Maske des aufrufenden Threads aus dem Rahmen; ein jetzt freigegebenes Signal folgt seiner Aktion wie nach sigprocmask.</summary>
     public void RestoreBlocked(ulong blocked)
     {
-        Volatile.Write(ref Signals.Blocked, blocked & ~KillStopBits);
+        LinuxThread me = CurrentThread;
+        lock (_threadGate)
+        {
+            Volatile.Write(ref me.Blocked, blocked & ~KillStopBits);
+        }
+
         SignalStateChanged();
+    }
+
+    /// <summary>
+    /// V38, unter _threadGate: Bits, die jeder lebende Thread blockiert (Linux: ein Signal an den Prozess bleibt anhängig, bis ein Thread es
+    /// freigibt; <c>wants_signal</c> sucht einen Thread, der es nicht blockiert). Ohne lebenden Thread zählt der Hauptthread.
+    /// </summary>
+    private ulong BlockedEverywhereLocked()
+    {
+        ulong all = ulong.MaxValue;
+        bool any = false;
+        foreach (LinuxThread t in _threads)
+        {
+            if (!t.Exited)
+            {
+                all &= t.Blocked;
+                any = true;
+            }
+        }
+
+        return any ? all : MainThread.Blocked;
     }
 }
 

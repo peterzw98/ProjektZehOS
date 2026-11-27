@@ -326,7 +326,10 @@ public sealed class LinuxThreadsTests
         f.P.Signals.Handler[10] = 0x401000;
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 10), "Handler: anhängig für die Brücke (V18)");
         Assert.AreEqual(1UL << 9, f.P.PendingSignals);
-        Assert.IsTrue(f.P.SignalWaiting);
+        Assert.IsFalse(f.P.SignalWaiting, "V38: an den anderen Thread gerichtet, der Hauptthread nimmt es nicht");
+        Fixture.Current = child;
+        Assert.IsTrue(f.P.SignalWaiting, "der Zielthread sieht es");
+        Fixture.Current = null;
         Assert.IsNull(f.P.ExitCode);
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 15));
         Assert.AreEqual(15, f.P.TerminatedBySignal);
@@ -378,25 +381,38 @@ public sealed class LinuxThreadsTests
     [TestMethod]
     public void TgkillBlockiertesSignalBleibtAnhaengigBisZurFreigabe()
     {
+        // V38: Maske je Thread; der Zielthread blockiert selbst (der Hauptthread nicht, er nimmt das an den Zielthread gerichtete nicht).
         var f = new Fixture();
-        ulong tid = (ulong)f.Clone(0, 0).Tid;
-        SetMask(f, 0, (1UL << 14) | (1UL << 9)); // SIG_BLOCK SIGTERM, SIGUSR1
-        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 15));
-        Assert.IsNull(f.P.ExitCode, "blockiert: nicht beendet");
-        Assert.AreEqual(1UL << 14, f.P.PendingSignals);
-        SetMask(f, 1, 1UL << 9); // SIGUSR1 frei, SIGTERM bleibt blockiert
-        Assert.IsNull(f.P.ExitCode);
-        SetMask(f, 1, 1UL << 14); // SIG_UNBLOCK SIGTERM
-        Assert.AreEqual(15, f.P.TerminatedBySignal);
-        Assert.AreEqual(128 + 15, f.P.ExitCode);
-        Assert.AreEqual(0UL, f.P.PendingSignals);
+        LinuxThread child = f.Clone(0, 0);
+        ulong tid = (ulong)child.Tid;
+        try
+        {
+            Fixture.Current = child;
+            SetMask(f, 0, (1UL << 14) | (1UL << 9)); // SIG_BLOCK SIGTERM, SIGUSR1
+            Assert.AreEqual(0UL, f.P.MainThread.Blocked, "Hauptthread unberührt");
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 15));
+            Assert.IsNull(f.P.ExitCode, "blockiert: nicht beendet");
+            Assert.AreEqual(1UL << 14, f.P.PendingSignals);
+            SetMask(f, 1, 1UL << 9); // SIGUSR1 frei, SIGTERM bleibt blockiert
+            Assert.IsNull(f.P.ExitCode);
+            SetMask(f, 1, 1UL << 14); // SIG_UNBLOCK SIGTERM
+            Assert.AreEqual(15, f.P.TerminatedBySignal);
+            Assert.AreEqual(128 + 15, f.P.ExitCode);
+            Assert.AreEqual(0UL, f.P.PendingSignals);
+        }
+        finally
+        {
+            Fixture.Current = null;
+        }
     }
 
     [TestMethod]
     public void AnhaengigesSignalFaelltMitSigIgnWegHandlerBleibtAnhaengig()
     {
+        // V38: tgkill an den Hauptthread, dessen Maske SetMask setzt (Maske je Thread).
         var f = new Fixture();
-        ulong tid = (ulong)f.Clone(0, 0).Tid;
+        _ = f.Clone(0, 0);
+        const ulong tid = (ulong)Pid;
         SetMask(f, 2, 1UL << 9); // SIG_SETMASK SIGUSR1
         Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 10));
         Assert.AreEqual(1UL << 9, f.P.PendingSignals);
@@ -548,6 +564,75 @@ public sealed class LinuxThreadsTests
     }
 
     [TestMethod]
+    public void SignalmaskeJeThreadSigchldBleibtNachSpawnMaskeZustellbar()
+    {
+        // V38 (Hub sah nach dem ersten WebContent-Ende nie wieder SIGCHLD): Thread T läuft im SIGCHLD-Handler (Maske mit SIGCHLD), während
+        // der Hauptthread wie LibCore fork_and_exec alle Signale blockiert und danach die alte Maske herstellt. Mit einer Maske je Prozess
+        // sah der Hauptthread dabei SIGCHLD als "alt" und stellte es nach dem rt_sigreturn von T dauerhaft blockiert her.
+        const int Chld = 17;
+        const ulong ChldBit = 1UL << (Chld - 1);
+        var f = new Fixture();
+        try
+        {
+            SetAction(f, Chld, HandlerAddr, LinuxUserProcess.SaSiginfo);
+            LinuxThread t = f.Clone(f.Mem, f.Mem + 4);
+            Assert.AreEqual(0UL, t.Blocked, "clone erbt die Maske des Aufrufers");
+
+            // T nimmt SIGCHLD und läuft im Handler.
+            Fixture.Current = t;
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, Chld));
+            LinuxUserRegs rt = Regs(f);
+            byte[] fpu = Fpu(0x1F80);
+            After(f, ref rt, fpu, LinuxSyscalls.Getpid);
+            Assert.AreEqual(HandlerAddr, rt.Rip);
+            Assert.AreEqual(ChldBit, t.Blocked, "im Handler nur T blockiert");
+
+            // Hauptthread: pthread_sigmask(SIG_SETMASK, all, &old), dann SIG_SETMASK old.
+            Fixture.Current = null;
+            ulong set = f.Mem + 0x500, old = f.Mem + 0x508;
+            Assert.IsTrue(f.P.TryWrite(set, BitConverter.GetBytes(ulong.MaxValue)));
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.RtSigprocmask, 2, set, old, 8));
+            Assert.AreEqual(0L, f.Read64(old), "alte Maske des Hauptthreads, nicht die des Handlers in T");
+            Assert.AreEqual(0UL, t.Blocked & ~ChldBit, "T unberührt");
+
+            // T verlässt den Handler (rt_sigreturn), danach stellt der Hauptthread seine Maske her.
+            Fixture.Current = t;
+            rt.Rsp += 8;
+            Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref rt, fpu));
+            Assert.AreEqual(0UL, t.Blocked);
+            Fixture.Current = null;
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.RtSigprocmask, 2, old, 0, 8));
+            Assert.AreEqual(0UL, f.P.MainThread.Blocked, "SIGCHLD wieder frei");
+
+            // Blockiert nur der Hauptthread, nimmt T das nächste SIGCHLD; der Hauptthread wartet weiter.
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.RtSigprocmask, 2, set, 0, 8));
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, Chld));
+            Assert.IsFalse(f.P.SignalWaiting, "für den Hauptthread blockiert");
+            LinuxUserRegs rm = Regs(f);
+            After(f, ref rm, Fpu(0x1F80), LinuxSyscalls.Getpid);
+            Assert.AreEqual(Regs(f).Rip, rm.Rip, "Hauptthread nimmt es nicht");
+            Fixture.Current = t;
+            Assert.IsTrue(f.P.SignalWaiting, "T sieht es");
+            rt = Regs(f);
+            After(f, ref rt, Fpu(0x1F80), LinuxSyscalls.Getpid);
+            Assert.AreEqual(HandlerAddr, rt.Rip, "T nimmt es");
+
+            // Blockieren alle Threads, bleibt es anhängig, bis einer es freigibt.
+            Assert.IsTrue(f.P.TryWrite(set, BitConverter.GetBytes(ChldBit)));
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, Chld));
+            Assert.AreEqual(ChldBit, f.P.PendingSignals & ChldBit);
+            Assert.IsFalse(f.P.SignalWaiting);
+            Fixture.Current = null;
+            Assert.AreEqual(0, f.Call(LinuxSyscalls.RtSigprocmask, 1, set, 0, 8)); // SIG_UNBLOCK
+            Assert.IsTrue(f.P.SignalWaiting, "nach der Freigabe zustellbar");
+        }
+        finally
+        {
+            Fixture.Current = null;
+        }
+    }
+
+    [TestMethod]
     public void HandlerBekommtRahmenUndRtSigreturnStelltAllesWiederHer()
     {
         var f = new Fixture();
@@ -574,7 +659,7 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(Pid, f.Read32(r.Rsi + 16), "si_pid");
         Assert.AreEqual(0x1F80, BitConverter.ToInt32(fpu, 24), "Handler mit frischem MXCSR");
         Assert.AreEqual(0, fpu[160]);
-        Assert.AreEqual((1UL << 9) | (1UL << 11), f.P.Signals.Blocked, "Signal und sa_mask im Handler blockiert");
+        Assert.AreEqual((1UL << 9) | (1UL << 11), f.P.MainThread.Blocked, "Signal und sa_mask im Handler blockiert");
         Assert.IsFalse(f.P.SignalWaiting);
 
         // Der Handler ändert Register; ret nimmt pretcode, dann rt_sigreturn.
@@ -588,7 +673,7 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(before.Rax, r.Rax);
         Assert.AreEqual(before.Rflags, r.Rflags | 0x400 & before.Rflags);
         CollectionAssert.AreEqual(fpuBefore, fpu, "FPU-Zustand zurück");
-        Assert.AreEqual(0UL, f.P.Signals.Blocked);
+        Assert.AreEqual(0UL, f.P.MainThread.Blocked);
     }
 
     [TestMethod]
@@ -788,7 +873,7 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(14UL, Read64(f, r.Rdx + 40 + 160), "sigcontext trapno");
         Assert.AreEqual(none + 17, Read64(f, r.Rdx + 40 + 176), "sigcontext cr2");
         Assert.AreEqual(before.Rip, Read64(f, r.Rdx + 40 + 128), "RIP des fehlerhaften Befehls im Rahmen");
-        Assert.AreEqual(1UL << 10, f.P.Signals.Blocked, "SIGSEGV im Handler blockiert");
+        Assert.AreEqual(1UL << 10, f.P.MainThread.Blocked, "SIGSEGV im Handler blockiert");
         Assert.AreEqual(0x1F80, BitConverter.ToInt32(fpu, 24), "Handler mit frischem MXCSR");
         Assert.IsNull(f.P.TerminatedBySignal);
 
@@ -802,7 +887,7 @@ public sealed class LinuxThreadsTests
         Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, fpu));
         Assert.AreEqual(before.Rip, r.Rip);
         Assert.AreEqual(before.Rsp, r.Rsp);
-        Assert.AreEqual(0UL, f.P.Signals.Blocked);
+        Assert.AreEqual(0UL, f.P.MainThread.Blocked);
         CollectionAssert.AreEqual(fpuBefore, fpu);
     }
 
