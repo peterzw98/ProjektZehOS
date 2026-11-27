@@ -90,7 +90,7 @@ def expectations(dirs: list[Path], statuses: dict[str, str], names) -> dict[str,
         for directory in dirs:
             status = directory / f"{name}.status"
             if status.exists():
-                text = (directory / f"{name}.txt").read_bytes().decode("latin-1")
+                text = (directory / f"{name}.txt").read_bytes().decode("utf-8")
                 lines = text.split("\n")
                 if lines and lines[-1] == "":
                     lines.pop()
@@ -128,7 +128,7 @@ def run_once(args, number: int, wanted: dict) -> bool:
     started = time.monotonic()
 
     def text() -> str:
-        # Der Gast schreibt Bytes (Latin-1), nicht UTF-8; Erwartung wird ebenfalls bytegleich als Latin-1 gelesen.
+        # Der Gast schreibt Bytes (Latin-1), nicht UTF-8; Die Erwartung (Quelltext) ist UTF-8; beide Seiten werden so als Text verglichen.
         return serial.read_bytes().decode("latin-1") if serial.exists() else ""
 
     try:
