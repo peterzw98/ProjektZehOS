@@ -131,6 +131,9 @@ internal sealed class TerminalDescriptor : ILinuxInput, ILinuxTerminal
         return _session.ReadInput(dst);
     }
 
+    /// <summary>ioctl FIONREAD (V33): Bytes im Eingabepuffer, die ein read sofort liefert (fertige Zeilen, im Rohmodus alle Zeichen).</summary>
+    public long InputBytes => _session?.InputBytes ?? 0;
+
     public bool InputReady => _session?.InputReady ?? true;
 
     public bool WaitInput(long timeoutMs)

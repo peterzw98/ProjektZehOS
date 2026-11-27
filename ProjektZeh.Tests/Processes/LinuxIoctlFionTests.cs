@@ -214,6 +214,33 @@ public sealed class LinuxIoctlFionTests
     }
 
     [TestMethod]
+    public void FionreadRegulaereDateiGroesseMinusPosition()
+    {
+        // O_CREAT|O_RDWR = 0x42, Modus 0644
+        Assert.IsTrue(_p.TryWrite(Addr, Encoding.ASCII.GetBytes("/fion.txt\0")));
+        long fd = Call(257, ulong.MaxValue - 99, Addr, 0x42, 0x1A4); // openat(AT_FDCWD, ...)
+        Assert.IsTrue(fd >= 0, $"openat {fd}");
+        Assert.AreEqual(0, ReadableOk((int)fd), "leere Datei");
+        Put((int)fd, "0123456789");
+        Assert.AreEqual(0, ReadableOk((int)fd), "Position am Ende");
+        Assert.AreEqual(0L, Call(8, (ulong)fd, 0, 0)); // lseek SEEK_SET 0
+        Assert.AreEqual(10, ReadableOk((int)fd));
+        Assert.AreEqual(4L, Take((int)fd, 4));
+        Assert.AreEqual(6, ReadableOk((int)fd), "Größe minus Position");
+        Assert.AreEqual(-EFAULT, Call(LinuxSyscalls.Ioctl, (ulong)fd, FIONREAD, 8));
+        Assert.AreEqual(0L, Call(3, (ulong)fd)); // close
+        Assert.AreEqual(-EBADF, Readable((int)fd, out _));
+    }
+
+    [TestMethod]
+    public void FionreadTimerfdEnottyWieLinux()
+    {
+        long t = Call(283, 1, 0); // timerfd_create(CLOCK_MONOTONIC)
+        Assert.IsTrue(t >= 0);
+        Assert.AreEqual(-ENOTTY, Readable((int)t, out _));
+    }
+
+    [TestMethod]
     public void FionreadEventfdEnottyInotifyEreignisse()
     {
         int e = (int)Call(Eventfd2, 1, 0);

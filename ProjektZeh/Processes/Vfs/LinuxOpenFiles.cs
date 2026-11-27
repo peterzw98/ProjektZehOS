@@ -227,6 +227,18 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
         return r;
     }
 
+    /// <summary>ioctl FIONREAD (V33): Größe minus Position wie Linux (<c>do_vfs_ioctl</c>), nie negativ; -EBADF nach close.</summary>
+    public long Readable()
+    {
+        if (IsClosed)
+        {
+            return -LinuxErrno.EBADF;
+        }
+
+        long length = _file.Length();
+        return length < 0 ? length : Math.Max(0, length - _position);
+    }
+
     protected override long StatCore(out LinuxStat st)
     {
         long length = _file.Length();

@@ -120,6 +120,22 @@ public sealed class LinuxTerminalInputTests
     }
 
     [TestMethod]
+    public void FionreadZaehltEingegebeneBytes()
+    {
+        var (session, _, _, p) = Program();
+        const ulong FIONREAD = 0x541B;
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, FIONREAD, Base));
+        Assert.AreEqual(0, BitConverter.ToInt32(p.Mem.Data, 0), "leerer Eingabepuffer");
+        session.Submit("abc");
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, FIONREAD, Base));
+        Assert.AreEqual(4, BitConverter.ToInt32(p.Mem.Data, 0), "Zeile samt Zeilenende");
+        Assert.AreEqual(1, Call(p, LinuxSyscalls.Read, 0, Base + 0x100, 1));
+        Assert.AreEqual(0, Call(p, LinuxSyscalls.Ioctl, 0, FIONREAD, Base));
+        Assert.AreEqual(3, BitConverter.ToInt32(p.Mem.Data, 0), "Rest nach read");
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(p, LinuxSyscalls.Ioctl, 0, FIONREAD, 8));
+    }
+
+    [TestMethod]
     public void ReadLiefertHoechstensCountUndRestBeimNaechstenMal()
     {
         var (session, _, _, p) = Program();
@@ -468,7 +484,6 @@ public sealed class LinuxTerminalInputTests
 
         var (_, _, _, q) = Program();
         Assert.AreEqual(-LinuxSyscalls.EBADF, Call(q, LinuxSyscalls.Ioctl, 3, LinuxSyscalls.TCGETS, Base));
-        Assert.AreEqual(-LinuxSyscalls.ENOTTY, Call(q, LinuxSyscalls.Ioctl, 0, 0x541B, Base), "FIONREAD nicht umgesetzt");
         Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(q, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCGETS, 8));
         Assert.AreEqual(-LinuxSyscalls.EFAULT, Call(q, LinuxSyscalls.Ioctl, 0, LinuxSyscalls.TCSETS, 8));
     }

@@ -192,13 +192,15 @@ internal static partial class LinuxSyscalls
 
     /// <summary>
     /// ioctl FIONREAD (V33): ungelesene Bytes für Pipe-Enden (beide, wie Linux' pipe_ioctl), Sockets und inotify; null, wenn der
-    /// Deskriptor es nicht kennt. eventfd und timerfd kennen es bei Linux nicht (-ENOTTY), Terminals und Dateien hier noch nicht.
+    /// Deskriptor es nicht kennt. eventfd und timerfd kennen es bei Linux nicht (-ENOTTY), Terminals zählen die schon eingegebenen Bytes, Dateien Größe minus Position.
     /// </summary>
     private static long? ReadableBytes(ILinuxDescriptor d) => d switch
     {
         LinuxPipeEnd pipe => pipe.Pipe.Buffered,
         LinuxUnixSocket socket => socket.ReadableBytes(),
         LinuxInotify inotify => inotify.PendingBytes,
+        ProjektZeh.Processes.Vfs.LinuxRegularFile file => file.Readable(),
+        TerminalDescriptor { IsTerminal: true } tty => tty.InputBytes,
         _ => null,
     };
 
