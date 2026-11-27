@@ -15,6 +15,9 @@ zeigen. Mit `LADYBIRD_STATIC_REF` lässt sich das Gast-Referenzbild angeben.
 | `ladybird-loopback-demo.tar.gz` (Inhalt der HTTP-Erweiterung) | 2779980 | `94199579d9a7c06f00af47e11c148e222d42fa370894a195d67b125b0e32748a` |
 | `bundle-http.tar.gz` (kombiniertes, getestetes Bündel für Schritt 3) | 147287387 | `7a0c1b2239fb09c8cce6b261bb30204e311d6ac0a8649d7bbb72d8174c7c5674` |
 
+Größe und SHA-256 des kombinierten HTTP-Bündels stammen aus der
+MSI-Abnahme (`senior2`, IRC `#first`, 27.11.2026, 18:41 MEZ).
+
 ```bash
 assets=${LADYBIRD_DEMO_ASSETS:-"$HOME/ladybird-bundle"}
 bundle="$assets/ladybird-static-with-images.tar.gz"
@@ -166,9 +169,16 @@ fehlendes PNG hinterlassen.
    Der Wrapper öffnet `http://127.0.0.1:8080/zehos-projekt.html`, schreibt
    `/shot-http.png` in die Prozesswurzel und beendet danach den HTTP-Server.
    Erwartet werden `LINUXRUN END exit 0` und ein lesbares PNG mit 798 × 720
-   Pixeln. Bei der [HTTP-Abnahme](2026-11-26-ladybird-vorstellung-folien.md)
-   gelangen alle drei KVM-Läufe (68–91 s). Für die Vorführung gilt die
-   Drei-Minuten-Grenze im Rückfallplan.
+   Pixeln. `--add /tmp/keep` legt auf der neuen Platte das beschreibbare
+   `/tmp` in der Prozesswurzel an.
+
+   Bei der [HTTP-Abnahme](2026-11-26-ladybird-vorstellung-folien.md) gelangen
+   alle drei KVM-Läufe in 68–91 s (engineer2, von senior2 im IRC `#first`
+   am 27.11.2026 um 18:41 MEZ bestätigt). `--timeout 400` ist die technische
+   Prüfgrenze ab Gastprogrammstart für diese Abnahme. In der Vorführung
+   beginnt die Stoppuhr beim Host-Aufruf. Nach 180 s ohne vorzeigbares Bild
+   mit Strg+C abbrechen und zum Rückfall wechseln, auch wenn das technische
+   Zeitlimit noch läuft.
 
 ## Rückfall während der Vorführung
 
