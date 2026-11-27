@@ -47,7 +47,15 @@ fi
 [ -f "$ISO" ] || die "ISO fehlt (--iso)"
 if [ -z "$DISK" ]; then
   DISK=$OUT/lb.qcow2
-  timed platte python3 scripts/linux-root-disk.py "$BUNDLE" "$DISK" --dest lb --skip-dangling || die "linux-root-disk.py"
+  # Das Buendel-fonts.conf hat <dir prefix="relative">share/...</dir>: relativ zur Konfigurationsdatei, im Gast also /etc/fonts -> falsch.
+  # Wir legen eine Kopie mit absoluten Pfaden (Prozesswurzel = lb) nach /etc/fonts/fonts.conf (Standardsuchpfad von fontconfig; die
+  # Umgebung des Testbaus ist fest: HOME=/, kein FONTCONFIG_FILE/TMPDIR/XDG_*) und ein beschreibbares /tmp mit Cache-Ordner.
+  tar -xzOf "$BUNDLE" ./fonts.conf 2>/dev/null | sed -e 's#<dir prefix="relative">share/fonts/dejavu</dir>#<dir>/share/fonts/dejavu</dir>#' \
+      -e 's#<dir prefix="relative">share/Lagom/fonts</dir>#<dir>/share/Lagom/fonts</dir><cachedir>/tmp/fontconfig</cachedir>#' > "$OUT/fonts.conf"
+  grep -q '<dir>/share/fonts/dejavu</dir>' "$OUT/fonts.conf" || die "fonts.conf: relative <dir> nicht gefunden (Buendel geaendert?)"
+  : > "$OUT/keep"
+  timed platte python3 scripts/linux-root-disk.py "$BUNDLE" "$DISK" --dest lb --skip-dangling \
+    --add /etc/fonts/fonts.conf="$OUT/fonts.conf" --add /tmp/keep="$OUT/keep" || die "linux-root-disk.py"
 fi
 RUN="bin/Hub --headless=screenshot --disable-sandbox --force-cpu-painting --window-width 798 --window-height 519 --screenshot-delay $DELAY --screenshot-path /shot.png $URL"
 step "Gastlauf: $RUN"
