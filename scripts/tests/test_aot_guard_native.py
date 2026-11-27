@@ -1,4 +1,4 @@
-"""Prueft die AOT-Sperre nach einer CPU-Ausnahme mit der echten C-Bruecke (benoetigt gcc)."""
+"""Prueft AOT-Sperre und Abbau nach einer CPU-Ausnahme (#582) mit der echten C-Bruecke (benoetigt gcc)."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -35,6 +35,15 @@ class AotGuardTests(unittest.TestCase):
 
     def test_crash_during_run_blocks_aot(self):
         self.check("run")
+
+    def test_crash_in_aot_code_is_released_once_and_aot_runs_again(self):
+        self.check("code")
+
+    def test_crash_just_before_aot_code_blocks_aot(self):
+        self.check("before")
+
+    def test_crash_at_end_of_aot_code_blocks_aot(self):
+        self.check("end")
 
 
 if __name__ == "__main__":

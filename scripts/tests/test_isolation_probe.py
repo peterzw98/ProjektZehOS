@@ -7,6 +7,27 @@ spec = importlib.util.spec_from_file_location('isolation', SCRIPTS / 'test-isola
 isolation = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(isolation)
 
+
+def aot_log(rounds=3):
+    """AOT-Teil (#582): ein sauberer Lauf, dann je Runde #DE und #PF im AOT-Code und wieder ein sauberer Lauf."""
+    lines = ['ISOLATION_PROBE aot kind=ok round=0 status=Ok result=42 isolated=0 vector=-1 arena_used=0 ',
+             'ISOLATION_PROBE aot frei_vor=880000']
+    thread = 20
+    for number in range(1, rounds + 1):
+        for kind, vector in (('de', 0), ('pf', 14)):
+            thread += 3
+            lines += ['WASM nativer Lauf nach CPU-Fehler: Aot Released EndArena',
+                      f'WASM CPU-Ausnahme im App-Code (Vektor {vector}, RIP 0x4000{thread:02x}), Worker-Thread {thread} aufgegeben '
+                      '(Thread und Stack frei, nativ frei, Ressourcen frei); neuer Worker gestartet.',
+                      f'ISOLATION_PROBE aot kind={kind} round={number} status=CpuFault result=0 isolated=1 vector={vector} arena_used=0 '
+                      'CPU-Fehler im App-Code; die App wurde beendet. Neustart empfohlen.']
+        lines.append(f'ISOLATION_PROBE aot kind=ok round={number} status=Ok result=42 isolated=0 vector=-1 arena_used=0 ')
+        lines.append(f'ISOLATION_PROBE aot round={number} frei={879600 - number}')
+    return lines + ['ISOLATION_PROBE aot frei_nach=879500']
+
+
+AOT_LOG = aot_log(isolation.AOT_ROUNDS)
+
 PASS_LOG = '\n'.join([
     'ISOLATION_PROBE start',
     # Die Reihenfolge der Zeilen wertet evaluate nicht aus; die Arena- und frei-Zeilen stehen gesammelt.
@@ -39,6 +60,7 @@ PASS_LOG = '\n'.join([
     'ISOLATION_PROBE gc ok',
     'ISOLATION_PROBE none returned',
     'ISOLATION_PROBE frei_nach=400800',
+    *AOT_LOG,
     'ISOLATION_PROBE DONE',
 ])
 
@@ -133,6 +155,58 @@ class EvaluateTests(unittest.TestCase):
     def test_held_block_must_lower_free_memory(self):
         log = PASS_LOG.replace('used=16777263 frei=367000', 'used=16777263 frei=400000')
         self.assertEqual(['Arenablock senkt frei nicht (Messung ohne Aussage)'], isolation.evaluate(log, negative=False))
+
+
+class AotTests(unittest.TestCase):
+    """#582: AOT-Laeufe nach #DE und #PF im AOT-Code."""
+
+    def test_locked_aot_after_fault_fails(self):
+        # Vor #582: nach der ersten Isolation endete jeder AOT-Lauf mit LoadFailed ("AOT nach CPU-Fehler ... gesperrt").
+        log = PASS_LOG.replace('kind=ok round=1 status=Ok result=42', 'kind=ok round=1 status=LoadFailed result=0')
+        self.assertEqual(['aot ok 1: LoadFailed/0 statt Ok/42 (AOT gesperrt?)'], isolation.evaluate(log, negative=False))
+
+    def test_kept_instance_fails(self):
+        log = PASS_LOG.replace('Aot Released EndArena', 'Aot Kept KeepArena', 1).replace('nativ frei', 'nativ belegt', 1)
+        missing = isolation.evaluate(log, negative=False)
+        self.assertIn('aot: Isolation ohne Freigabe von Stack oder nativem Lauf', missing)
+        self.assertIn('aot: 19 statt 20 Laeufe ueber WAMR abgebaut', missing)
+
+    def test_leaked_memory_fails(self):
+        log = PASS_LOG.replace('aot frei_nach=879500', 'aot frei_nach=872000')
+        self.assertEqual(['aot: freier Speicher 872000 KiB statt etwa 880000 KiB (Instanz nicht frei?)'],
+                         isolation.evaluate(log, negative=False))
+        at_limit = PASS_LOG.replace('aot frei_nach=879500', 'aot frei_nach=878976')
+        self.assertEqual([], isolation.evaluate(at_limit, negative=False))
+
+    def test_falling_trend_fails_even_within_total_limit(self):
+        # Review #582, P3-2: 30 KiB je Runde bleiben unter der Gesamtgrenze, der Verlauf faellt aber um 270 KiB.
+        log = PASS_LOG
+        for number in range(1, isolation.AOT_ROUNDS + 1):
+            log = log.replace(f'aot round={number} frei={879600 - number}', f'aot round={number} frei={879600 - 30 * number}')
+        self.assertEqual(['aot: freier Speicher sinkt von Runde 1 bis 10 um 270 KiB (Rest je Isolation?)'],
+                         isolation.evaluate(log, negative=False))
+
+    def test_missing_round_memory_fails(self):
+        log = PASS_LOG.replace('ISOLATION_PROBE aot round=4 frei=879596\n', '')
+        self.assertEqual(['aot: freier Speicher je Runde fehlt (9 statt 10)'], isolation.evaluate(log, negative=False))
+
+    def test_wrong_vector_and_missing_round_fail(self):
+        log = PASS_LOG.replace('kind=pf round=2 status=CpuFault result=0 isolated=1 vector=14',
+                               'kind=pf round=2 status=CpuFault result=0 isolated=1 vector=6')
+        self.assertEqual(['aot pf 2 mit Vektor 6 statt 14'], isolation.evaluate(log, negative=False))
+        log = PASS_LOG.replace('ISOLATION_PROBE aot kind=de round=3', 'x')
+        self.assertIn('aot de 3 fehlt', isolation.evaluate(log, negative=False))
+
+    def test_arena_must_be_empty_after_aot_isolation(self):
+        log = PASS_LOG.replace('kind=de round=1 status=CpuFault result=0 isolated=1 vector=0 arena_used=0',
+                               'kind=de round=1 status=CpuFault result=0 isolated=1 vector=0 arena_used=1310720')
+        self.assertEqual(['aot de 1: Arena zaehlt noch 1310720 Bytes'], isolation.evaluate(log, negative=False))
+
+    def test_missing_aot_section_fails(self):
+        log = '\n'.join(line for line in PASS_LOG.splitlines() if line not in AOT_LOG)
+        missing = isolation.evaluate(log, negative=False)
+        self.assertIn('aot ok 0 fehlt', missing)
+        self.assertIn('aot: Speicherwerte fehlen', missing)
 
 
 NMI_HALT = PASS_LOG + '\n'.join([

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Gastprobe Roadmap 12.4-I1: CPU-Ausnahmen im Wasm-Worker beenden nur den Lauf, das System bleibt bedienbar.
 
-Braucht ein ISO mit -p:ZehOSIsolationProbe=true (Erwartung: #DE, #PF, #GP und #UD isoliert, GC und ein weiterer Lauf, danach
-Anmeldung und Textshell) oder mit -p:ZehOSIsolationProbeNegative=true und --negative (Erwartung: dieselbe Ausnahme im
+Braucht ein ISO mit -p:ZehOSIsolationProbe=true (Erwartung: #DE, #PF, #GP und #UD isoliert, GC und ein weiterer Lauf; mit WAMR
+(Standard) danach AOT-Laeufe: ein sauberer, dann zehn Runden aus #DE und #PF im AOT-Code und je einem weiteren sauberen
+AOT-Lauf, ohne Speicherverlust und ohne fallenden Verlauf je Runde (#582); danach Anmeldung und Textshell) oder mit -p:ZehOSIsolationProbeNegative=true und --negative (Erwartung: dieselbe Ausnahme im
 Probe-Thread haelt das System wie bisher an) oder mit -p:ZehOSIsolationProbeNmi=true und --nmi (Erwartung: ein per QMP
 ausgeloester NMI waehrend Gastcode des Workers haelt an, statt isoliert zu werden). Jeder Lauf nutzt eine frische
 Wegwerfplatte unter .tools/isolation-probe/.
@@ -32,6 +33,17 @@ ARENA_MIN_HELD_KIB = 12 * 1024
 VECTORS = {"de": 0, "pf": 14, "gp": 13, "ud": 6}
 # Halber Worker-Stack: weniger als ein liegengebliebener 8-MiB-Stack, mehr als Heapschwankungen zwischen zwei Isolationen.
 REAP_TOLERANCE_KIB = 4 * 1024
+# #582: Runden der AOT-Probe (CosmosIsolationProbe.AotRounds) und erlaubter Rueckgang des freien Speichers ueber alle
+# AOT-Isolationen. Bliebe eine Instanz liegen, fehlte schon ihr Wasm-Stack (1 MiB, WasmRuntime.WasmStackBytes), dazu
+# linearer Speicher und Modul; gemessen (3 Runden) 0 bis 188 KiB, nur in der ersten Runde.
+AOT_ROUNDS = 10
+AOT_MAX_DROP_KIB = 1024
+# Verlauf (Review #582, P3-2): zwischen dem Wert nach Runde 1 und dem nach der letzten Runde liegen 18 Isolationen; 256 KiB
+# fangen einen Rest ab etwa 15 KiB je Isolation, den die Gesamtgrenze oben uebersaehe.
+AOT_TREND_MAX_DROP_KIB = 256
+AOT_VECTORS = {"de": 0, "pf": 14}
+AOT_LINE = re.compile(r"ISOLATION_PROBE aot kind=(\w+) round=(\d+) status=(\w+) result=(-?\d+) isolated=(\d) vector=(-?\d+) "
+                      r"arena_used=(\d+)")
 NMI_WINDOW = "ISOLATION_PROBE nmi window open"
 # Erst wenn die Hauptschleife parkt, rechnet auf CPU 0 nur noch der Worker; nur dort kommt der NMI an (#515).
 NMI_PARKED = "ISOLATION_PROBE nmi main parked"
@@ -58,7 +70,8 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
         elif int(handled.group(1)) != vector:
             missing.append(f"{kind} mit Vektor {handled.group(1)} statt {vector} (IRQContext-Versatz?)")
     missing += evaluate_reap(log)
-    if log.count("WASM CPU-Ausnahme im App-Code") < len(VECTORS):
+    # Nur vor dem AOT-Teil: dessen Isolationen prueft evaluate_aot.
+    if log.split("ISOLATION_PROBE aot ", 1)[0].count("WASM CPU-Ausnahme im App-Code") < len(VECTORS):
         missing.append("Hauptschleife hat nicht alle Laeufe beendet")
     # I2-C: Jeder Fehlerlauf hielt 16 MiB in der Laufarena; PollFaultIsolation gibt sie frei (Zaehler der Arena 0 und
     # der freie Speicher sinkt um hoechstens ARENA_MAX_DROP_KIB).
@@ -77,6 +90,7 @@ def evaluate(log: str, negative: bool, nmi: bool = False) -> list[str]:
     for text in ("ISOLATION_PROBE gc ok", "ISOLATION_PROBE none returned", "ISOLATION_PROBE DONE"):
         if text not in log:
             missing.append(text + " fehlt")
+    missing += evaluate_aot(log)
     if negative:
         tail = log.split("ISOLATION_PROBE negative pf on probe thread", 1)
         if len(tail) < 2 or "CPU EXCEPTION" not in tail[1] or "NOT HALTED" in tail[1]:
@@ -108,6 +122,57 @@ def evaluate_reap(log: str) -> list[str]:
             missing.append(f"{kind}: kein Stack freigegeben")
         if after < before - REAP_TOLERANCE_KIB:
             missing.append(f"{kind}: freier Speicher {after} KiB statt etwa {before} KiB (Stack nicht frei?)")
+    return missing
+
+
+def evaluate_aot(log: str) -> list[str]:
+    """#582: Nach #DE und #PF im AOT-Code baut die Hauptschleife WAMR ab; der naechste AOT-Lauf laeuft wieder nativ.
+
+    Ein sauberer Lauf ret42 liefert nur unter AOT Ok/42 (die Probe hat kein .wasm, ein gesperrtes AOT endete mit LoadFailed).
+    Jede AOT-Isolation muss in der Hauptschleife "nativ frei" melden, die Arena danach 0 zaehlen, und der freie Speicher nach
+    allen Runden darf hoechstens AOT_MAX_DROP_KIB unter dem Wert nach dem ersten sauberen Lauf liegen.
+    """
+    runs = {(m.group(1), int(m.group(2))): m for m in AOT_LINE.finditer(log)}
+    missing = []
+    for round_number in range(AOT_ROUNDS + 1):
+        ok = runs.get(("ok", round_number))
+        if not ok:
+            missing.append(f"aot ok {round_number} fehlt")
+        elif (ok.group(3), ok.group(4), ok.group(5)) != ("Ok", "42", "0"):
+            missing.append(f"aot ok {round_number}: {ok.group(3)}/{ok.group(4)} statt Ok/42 (AOT gesperrt?)")
+        if round_number == 0:
+            continue
+        for kind, vector in AOT_VECTORS.items():
+            fault = runs.get((kind, round_number))
+            if not fault:
+                missing.append(f"aot {kind} {round_number} fehlt")
+            elif fault.group(3) != "CpuFault" or fault.group(5) != "1":
+                missing.append(f"aot {kind} {round_number}: {fault.group(3)} ohne Isolation")
+            elif int(fault.group(6)) != vector:
+                missing.append(f"aot {kind} {round_number} mit Vektor {fault.group(6)} statt {vector}")
+            elif fault.group(7) != "0":
+                missing.append(f"aot {kind} {round_number}: Arena zaehlt noch {fault.group(7)} Bytes")
+    tail = log.split("ISOLATION_PROBE aot frei_vor=", 1)
+    isolations = re.findall(r"WASM CPU-Ausnahme im App-Code[^\r\n]*", tail[1]) if len(tail) == 2 else []
+    if len(isolations) != AOT_ROUNDS * len(AOT_VECTORS):
+        missing.append(f"aot: {len(isolations)} statt {AOT_ROUNDS * len(AOT_VECTORS)} Isolationen in der Hauptschleife")
+    elif any("Thread und Stack frei, nativ frei" not in line or "neuer Worker gestartet" not in line for line in isolations):
+        missing.append("aot: Isolation ohne Freigabe von Stack oder nativem Lauf")
+    released = len(re.findall(r"WASM nativer Lauf nach CPU-Fehler: Aot Released ", log))
+    if released != AOT_ROUNDS * len(AOT_VECTORS):
+        missing.append(f"aot: {released} statt {AOT_ROUNDS * len(AOT_VECTORS)} Laeufe ueber WAMR abgebaut")
+    rounds = {int(m.group(1)): int(m.group(2)) for m in re.finditer(r"ISOLATION_PROBE aot round=(\d+) frei=(\d+)", log)}
+    if sorted(rounds) != list(range(1, AOT_ROUNDS + 1)):
+        missing.append(f"aot: freier Speicher je Runde fehlt ({len(rounds)} statt {AOT_ROUNDS})")
+    elif rounds[1] - rounds[AOT_ROUNDS] > AOT_TREND_MAX_DROP_KIB:
+        missing.append(f"aot: freier Speicher sinkt von Runde 1 bis {AOT_ROUNDS} um {rounds[1] - rounds[AOT_ROUNDS]} KiB "
+                       "(Rest je Isolation?)")
+    before = re.search(r"ISOLATION_PROBE aot frei_vor=(\d+)", log)
+    after = re.search(r"ISOLATION_PROBE aot frei_nach=(\d+)", log)
+    if not before or not after:
+        missing.append("aot: Speicherwerte fehlen")
+    elif int(before.group(1)) - int(after.group(1)) > AOT_MAX_DROP_KIB:
+        missing.append(f"aot: freier Speicher {after.group(1)} KiB statt etwa {before.group(1)} KiB (Instanz nicht frei?)")
     return missing
 
 

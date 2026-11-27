@@ -235,34 +235,68 @@ static int entry_usable(wasm_function_inst_t function, wasm_module_inst_t instan
     return kind == WASM_I32;
 }
 
+// Handles und Nutzerdaten des laufenden AOT-Laufs (#582). Sie liegen statisch statt im C-Rahmen auf dem Worker-Stack:
+// Gibt eine CPU-Ausnahme den Worker auf, kehrt zehos_wasm_run_aot nie zurueck, und erst so kann die Hauptschleife den Lauf
+// ueber zehos_wasm_aot_reclaim abbauen. Es laeuft hoechstens ein AOT-Lauf zur Zeit (ein Worker, aot_guard).
+typedef struct
+{
+    zehos_wamr_run run;
+    uint8_t* copy;
+    wasm_module_t module;
+    wasm_module_inst_t instance;
+    wasm_exec_env_t env;
+    // 1, sobald wasm_runtime_full_init gelang: genau ein wasm_runtime_destroy steht aus (runtime_ref_count).
+    int started;
+    // AOT-Code des Moduls, nur um zehos_aot_call gesetzt (wie zehos_aot_exit_current, das der Ausnahmepfad aber loescht).
+    uint64_t code;
+    uint64_t codeEnd;
+    // 1, wenn ein abgebrochener Lauf nicht abgebaut werden darf; dann bleibt aot_guard gesetzt.
+    int kept;
+} zehos_wamr_active;
+
+static zehos_wamr_active active;
+
+// Ein Lauf setzt die Marke beim Start und loescht sie, sobald sein WAMR-Zustand abgebaut ist. Steht sie beim naechsten Start
+// noch, wurde ein abgebrochener Lauf nicht abgebaut (zehos_host_aot_guard.h).
+static zehos_aot_guard aot_guard;
+
+// Abbau in der Reihenfolge des Normalwegs; gemeinsam fuer das Ende des Laufs und zehos_wasm_aot_reclaim. Danach ist der
+// Referenzzaehler wieder 0, und der naechste Lauf startet WAMR wie zum ersten Mal.
+static void release_active(void)
+{
+    if (active.env != NULL) wasm_runtime_destroy_exec_env(active.env);
+    if (active.instance != NULL) wasm_runtime_deinstantiate(active.instance);
+    if (active.module != NULL) wasm_runtime_unload(active.module);
+    if (active.copy != NULL) os_free(active.copy);
+    if (active.started) wasm_runtime_destroy();
+    zehos_wamr_set_stack_boundary(NULL);
+    memset(&active, 0, sizeof(active));
+    zehos_aot_guard_leave(&aot_guard);
+}
+
 // Fuehrt einen Einstiegspunkt eines AOT-Moduls aus, mit denselben Statuscodes wie zehos_wasm_run. Ohne Gasbudget:
 // Laeufe mit Budget bleiben bei wasm3 (WasmEngineSelection). WAMR wird je Lauf gestartet und beendet; so sind
 // Instanz, Modul, ausfuehrbarer Speicher, Hostgruppen und offene Dateien nach jedem Weg freigegeben.
 // *instantiated wird 1, sobald das Instanziieren beginnt: ab dann kann Gastcode gelaufen sein (start-Funktion,
 // Konstruktoren), und der Aufrufer darf dieselbe App nicht unter wasm3 wiederholen.
-// Ein Lauf setzt die Marke beim Start und loescht sie an jedem Ausgang. Steht sie beim naechsten Start noch, hat eine
-// CPU-Ausnahme den vorigen Lauf beendet (zehos_host_aot_guard.h).
-static zehos_aot_guard aot_guard;
-
 int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* entry, uint32_t stackBytes,
     uint64_t memoryBytes, int32_t* result, char* message, uint32_t messageLength, int32_t* instantiated)
 {
     // Ein Merker aus einem frueheren Lauf darf diesen nicht treffen (WasmRuntime.PollAbort setzt ihn je Lauf neu).
     zehos_host_set_abort(0);
-    zehos_wamr_run run;
-    zehos_host_context_init(&run.context);
-    run.exited = 0;
-    run.aborted = 0;
     *result = 0;
     *instantiated = 0;
     copy_message(message, messageLength, "");
 
     // Vor jedem WAMR-Aufruf: instantiated bleibt 0, WasmRuntime weicht damit auf wasm3 aus (FallsBackToWasm3).
+    // Erst danach active anfassen: Gehoert es einem nicht abgebauten Lauf, bleibt es fuer immer so stehen.
     if (!zehos_aot_guard_enter(&aot_guard))
     {
         copy_message(message, messageLength, "AOT nach CPU-Fehler bis zum Neustart gesperrt");
         return ZEHOS_WASM_LOAD_FAILED;
     }
+    memset(&active, 0, sizeof(active));
+    zehos_host_context_init(&active.run.context);
 
     RuntimeInitArgs init;
     memset(&init, 0, sizeof(init));
@@ -270,18 +304,15 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     if (!wasm_runtime_full_init(&init))
     {
         copy_message(message, messageLength, "WAMR nicht gestartet");
-        zehos_aot_guard_leave(&aot_guard);
+        release_active();
         return ZEHOS_WASM_NO_MEMORY;
     }
+    active.started = 1;
 
     int32_t status = ZEHOS_WASM_OK;
     char error[128];
     error[0] = 0;
     const char* text = NULL;
-    uint8_t* copy = NULL;
-    wasm_module_t module = NULL;
-    wasm_module_inst_t instance = NULL;
-    wasm_exec_env_t env = NULL;
 
     if (!register_host())
     {
@@ -296,16 +327,16 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     }
     // WAMR veraendert den Ladepuffer und verweist danach weiter hinein; er lebt deshalb bis nach dem Entladen. os_malloc
     // statt malloc, weil der Lader 4-Byte-Ausrichtung voraussetzt (COSMOS_SUPPORT.md, Probe B3).
-    else if ((copy = (uint8_t*)os_malloc(length)) == NULL)
+    else if ((active.copy = (uint8_t*)os_malloc(length)) == NULL)
     {
         status = ZEHOS_WASM_NO_MEMORY;
         text = "kein Speicher fuer die AOT-Datei";
     }
     else
     {
-        memcpy(copy, bytes, length);
-        module = wasm_runtime_load(copy, length, error, sizeof(error));
-        if (module == NULL)
+        memcpy(active.copy, bytes, length);
+        active.module = wasm_runtime_load(active.copy, length, error, sizeof(error));
+        if (active.module == NULL)
         {
             status = ZEHOS_WASM_INVALID_MODULE;
             text = error;
@@ -317,14 +348,15 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     // max_memory_pages begrenzt nur das Wachsen; einen groesseren Anfangsspeicher uebernimmt WAMR mit einer Warnung
     // (wasm_runtime_get_max_mem). wasm3 lehnt ihn ab, deshalb hier ebenso: vor dem Instanziieren, damit WAMR ihn gar
     // nicht erst belegt, und danach fuer einen nicht exportierten Speicher.
-    if (status == ZEHOS_WASM_OK && initial_memory_exceeds(module, maximumPages))
+    if (status == ZEHOS_WASM_OK && initial_memory_exceeds(active.module, maximumPages))
     {
         status = ZEHOS_WASM_LOAD_FAILED;
         text = memory_limit;
     }
     // Gastcode waehrend des Instanziierens liefe ausserhalb von zehos_aot_call und waere in einer Schleife ohne Hostaufruf
     // nicht beendbar; der Ausstieg ueberspraenge dort WAMRs Aufraeumen. instantiated bleibt 0: Die App laeuft unter wasm3.
-    if (status == ZEHOS_WASM_OK && zehos_aot_runs_on_instantiate(module))
+    // Damit laeuft AOT-Code nur im Aufruf unten; davon haengt auch zehos_wasm_aot_reclaim ab.
+    if (status == ZEHOS_WASM_OK && zehos_aot_runs_on_instantiate(active.module))
     {
         status = ZEHOS_WASM_LOAD_FAILED;
         text = "AOT-Modul mit Startfunktion";
@@ -336,8 +368,8 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         arguments.default_stack_size = stackBytes;
         arguments.max_memory_pages = maximumPages;
         *instantiated = 1;
-        instance = wasm_runtime_instantiate_ex(module, &arguments, error, sizeof(error));
-        if (instance == NULL)
+        active.instance = wasm_runtime_instantiate_ex(active.module, &arguments, error, sizeof(error));
+        if (active.instance == NULL)
         {
             // Beim Instanziieren laeuft die start-Funktion; der Merker wurde oben geloescht, ist er jetzt gesetzt, hat
             // ein Abbruch von aussen sie beendet (das Flag aborted liegt am Lauf, der hier noch nicht verbunden ist).
@@ -346,7 +378,7 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
         }
         else
         {
-            wasm_memory_inst_t memory = wasm_runtime_get_default_memory(instance);
+            wasm_memory_inst_t memory = wasm_runtime_get_default_memory(active.instance);
             if (memory != NULL && wasm_memory_get_cur_page_count(memory) > maximumPages)
             {
                 status = ZEHOS_WASM_LOAD_FAILED;
@@ -358,15 +390,15 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
     wasm_function_inst_t function = NULL;
     if (status == ZEHOS_WASM_OK)
     {
-        function = wasm_runtime_lookup_function(instance, entry);
-        if (!entry_usable(function, instance))
+        function = wasm_runtime_lookup_function(active.instance, entry);
+        if (!entry_usable(function, active.instance))
         {
             status = ZEHOS_WASM_ENTRY_MISSING;
             text = "function lookup failed";
         }
     }
 
-    if (status == ZEHOS_WASM_OK && (env = wasm_runtime_create_exec_env(instance, stackBytes)) == NULL)
+    if (status == ZEHOS_WASM_OK && (active.env = wasm_runtime_create_exec_env(active.instance, stackBytes)) == NULL)
     {
         status = ZEHOS_WASM_NO_MEMORY;
         text = "keine Ausfuehrungsumgebung";
@@ -374,54 +406,80 @@ int32_t zehos_wasm_run_aot(const uint8_t* bytes, uint32_t length, const char* en
 
     if (status == ZEHOS_WASM_OK)
     {
-        wasm_runtime_set_user_data(env, &run);
+        zehos_wamr_run* run = &active.run;
+        wasm_runtime_set_user_data(active.env, run);
         uint8_t* top = (uint8_t*)__builtin_frame_address(0);
         zehos_wamr_set_stack_boundary(top - ZEHOS_AOT_NATIVE_STACK);
         uint32_t values[2] = { 0, 0 };
-        // Erst hier und nur um den Aufruf veroeffentlicht: Laden, Instanziieren und Abbau werden nie umgelenkt.
+        // Erst hier und nur um den Aufruf veroeffentlicht: Laden, Instanziieren und Abbau werden nie umgelenkt, und nur
+        // eine CPU-Ausnahme in diesem Bereich darf zehos_wasm_aot_reclaim abbauen.
         uint64_t code, codeEnd;
-        zehos_aot_code_range(module, &code, &codeEnd);
+        zehos_aot_code_range(active.module, &code, &codeEnd);
+        active.code = code;
+        active.codeEnd = codeEnd;
         zehos_aot_exit_current.code = code;
         zehos_aot_exit_current.codeEnd = codeEnd;
-        int32_t called = zehos_aot_call(env, function, 0, values);
+        int32_t called = zehos_aot_call(active.env, function, 0, values);
         zehos_aot_exit_current.codeEnd = 0;
         zehos_aot_exit_current.code = 0;
+        active.codeEnd = 0;
+        active.code = 0;
         if (called == ZEHOS_AOT_CALL_OK)
         {
-            if (wasm_func_get_result_count(function, instance) == 1) *result = (int32_t)values[0];
+            if (wasm_func_get_result_count(function, active.instance) == 1) *result = (int32_t)values[0];
         }
-        else if (run.exited)
+        else if (run->exited)
         {
-            *result = run.context.exitCode;
+            *result = run->context.exitCode;
         }
         else if (called == ZEHOS_AOT_CALL_LEFT)
         {
             status = ZEHOS_WASM_ABORTED;
             text = abort_exception;
         }
-        else if (run.aborted)
+        else if (run->aborted)
         {
             status = ZEHOS_WASM_ABORTED;
-            text = wasm_runtime_get_exception(instance);
+            text = wasm_runtime_get_exception(active.instance);
         }
         else
         {
             status = ZEHOS_WASM_TRAP;
-            text = wasm_runtime_get_exception(instance);
+            text = wasm_runtime_get_exception(active.instance);
         }
         zehos_wamr_set_stack_boundary(NULL);
     }
 
     // Der Text kann in der Instanz liegen; er wird kopiert, bevor sie freigegeben wird.
     if (text != NULL) copy_message(message, messageLength, text);
-    zehos_host_context_close_files(&run.context);
-    if (env != NULL) wasm_runtime_destroy_exec_env(env);
-    if (instance != NULL) wasm_runtime_deinstantiate(instance);
-    if (module != NULL) wasm_runtime_unload(module);
-    if (copy != NULL) os_free(copy);
-    wasm_runtime_destroy();
-    zehos_aot_guard_leave(&aot_guard);
+    zehos_host_context_close_files(&active.run.context);
+    release_active();
     return status;
+}
+
+// Nach einer isolierten CPU-Ausnahme aus der Hauptschleife (WasmRuntime.ReleaseIsolatedNative), erst wenn der aufgegebene
+// Worker Dead ist und nie wieder laeuft. faultRip ist RIP der Ausnahme. Abgebaut wird nur, wenn sie im AOT-Code des Moduls
+// lag, waehrend zehos_aot_call lief: Dann stand keine WAMR-Funktion mitten in einer Aenderung (Helfer, Lader, Abbau und
+// Allokator liegen ausserhalb des Codebereichs), und es fehlen nur die Rahmen zwischen zehos_aot_call und dem AOT-Code.
+// Genau diese ueberspringt auch der Schleifenausstieg (zehos_host_aot_exit.h) unter derselben Bedingung; danach laeuft
+// derselbe Abbau wie im Normalweg. Sperren haelt der Lauf dabei nicht: Die WAMR-Mutexe sind leer (zehos_platform.c), Heap
+// und serielle Ausgabe zaehlen in zehos_host_depth, und bei einem offenen Hostaufruf isoliert der Kernel gar nicht.
+// Offene Dateien schliesst die Hauptschleife selbst (ReleaseRunResources); hier werden sie nur vergessen.
+// Ergebnis: 0 kein AOT-Lauf offen, 1 abgebaut (AOT wieder frei), 2 belassen (AOT bleibt bis zum Neustart gesperrt).
+enum { ZEHOS_AOT_RECLAIM_NONE = 0, ZEHOS_AOT_RECLAIM_RELEASED = 1, ZEHOS_AOT_RECLAIM_KEPT = 2 };
+
+int32_t zehos_wasm_aot_reclaim(uint64_t faultRip)
+{
+    if (!zehos_aot_guard_running(&aot_guard)) return ZEHOS_AOT_RECLAIM_NONE;
+    // Einmal belassen heisst fuer immer: ein zweiter Aufruf darf den halben Zustand nicht doch noch abbauen.
+    if (active.kept) return ZEHOS_AOT_RECLAIM_KEPT;
+    if (active.code == 0 || faultRip < active.code || faultRip >= active.codeEnd)
+    {
+        active.kept = 1;
+        return ZEHOS_AOT_RECLAIM_KEPT;
+    }
+    release_active();
+    return ZEHOS_AOT_RECLAIM_RELEASED;
 }
 
 #endif

@@ -20,15 +20,19 @@ internal static unsafe partial class WasmRuntime
     // true, sobald die Arena einem aufgegebenen AOT-Lauf gehoert und deshalb nie mehr endet. Nur die Hauptschleife setzt sie,
     // vor dem Start des Ersatzworkers.
     private static bool arenaLost;
+    // Laufzeit des laufenden nativen Laufs (NativeEngine), auch ohne Arena; wie arenaHolder vom Worker gesetzt und nach einer
+    // CPU-Isolation von der Hauptschleife gelesen (#582): Ohne Arena bleibt der Speicher eines wasm3-Laufs belegt.
+    private static int nativeEngine;
 
     // Direkt vor NativeRun/NativeRunAot, nach EnterNativeRun und im try davor (LeaveNativeRun laeuft also auch, wenn das
     // hier wirft). false: Der Lauf geht ohne Arena weiter; das meldet ReportArenaStart nach LeaveNativeRun (keine
     // Protokollzeile im nativen Abschnitt).
     private static bool BeginArena(bool aot)
     {
-        // Eine verlorene Arena gehoert nicht diesem Lauf: ohne Halter weiter, sonst gaebe ReleaseIsolatedArena sie frei.
+        Volatile.Write(ref nativeEngine, (int)(aot ? NativeEngine.Aot : NativeEngine.Wasm3));
+        // Eine verlorene Arena gehoert nicht diesem Lauf: ohne Halter weiter, sonst gaebe ReleaseIsolatedNative sie frei.
         if (Volatile.Read(ref arenaLost)) return false;
-        // Vor dem Start: Faellt der Worker gleich nach zehos_arena_begin, muss ReleaseIsolatedArena den Halter kennen, sonst
+        // Vor dem Start: Faellt der Worker gleich nach zehos_arena_begin, muss ReleaseIsolatedNative den Halter kennen, sonst
         // bliebe die Arena fuer immer aktiv. Faellt er davor, laeuft keine Arena, und end raeumt nichts.
         Volatile.Write(ref arenaHolder, aot ? ArenaAot : ArenaWasm3);
         if (ArenaBegin(0) == 0)
@@ -40,13 +44,16 @@ internal static unsafe partial class WasmRuntime
         return true;
     }
 
-    // Im finally desselben Blocks, vor LeaveNativeRun; nur wenn BeginArena gelang. Sonst gehoert die laufende Arena einem
-    // frueheren Lauf (aufgegebener AOT-Worker), und end gaebe dessen Bloecke frei.
+    // Im finally desselben Blocks, vor LeaveNativeRun. Die Arena endet nur, wenn BeginArena sie gestartet hat; sonst gehoert
+    // die laufende Arena einem frueheren Lauf (belassener AOT-Lauf), und end gaebe dessen Bloecke frei.
     private static void EndArena(bool started)
     {
-        if (!started) return;
-        ArenaEnd();
-        Volatile.Write(ref arenaHolder, ArenaNone);
+        if (started)
+        {
+            ArenaEnd();
+            Volatile.Write(ref arenaHolder, ArenaNone);
+        }
+        Volatile.Write(ref nativeEngine, (int)NativeEngine.None);
     }
 
     private static void ReportArenaStart(bool started)
@@ -55,21 +62,34 @@ internal static unsafe partial class WasmRuntime
     }
 
     // PollFaultIsolation, nach ReleaseRunResources: Der aufgegebene Worker ist Dead (nie wieder bereit) und laeuft nie wieder,
-    // erst jetzt duerfen seine Bloecke frei werden. Unter AOT bleiben sie belegt wie vor I2-C: WAMR haelt globalen
-    // Zustand (runtime_ref_count, registrierte Hostfunktionen), den nur wasm_runtime_destroy des toten Laufs abgebaut
-    // haette; der naechste AOT-Lauf benutzt ihn weiter. Die Arena bleibt dann beim toten Lauf, spaetere Laeufe messen nicht.
-    private static void ReleaseIsolatedArena()
+    // erst jetzt duerfen seine Bloecke frei werden. Unter AOT baut zuerst zehos_wasm_aot_reclaim WAMR ab (Instanz, Modul,
+    // Ausfuehrungsumgebung, Ladepuffer, linearer Speicher, Hostgruppen, Referenzzaehler; #582), danach raeumt die Arena den Rest.
+    // Lag die Ausnahme nicht im AOT-Code, bleibt WAMRs halber Zustand stehen, den der naechste AOT-Lauf sonst benutzte; die
+    // Arena bleibt dann beim toten Lauf, spaetere Laeufe messen nicht, und AOT ist bis zum Neustart gesperrt.
+    private static NativeReleasePlan ReleaseIsolatedNative()
     {
+        var engine = (NativeEngine)Interlocked.Exchange(ref nativeEngine, (int)NativeEngine.None);
         int holder = Interlocked.Exchange(ref arenaHolder, ArenaNone);
         // Den Lauf meldet kein ReportMemory mehr; spaetere Laeufe ohne Arena sollen spitze=- nennen, nicht seine.
         arenaMeasured = false;
-        if (holder == ArenaWasm3) ArenaEnd();
-        else if (holder == ArenaAot)
-        {
-            Volatile.Write(ref arenaLost, true);
-            Cosmos.Kernel.System.Diagnostics.Log.WriteString("WASM Arena nach CPU-Fehler unter AOT nicht freigegeben\n");
-        }
+        AotReclaim aot = engine == NativeEngine.Aot ? ReclaimAot(ProjektZeh.Runtime.FaultIsolation.IsolatedRip) : AotReclaim.NotActive;
+        NativeReleasePlan plan = NativeReleasePolicy.Plan(engine, holder != ArenaNone, aot);
+        if (plan == NativeReleasePlan.EndArena) ArenaEnd();
+        else if (plan == NativeReleasePlan.KeepArena) Volatile.Write(ref arenaLost, true);
+        if (engine == NativeEngine.Aot || NativeReleasePolicy.LeavesNativeMemory(plan))
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM nativer Lauf nach CPU-Fehler: {engine} {aot} {plan}\n");
+        return plan;
     }
+
+#if ZEHOS_WASM_AOT
+    private static AotReclaim ReclaimAot(ulong faultRip) => (AotReclaim)NativeAotReclaim(faultRip);
+
+    [DllImport("*", EntryPoint = "zehos_wasm_aot_reclaim", ExactSpelling = true)]
+    private static extern int NativeAotReclaim(ulong faultRip);
+#else
+    // Ohne WAMR startet BeginArena nie mit aot: true (RunAot wirft vorher).
+    private static AotReclaim ReclaimAot(ulong _) => AotReclaim.NotActive;
+#endif
 
     // Fuer ReportMemory: Spitze in Bytes des Laufs seit der letzten Speicherzeile, "-" ohne Lauf mit Arena; liest und
     // loescht die Markierung.

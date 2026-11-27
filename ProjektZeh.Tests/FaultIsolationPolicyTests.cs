@@ -209,4 +209,97 @@ public sealed class FaultIsolationPolicyTests
         Assert.AreEqual(-1, handoff.TryTake(9));
         Assert.AreEqual(9, handoff.TryTake(0));
     }
+
+    // #582: Freigabe des nativen Laufs nach einer Isolation.
+
+    [TestMethod]
+    public void NativeRelease_Wasm3EndsArena() =>
+        Assert.AreEqual(NativeReleasePlan.EndArena, NativeReleasePolicy.Plan(NativeEngine.Wasm3, true, AotReclaim.NotActive));
+
+    [TestMethod]
+    public void NativeRelease_Wasm3WithoutArenaLeaks() =>
+        Assert.AreEqual(NativeReleasePlan.Leaked, NativeReleasePolicy.Plan(NativeEngine.Wasm3, false, AotReclaim.NotActive));
+
+    [TestMethod]
+    public void NativeRelease_ReleasedAotEndsArenaForTheRest() =>
+        Assert.AreEqual(NativeReleasePlan.EndArena, NativeReleasePolicy.Plan(NativeEngine.Aot, true, AotReclaim.Released));
+
+    [TestMethod]
+    public void NativeRelease_ReleasedAotWithoutArenaIsFreed() =>
+        Assert.AreEqual(NativeReleasePlan.Freed, NativeReleasePolicy.Plan(NativeEngine.Aot, false, AotReclaim.Released));
+
+    [TestMethod]
+    public void NativeRelease_KeptAotNeverEndsArena()
+    {
+        // WAMRs globale Listen zeigten sonst auf freigegebene Bloecke.
+        Assert.AreEqual(NativeReleasePlan.KeepArena, NativeReleasePolicy.Plan(NativeEngine.Aot, true, AotReclaim.Kept));
+        Assert.AreEqual(NativeReleasePlan.Leaked, NativeReleasePolicy.Plan(NativeEngine.Aot, false, AotReclaim.Kept));
+    }
+
+    [TestMethod]
+    public void NativeRelease_AotBeforeWamrStartEndsArena()
+    {
+        Assert.AreEqual(NativeReleasePlan.EndArena, NativeReleasePolicy.Plan(NativeEngine.Aot, true, AotReclaim.NotActive));
+        Assert.AreEqual(NativeReleasePlan.Nothing, NativeReleasePolicy.Plan(NativeEngine.Aot, false, AotReclaim.NotActive));
+    }
+
+    [TestMethod]
+    public void NativeRelease_NoNativeRunLeavesNothing() =>
+        Assert.AreEqual(NativeReleasePlan.Nothing, NativeReleasePolicy.Plan(NativeEngine.None, false, AotReclaim.NotActive));
+
+    [TestMethod]
+    public void NativeRelease_OnlyKeepAndLeakLeaveMemory()
+    {
+        Assert.IsTrue(NativeReleasePolicy.LeavesNativeMemory(NativeReleasePlan.KeepArena));
+        Assert.IsTrue(NativeReleasePolicy.LeavesNativeMemory(NativeReleasePlan.Leaked));
+        Assert.IsFalse(NativeReleasePolicy.LeavesNativeMemory(NativeReleasePlan.EndArena));
+        Assert.IsFalse(NativeReleasePolicy.LeavesNativeMemory(NativeReleasePlan.Freed));
+        Assert.IsFalse(NativeReleasePolicy.LeavesNativeMemory(NativeReleasePlan.Nothing));
+    }
+
+    [TestMethod]
+    public void Budget_CleanIsolationsNeverRetire()
+    {
+        // Vor #582 war nach drei Isolationen Schluss, auch wenn jede alles freigab.
+        var budget = new IsolationBudget();
+        for (int i = 0; i < 100; i++)
+            Assert.IsFalse(budget.Record(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.EndArena, true)));
+        Assert.AreEqual(0, budget.Unclean);
+    }
+
+    [TestMethod]
+    public void Budget_RetiresAtThirdUncleanIsolation()
+    {
+        var budget = new IsolationBudget();
+        Assert.IsFalse(budget.Record(true));
+        Assert.IsFalse(budget.Record(false));
+        Assert.IsFalse(budget.Record(true));
+        Assert.IsTrue(budget.Record(true));
+        Assert.AreEqual(IsolationBudget.MaximumUnclean, budget.Unclean);
+    }
+
+    [TestMethod]
+    public void Budget_UnreapedThreadOrKeptMemoryCounts()
+    {
+        foreach (ReapOutcome reap in new[] { ReapOutcome.NotFound, ReapOutcome.Failed })
+            Assert.IsTrue(IsolationBudget.LeavesResources(reap, NativeReleasePlan.EndArena, true), reap.ToString());
+        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.KeepArena, true));
+        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Leaked, true));
+        Assert.IsFalse(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Freed, true));
+        Assert.IsFalse(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Nothing, true));
+    }
+
+    [TestMethod]
+    public void Budget_UncleanRunResourcesCount()
+    {
+        // Review #582, P3-1: Schliessen Dateien oder Sockets nicht sauber, zaehlt die Isolation, auch wenn Thread, Stack und
+        // nativer Speicher frei sind; drei solche Fehler fuehren wie vor #582 in den Ruhestand.
+        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.EndArena, false));
+        Assert.IsTrue(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.Freed, false));
+        var budget = new IsolationBudget();
+        bool retired = false;
+        for (int i = 0; i < IsolationBudget.MaximumUnclean; i++)
+            retired = budget.Record(IsolationBudget.LeavesResources(ReapOutcome.Reaped, NativeReleasePlan.EndArena, false));
+        Assert.IsTrue(retired);
+    }
 }

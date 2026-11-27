@@ -180,20 +180,48 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
   Ausnahme den Stack verlassen hat (bis dahin `StillOnCpu`, die Hauptschleife versucht es in jeder Runde erneut und warnt nach
   1000 Runden einmal). `NotAbandoned` (nach Code nicht erreichbar) behandelt sie ebenso: Der Thread könnte noch laufen, also
   schließt sie nichts, und die Wasm-Läufe warten. Bei `NotFound` oder einer Ausnahme aus `TryReapAbandoned` bleiben Thread
-  und Stack belegt, der Lauf wird trotzdem beendet. Danach gibt sie App-Speicher, Netz und Paketdateien frei und startet einen
-  neuen Worker. Der native Speicher der wasm3- bzw. WAMR-Instanz bleibt belegt (Handles im C-Rahmen auf dem Worker-Stack);
-  deshalb gibt es nach drei Isolationen bis zum Neustart keinen neuen Worker (Folge-Issue #582). Dass der Stack trotzdem
-  zurückgehen darf, ist am WAMR-Quelltext geprüft, nicht im Gast: Mit `THREAD_MGR=0`, `MULTI_MODULE=0` und ohne
+  und Stack belegt, der Lauf wird trotzdem beendet. Danach gibt sie App-Speicher, Netz und Paketdateien frei, dann den
+  nativen Speicher des Laufs (`ReleaseIsolatedNative`, #582, siehe unten), und startet einen neuen Worker. Dass der Stack
+  zurückgehen darf, ist am WAMR-Quelltext geprüft: Mit `THREAD_MGR=0`, `MULTI_MODULE=0` und ohne
   `OS_ENABLE_HW_BOUND_CHECK` (kein `exec_env_tls`) hält kein globaler Zustand einen Zeiger auf den Stack. Der Zeiger
-  `stack_boundary` (`zehos_platform.c`) wird vor jedem Aufruf neu gesetzt, und die Mutexe sind leer. wasm3 legt je Lauf eine
-  eigene Umgebung an. Nach einem abgebrochenen AOT-Lauf bleibt der WAMR-Referenzzähler aber bei 1: Spätere Läufe erreichen
-  `wasm_runtime_destroy_internal` nicht mehr, und jedes `register_host` legt neue Knoten für die Hostfunktionen an (etwa 40 Byte
-  je Hostfunktion und Lauf).
+  `stack_boundary` (`zehos_platform.c`) wird vor jedem Aufruf neu gesetzt und beim Abbau gelöscht, und die Mutexe sind leer.
+  Die Handles des AOT-Laufs und seine Nutzerdaten (`zehos_wamr_run`) liegen seit #582 statisch in `zehos_host_wamr.c`
+  (`active`), nicht mehr im C-Rahmen auf dem Worker-Stack.
+- **Nativer Speicher nach der Isolation (#582):** Unter wasm3 gibt die Laufarena (Roadmap 12.4-I2-C, unten) alle Blöcke des
+  Laufs frei; wasm3 legt je Lauf eine eigene Umgebung an und hat keinen globalen Zustand. Unter AOT ruft die Hauptschleife
+  `zehos_wasm_aot_reclaim` mit RIP der Ausnahme. Lag RIP im Code des geladenen `.aot`, während `zehos_aot_call` lief, baut
+  sie WAMR in der Reihenfolge des Normalwegs ab (Ausführungsumgebung, Instanz samt linearem Speicher, Modul, Ladepuffer,
+  `wasm_runtime_destroy`). Der Referenzzähler ist damit wieder 0, die Hostgruppen sind frei, die Sperre `aot_guard` ist
+  gelöscht, und die Arena räumt den Rest. Begründung: Im AOT-Code steht keine WAMR-Funktion mitten in einer Änderung
+  (Lader, Instanziieren, Abbau, WAMR-Helfer und Allokator liegen außerhalb des Codebereichs). Es fehlen nur die Rahmen
+  zwischen `zehos_aot_call` und dem AOT-Code, und genau diese überspringt auch der Schleifenausstieg unter derselben
+  Bedingung. Auf diesem Weg legt WAMR für den Einstieg keinen Heap an (`entry_usable`). Sperren hält der Lauf nicht, weil
+  die WAMR-Mutexe leer sind und Heap sowie serielle Ausgabe in `zehos_host_depth` zählen; bei offenem Hostaufruf isoliert
+  der Kernel gar nicht. Liegt RIP außerhalb, also in einem WAMR-Helfer, im Lader, beim Instanziieren oder im Abbau, kann
+  WAMRs Zustand halb geändert sein. Dann bleibt alles belegt (`Kept`), die Arena bleibt beim toten Lauf, und AOT ist bis
+  zum Neustart gesperrt (`wasm3 AOT-Rueckfall: LoadFailed AOT nach CPU-Fehler bis zum Neustart gesperrt`). Ein zweiter
+  Aufruf baut einen belassenen Lauf nie nachträglich ab. Das Protokoll der Hauptschleife nennt `nativ frei` oder
+  `nativ belegt`, für AOT zusätzlich `WASM nativer Lauf nach CPU-Fehler: Aot <Released|Kept> <Plan>`.
+  **Bewusster Tausch:** Der Abbau (WAMR und Arena) läuft auf der Hauptschleife. Hat fehlerhafter AOT-Code vor seiner
+  Ausnahme Instanz, WAMR-Strukturen oder Blockköpfe der Arena überschrieben, kann gerade dieser Abbau selbst eine
+  Ausnahme auslösen; auf der Hauptschleife wird sie nicht isoliert, das System hält an. Vor #582 wurde unter AOT nichts
+  angefasst (unter wasm3 gilt dasselbe Risiko für die Arena seit I2-C). Der Tausch gibt Speicher und AOT zurück und nimmt
+  diesen Halt bei schon beschädigtem Kernelspeicher in Kauf; Speicherschutz gegen solchen Code gibt es im Kernel nicht.
+- **Ruhestand (#582):** Bis zum Neustart zählen nur Isolationen, nach denen Thread und Stack nicht abgeräumt sind,
+  nativer Speicher belegt bleibt oder App-Speicher, Netz bzw. Paketdateien nicht sauber schlossen (`IsolationBudget`,
+  `FaultIsolationPolicy.cs`). Nach drei solchen startet kein Worker
+  mehr. Saubere Isolationen zählen nicht; vorher war nach drei Isolationen jeder Art Schluss.
 
 **Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE, #PF, #GP und #UD im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
 `-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
-gemeldeten Vektor mit dem erwarteten (#DE 0, #UD 6, #GP 13, #PF 14). Die Gegenprobe
+gemeldeten Vektor mit dem erwarteten (#DE 0, #UD 6, #GP 13, #PF 14). Mit WAMR folgen seit #582 echte AOT-Läufe über
+`WasmRuntime.Run` mit der Fixture `ret42` (`Native/AotProbe`): ein sauberer Lauf (Ok/42), dann zehn Runden aus #DE und #PF im
+AOT-Code (der Code ist umgeschrieben: am Anfang jeder Funktion `div` durch null bzw. ein Lesen von Adresse 0, sonst `ud2`) mit
+je einem sauberen Lauf danach. Verlangt sind „nativ frei“ und `Aot Released` für jede der 20 Isolationen, ein sauberer Lauf
+Ok/42 nach jeder Runde (belegt den Abbau über WAMR; der freie Speicher allein nicht, die Arena gäbe dieselben Blöcke auch
+so frei), Arena 0, höchstens 1 MiB Rückgang des freien Speichers insgesamt und höchstens 256 KiB zwischen Runde 1 und 10
+(Verlauf). Ergebnis (27. November 2026, Cosmos smp.17, Celeron J3455, zehn Runden): KVM `-smp 1` 3/3 (Rückgang 0 KiB) und `-smp 4` 3/3 (einmalig 188 KiB in Runde 5, danach gleich); mit drei Runden zuvor zusätzlich TCG 1/1. Die Gegenprobe
 `-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
 das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LINT1 mit Zustellart NMI zu
 (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen
@@ -207,19 +235,21 @@ LINT1 selbst als NMI ein, und die Probe braucht keine eigene Entmaskierung mehr.
 **Grenzen:**
 
 - Unter wasm3 läuft kein Gastcode nativ: Eine CPU-Ausnahme dort ist ein Fehler im Interpreter-C, ausgelöst durch das
-  App-Modul, und gilt nach Peters Entscheidung 3 als App-Fehler. Der Fehler kann den nativen Heap beschädigt haben. Daher
-  meldet der Kernel „Neustart empfohlen“ und startet nach 3 isolierten Ausnahmen keinen Worker mehr; Paket-Apps laufen
-  dann erst nach einem Neustart wieder. Dass das System danach fehlerfrei ist, wird nicht versprochen.
-- Eine Prüfung, ob RIP im Code des geladenen `.aot` liegt, fehlt noch. RIP liefert der Hook (`CpuExceptionInfo`); er
-  erscheint im Protokoll der Hauptschleife.
-- Je Ausnahme bleiben (bei `NotFound` oder einer Ausnahme aus `TryReapAbandoned`) Thread und 8-MiB-Stack belegt, außerdem die verwalteten Objekte, auf die der
-  aufgegebene Stack noch verweist (etwa Modul- und `.aot`-Bytes), weil die Speicherbereinigung ihn weiter durchsucht.
+  App-Modul, und gilt nach Peters Entscheidung 3 als App-Fehler. Der Fehler kann den nativen Heap beschädigt haben, unter
+  AOT ebenso fehlerhafter AOT-Code. Daher meldet der Kernel „Neustart empfohlen“. Eine Grenze für die Zahl der Isolationen
+  schützt davor nicht (das kann schon die erste); sie begrenzt seit #582 nur, was liegen bleibt. Dass das System danach
+  fehlerfrei ist, wird nicht versprochen.
+- Isolieren entscheidet der Hook ohne Blick auf RIP; erst der Abbau unter AOT prüft, ob RIP im Code des geladenen `.aot`
+  lag (#582). RIP erscheint im Protokoll der Hauptschleife.
+- Je Ausnahme bleiben (bei `NotFound` oder einer Ausnahme aus `TryReapAbandoned`) Thread und 8-MiB-Stack belegt; das zählt
+  für den Ruhestand. Die verwalteten Objekte des Laufs (etwa Modul- und `.aot`-Bytes) gibt die Speicherbereinigung frei,
+  weil sie den Stack eines `Dead`-Threads nicht mehr durchsucht.
   Den nativen Speicher der Instanz (wasm3-Laufzeit, lineare Memory) gibt seit Roadmap 12.4-I2-C die Laufarena der
   C-Laufzeit frei: `PollFaultIsolation` ruft `zehos_memory_end` nach dem Aufräumen und vor dem Ersatzworker. Erst dort
   ist der Worker `Dead` und läuft nie wieder. Die Arena erkennt Blöcke des Laufs über die Scheduler-Id des
-  Workers (Rückruf `zehos_current_thread_id`; er liest über `CurrentThread(null)` den Thread der laufenden CPU, nicht mehr fest CPU 0, `CosmosFaultIsolation.cs`). Grenzen: Unter AOT bleibt der Speicher belegt, weil WAMR globalen
-  Zustand (`runtime_ref_count`, Hostfunktionen) über den toten Lauf hinaus weiterbenutzt; die Arena bleibt dann beim
-  toten Lauf, spätere Läufe melden `WASM Arena nicht gestartet`. Hat der Fehler die Blockköpfe der Arena beschädigt,
+  Workers (Rückruf `zehos_current_thread_id`; er liest über `CurrentThread(null)` den Thread der laufenden CPU, nicht mehr fest CPU 0, `CosmosFaultIsolation.cs`). Grenzen: Unter AOT gibt die Arena erst frei, nachdem `zehos_wasm_aot_reclaim`
+  WAMR abgebaut hat (#582); belässt sie den Lauf, bleibt die Arena beim toten Lauf, und spätere Läufe melden
+  `WASM Arena nicht gestartet` (deren wasm3-Isolationen zählen dann für den Ruhestand). Hat der Fehler die Blockköpfe der Arena beschädigt,
   kann das Freigeben in der Hauptschleife selbst fehlschlagen (siehe den Punkt zum beschädigten Heap oben).
   Die Zeile `WASM Speicher frei=… heap=… spitze=<Bytes>` nennt nach jedem Lauf die Spitze der Arena (bleibt bis zum
   nächsten Start einer Arena stehen).
@@ -474,7 +504,7 @@ Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/sc
 
 **Entwurf (#399), Stand 25. November 2026.** Stand `task/mc-e5-smp` @11dc2865 (Stand des Gesamtreviews; die Zahlen unten stammen aus den genannten PRs und Kommentaren, nicht aus einem Lauf auf diesem Kopf; Pin smp.13 mit #678, enthält E7-A #564, E7-E #566/#657, E6-G #576, #655; Kopf 857dfabf ist darin enthalten). Quellen sind die genannten PRs und die Kommentare in #383, #384, #396, #398, #433, #542, #655 und #660; Zahlen ohne Quelle stehen hier nicht. Die Aussage „mehrere CPUs wurden nicht geprüft“ gilt nur für den Stand von 3.0.94; für QEMU TCG und KVM ist sie durch die Matrix (90/90 auf smp.13, mit E7-A) überholt, für VMware, WHPX und echte Hardware bleibt sie bestehen (nicht geprüft; die Handtests laufen einmal als Gesamttest in #610 und blockieren #394, #398 und die übrigen Blöcke nicht, Entscheidung Peter, 24. November 2026, Kommentare in #394 und #398).
 
-**Stand.** Cosmos-Pin `3.0.97-zehos.6-smp.13` (`deploy/cosmos/VERSION`, cosmos-Kopf `6b28fc44`; gegenüber smp.12 sechs Patches, darunter `ext2-inode-cache-evict`, `ext2-dir-scan`, `ext2-direct-runs`, `gc-refill-scan-limit`, `aot-loop-exit`, `exit-quiet`, [Pin-Abschnitt](#pin-3097-zehos6-smp13-25-november-2026)). Zuvor Pin smp.12 (cosmos-Kopf `fbb5e340`, `ahci-error-recovery`, `foh-gc-retry`, `ext2-used-dirs`, [Pin-Abschnitt](#pin-3097-zehos6-smp12-24-november-2026)) und `3.0.97-zehos.6-smp.11` (cosmos-Kopf `e9915bc4`, PR #575). Gegenüber smp.10 (`52114521`, #540/#543) kamen `ahci-large-commands`, `page-alloc-split`, `ext2-alloc-cache` und `abandoned-thread-reap` hinzu ([Pin-Abschnitt](#pin-3097-zehos6-smp11-20-november-2026)). Der SMP-Stapel startet die weiteren CPUs; Seit E7-A (#564) verschiebt ZehOS den Hauptthread und die Standardaffinität bei mehreren CPUs auf die Compute-CPUs (`CosmosBootOptions.MoveMainToWorkers`; ohne `-smp` oder mit `zehos.cpus=1` bleibt alles auf CPU 0, Recovery bleibt auf CPU 0). Wasm-Worker, Hintergrundaufgaben und der Wasm-Netzwerk-Worker laufen auf den Compute-CPUs (`ThreadPlacement.Workers`, #514, #392). **Grenze Leerlauf:** Die Hauptschleife wartet mit `Thread.Sleep(1)` (`CosmosMainLoopIdle.cs`); der Scheduler-Tick ist 10 ms (`ClassRunQueues.TickNs`). Der Schlaf endet erst am nächsten Tick, die Hauptschleife kann also bis zu 10 ms Latenz haben und läuft höchstens etwa 100 Mal je Sekunde. Dafür gibt es keine Messung im PR; die Aussage folgt nur aus dem Code. Cosmos-Patches seit Etappe 5: `monitor-quiet` (smp.4, E6-H), `ausnahme-interrupts` (smp.6, E6-C.10), `pic-remap-cli` (smp.8, E5-N), `tcp-receive-window` (smp.9, E5-O), `gc-oom-throw` (smp.10, E5-P), dazu `panic-stop-cpus` (E7-B), der Patch für Stacks beendeter Threads (E5-K) und die vier Patches von smp.11. E6-G (#576, gemergt) räumt Thread und Stack aufgegebener Wasm-Worker ab; die native Wasm-Instanz bleibt bis zum Neustart belegt (Folge-Issue #582). Abschnitte dazu: [Sperren-Übergabe](#sperren-übergabe-zwischen-cpus-e6-h-19-november-2026), [PIC-Remap](#frühboot-gp-beim-pic-remap-e5-n-19-november-2026), [Netzstapel](#netzstapel-auf-mehreren-cpus-e6-c11-19-november-2026), [Hintergrundaufgaben](#hintergrundaufgaben-auf-den-compute-cpus-e6-e-392-20-november-2026), [TCP-Fenster](#tcp-empfangsfenster-und-verlorene-segmente-e5-o-530-19-november-2026), [Speichermangel](#speichermangel-wirft-outofmemoryexception-e5-p-538-19-november-2026).
+**Stand.** Cosmos-Pin `3.0.97-zehos.6-smp.13` (`deploy/cosmos/VERSION`, cosmos-Kopf `6b28fc44`; gegenüber smp.12 sechs Patches, darunter `ext2-inode-cache-evict`, `ext2-dir-scan`, `ext2-direct-runs`, `gc-refill-scan-limit`, `aot-loop-exit`, `exit-quiet`, [Pin-Abschnitt](#pin-3097-zehos6-smp13-25-november-2026)). Zuvor Pin smp.12 (cosmos-Kopf `fbb5e340`, `ahci-error-recovery`, `foh-gc-retry`, `ext2-used-dirs`, [Pin-Abschnitt](#pin-3097-zehos6-smp12-24-november-2026)) und `3.0.97-zehos.6-smp.11` (cosmos-Kopf `e9915bc4`, PR #575). Gegenüber smp.10 (`52114521`, #540/#543) kamen `ahci-large-commands`, `page-alloc-split`, `ext2-alloc-cache` und `abandoned-thread-reap` hinzu ([Pin-Abschnitt](#pin-3097-zehos6-smp11-20-november-2026)). Der SMP-Stapel startet die weiteren CPUs; Seit E7-A (#564) verschiebt ZehOS den Hauptthread und die Standardaffinität bei mehreren CPUs auf die Compute-CPUs (`CosmosBootOptions.MoveMainToWorkers`; ohne `-smp` oder mit `zehos.cpus=1` bleibt alles auf CPU 0, Recovery bleibt auf CPU 0). Wasm-Worker, Hintergrundaufgaben und der Wasm-Netzwerk-Worker laufen auf den Compute-CPUs (`ThreadPlacement.Workers`, #514, #392). **Grenze Leerlauf:** Die Hauptschleife wartet mit `Thread.Sleep(1)` (`CosmosMainLoopIdle.cs`); der Scheduler-Tick ist 10 ms (`ClassRunQueues.TickNs`). Der Schlaf endet erst am nächsten Tick, die Hauptschleife kann also bis zu 10 ms Latenz haben und läuft höchstens etwa 100 Mal je Sekunde. Dafür gibt es keine Messung im PR; die Aussage folgt nur aus dem Code. Cosmos-Patches seit Etappe 5: `monitor-quiet` (smp.4, E6-H), `ausnahme-interrupts` (smp.6, E6-C.10), `pic-remap-cli` (smp.8, E5-N), `tcp-receive-window` (smp.9, E5-O), `gc-oom-throw` (smp.10, E5-P), dazu `panic-stop-cpus` (E7-B), der Patch für Stacks beendeter Threads (E5-K) und die vier Patches von smp.11. E6-G (#576, gemergt) räumt Thread und Stack aufgegebener Wasm-Worker ab; seit #582 auch die native Wasm-Instanz (unter AOT nur nach einer Ausnahme im AOT-Code). Abschnitte dazu: [Sperren-Übergabe](#sperren-übergabe-zwischen-cpus-e6-h-19-november-2026), [PIC-Remap](#frühboot-gp-beim-pic-remap-e5-n-19-november-2026), [Netzstapel](#netzstapel-auf-mehreren-cpus-e6-c11-19-november-2026), [Hintergrundaufgaben](#hintergrundaufgaben-auf-den-compute-cpus-e6-e-392-20-november-2026), [TCP-Fenster](#tcp-empfangsfenster-und-verlorene-segmente-e5-o-530-19-november-2026), [Speichermangel](#speichermangel-wirft-outofmemoryexception-e5-p-538-19-november-2026).
 
 **Belegte Zahlen** (QEMU/KVM, ein Lauf, wenn nicht anders genannt; Quellen: die verlinkten Abschnitte, `docs/STORAGE_3_0_97_FINDINGS.md`, Kommentare in #383):
 
@@ -518,7 +548,7 @@ Die [offizielle Scheduler-Anleitung](https://cosmosos.github.io/articles/user/sc
 
 - Hauptschleife und Oberfläche laufen seit E7-A bei mehreren CPUs auf den Compute-CPUs; die Interrupts (Eingabe-IRQs) bleiben auf CPU 0. `Environment.ProcessorCount` bleibt der Wert aus dem ersten Lesen vor ZehOS-Code (alle CPUs ohne CPU 0: 4 CPUs 3, 1 CPU 1; Probe zu Issue #662, nicht 1 wie bis PR #564 angenommen).
 - Eine andere Ausnahme, die bei fast vollem Heap geworfen wird, kann beim Anlegen ihres Stacktraces weiter anhalten (smp.10).
-- Thread und 8-MiB-Stack aufgegebener Wasm-Worker werden seit E6-G (#576) abgeräumt; die native Wasm-Instanz bleibt bis zum Neustart belegt, nach drei Isolationen startet kein Worker mehr (#582, offen). Auditbefunde zu Workern in E6-C (#390) offen.
+- Thread und 8-MiB-Stack aufgegebener Wasm-Worker werden seit E6-G (#576) abgeräumt, die native Wasm-Instanz seit #582 (unter AOT nur nach einer Ausnahme im AOT-Code); den Ruhestand lösen nur noch Isolationen aus, die etwas belegt lassen. Auditbefunde zu Workern in E6-C (#390) offen.
 - Jeder Interrupt auf einem Vektor 8, 10–14, 17, 21, 29 oder 30, den nicht die CPU auslöst, verschiebt den Rahmen (Abschnitt PIC-Remap).
 - VMware, WHPX und echte Hardware sind für mehrere CPUs **nicht geprüft** (Zellen V1–V6, H1–H3 aus #398; sie laufen einmal im Gesamttest #610); QEMU TCG und KVM sind mit E7-A geprüft (90/90, Kopf `7976c322c`). Leistungsaussagen zu Hyperthreading nur für QEMU/KVM. Die GC-Messung (`e6-gc-pausen`) ist nicht gelaufen. Der Matrixlauf gilt für den Stand `7976c322c`; spätere Änderungen auf `task/mc-e5-smp` (inzwischen @55870f15, mit #655) sind damit nicht abgedeckt; #655 hat eigene Gastläufe (Kommentar in #655: `aotfault`, `aot`, `AOT_LOOP` KVM und TCG bestanden, Kopf `3974deb75`).
 
