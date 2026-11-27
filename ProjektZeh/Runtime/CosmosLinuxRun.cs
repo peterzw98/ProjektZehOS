@@ -551,15 +551,8 @@ internal static unsafe class CosmosLinuxRun
         return new Outcome(true, "signal 11", reason);
     }
 
-    /// <summary>Signal, das Linux für die Ausnahme schickte (Status wie bei run-linux.py).</summary>
-    private static int SignalOf(ulong vector) => vector switch
-    {
-        0 or 16 or 19 => 8,   // #DE, #MF, #XM: SIGFPE
-        6 => 4,               // #UD: SIGILL
-        3 or 1 => 5,          // #BP, #DB: SIGTRAP
-        17 => 7,              // #AC: SIGBUS
-        _ => 11,              // #GP, #PF und der Rest: SIGSEGV
-    };
+    /// <summary>Signal, das Linux für die Ausnahme schickte (Status wie bei run-linux.py); Tabelle seit V24 in <see cref="LinuxFault"/>.</summary>
+    private static int SignalOf(ulong vector) => LinuxFault.SignalOf(vector);
 
     private static void Body(Running run, UserImage image, byte[] elf)
     {
@@ -1337,6 +1330,27 @@ internal static unsafe class CosmosLinuxRun
             run.Error = exception.GetType().Name + ": " + exception.Message;
         }
 
+        // Abbruch (Zeitlimit, Strg+C) während eines Fehlers: kein Handler mehr und keine Ausnahme melden, der Lauf endet als Abbruch (sonst
+        // meldete Describe eine Ausnahme, etwa bei einem Handler, der den Befehl endlos wiederholt).
+        if (run.Cancelled)
+        {
+            return 0;
+        }
+
+        // V24: Hat der Prozess einen Handler für das Signal, läuft er statt des Prozessendes (Linux force_sig_fault). Nicht im vfork-Kind:
+        // Es läuft auf dem Kernelthread und im Speicher des Elternprozesses, ein Handler mit siglongjmp darin bliebe ungeprüft.
+        try
+        {
+            if (!me.Process.InVfork && DeliverFault(me, frame, vector, error, address))
+            {
+                return 1;
+            }
+        }
+        catch (Exception exception)
+        {
+            run.Error ??= exception.GetType().Name + ": " + exception.Message;
+        }
+
         // V15: Eine Ausnahme in einem Kindprozess (nach execve) beendet nur ihn; sein Thread meldet sie nach dem Verlassen.
         // Im vfork-Kind (vor execve) bricht sie den ganzen Lauf ab: Der Thread trägt die Register des blockierten Elternthreads.
         me.Fault = true;
@@ -1352,6 +1366,27 @@ internal static unsafe class CosmosLinuxRun
         run.FaultAddress = address;
         run.FaultRip = frame->Rip;
         return 0;
+    }
+
+    /// <summary>
+    /// V24: Signalrahmen für eine Ausnahme. Das fxsave-Abbild liegt wie beim Aufruf direkt unter dem Frame: Der Interrupt-Stub von Cosmos
+    /// sichert es dort (ThreadContext.Fpu vor R15, Interrupts.s fxsave64/fxrstor64), der Frame ist der IRQContext ab R15. Was hier hineinkommt,
+    /// lädt der Rücksprung des Stubs, ebenso die geänderten Register (UserModeX64.PrepareReturn prüft sie vorher).
+    /// </summary>
+    private static bool DeliverFault(Bridge me, UserFrame* frame, ulong vector, ulong error, ulong address)
+    {
+        LinuxUserProcess process = me.Process;
+        var fpu = new Span<byte>((byte*)frame - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize);
+        bool mapped = vector == PageFault && process.HasMapping(address);
+        LinuxFault fault = LinuxFault.Of(vector, error, address, frame->Rip, mapped, fpu);
+        LinuxUserRegs regs = ToRegs(frame);
+        if (!LinuxSignalFrame.DeliverFault(process, ref regs, fpu, fault))
+        {
+            return false;
+        }
+
+        FromRegs(frame, regs);
+        return true;
     }
 
     private static readonly CosmosLinuxHost Host = new();

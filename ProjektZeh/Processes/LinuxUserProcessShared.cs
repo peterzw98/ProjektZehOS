@@ -40,6 +40,11 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
     public LinuxMemFile CreateMemFile(string name, bool sealing) => new(_vforkOf?._pages ?? _pages, name, sealing, (long)(_maxFrames * Page),
         0x6d65_6d00_0000_0000UL | ((ulong)(uint)Pid << 24) | (uint)System.Threading.Interlocked.Increment(ref _memFiles));
 
+    // Länge bis zum Ende des Benutzeradressraums: Ohne Deskriptor gibt es kein write und kein ftruncate, jeder Frame kommt über einen
+    // Seitenfehler oder Kernelzugriff dieses Prozesses (PopulateShared) und zählt dort gegen _maxFrames.
+    public LinuxMemFile CreateAnonymousSharedFile() => new(_vforkOf?._pages ?? _pages, "dev/zero", false, 1L << 47,
+        0x6d65_6d00_0000_0000UL | ((ulong)(uint)Pid << 24) | (uint)System.Threading.Interlocked.Increment(ref _memFiles));
+
     public long MapShared(LinuxMemFile file, ulong len, int prot, long pageOffset)
     {
         if (_vforkOf != null)

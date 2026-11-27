@@ -288,10 +288,10 @@ internal static partial class LinuxSyscalls
             return -ENOMEM;
         }
 
-        LinuxMemFile mem = shared.CreateMemFile("dev/zero", sealing: false);
+        // V24: Die Länge ist frei (CreateAnonymousSharedFile); die Speichergrenze greift wie bei privaten Bereichen erst beim Zugriff.
+        LinuxMemFile mem = shared.CreateAnonymousSharedFile();
         long r = mem.Truncate((long)flen);
-        const long EFBIG = 27; // Länge über dem Speicher des Prozesses: für mmap -ENOMEM
-        long at = r < 0 ? (r == -EFBIG ? -ENOMEM : r) : shared.MapShared(mem, flen, prot, 0);
+        long at = r < 0 ? -ENOMEM : shared.MapShared(mem, flen, prot, 0);
 
         // Kein Deskriptor: Nach Close hält nur noch die Abbildung die Datei; scheiterte sie, gibt Close die Frames sofort frei.
         _ = mem.Close();

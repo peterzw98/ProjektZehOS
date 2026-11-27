@@ -125,7 +125,7 @@ Grenzen (Review V2, bewusst offen):
   sofort zurück, die Shell holt die Ausgabe je Bild ab, Enter-Zeilen gehen an fd 0, Strg+C oder Esc bricht ab (`signal 2`), ein zweites Strg+C gibt das
   Fenster frei, falls das Programm nicht endet; ohne Zeitgrenze. Die Gastprobe läuft weiter synchron mit Zeitgrenze (120 s, danach `signal 9`). AT_RANDOM aus `HardwareRandom` (ohne Ersatz),
   AT_HWCAP aus CPUID. Ein Fehler im Ring 3, den der Prozess nicht als Seitenfehler bedient, beendet nur das Programm (Status `signal <n>` wie Linux: #PF/#GP 11,
-  #UD 4, #DE 8); eine Ausnahme in der Brücke ebenso (`signal 9`).
+  #UD 4, #DE 8, #SS/#NP/#AC 7), seit V24 nur noch, wenn kein Handler ihn nimmt (Abschnitt „Ausnahmen als Signal (V24)“); eine Ausnahme in der Brücke ebenso (`signal 9`).
 - Gastprobe: `-p:ZehOSLinuxRunProbe=true -p:ZehOSLinuxRunBundle=<bündel>` startet beim Boot die Programme eines Bündels (`scripts/test-linux-run.py`).
   Pin: `story/ladybird-cosmos` (Patches `user-cr3` u. a.).
 
@@ -442,8 +442,7 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
 - **SIGPIPE** nach `-EPIPE` aus write, writev, pwrite, sendto, sendmsg (nicht mit `MSG_NOSIGNAL`); Standardaktion beendet den Prozess wie Linux.
 - **Grenzen**: Maske, anhängige Signale und Alternativstack je Prozess, nicht je Thread; ein Handler blockiert sein Signal für alle Threads, bis
   rt_sigreturn die Maske des Rahmens zurückschreibt. Echtzeitsignale reihen sich nicht mehrfach ein. Kein Zustellen in einer Rechenschleife ohne
-  Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3) und keine Handler für Ausnahmen (SIGSEGV/SIGFPE aus einem Fehler im
-  Ring 3 beenden weiter). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigtimedwait` und
+  Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3); Handler für Ausnahmen seit V24 (eigener Abschnitt). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigsuspend`, `rt_sigtimedwait` und
   `signalfd` fehlen.
 
 ## Harte Startlücken: ppoll, prctl, close_range, /proc/self/fd, execve (V19)
@@ -544,7 +543,8 @@ Gastprogramme `experiments/LinuxAbi/src/s3/fork_cow.c` und `futex.c` (Erwartung 
 | 57 | `fork` | wie `clone(SIGCHLD)` |
 | 56 | `clone` ohne `CLONE_VM` | neuer Prozess (PID aus dem gemeinsamen Namensraum) mit **Kopie** des Adressraums: Karte, brk und Stackgröße gleich, jede private Seite mit Frame als neuer Frame mit demselben Inhalt; geteilte Bereiche (memfd, `MAP_SHARED|MAP_ANONYMOUS`) bleiben geteilt. Deskriptoren mit `FD_CLOEXEC` und Arbeitsverzeichnis wie vfork (Zählung, gemeinsamer Dateizeiger), Handler, Maske und Alternativstack bleiben, anhängige Signale und `PR_SET_PDEATHSIG` nicht. Nur der aufrufende Thread läuft im Kind weiter, als Hauptthread (TID = PID), mit dessen Registern und FPU-Zustand, rax 0, Stack aus `clone` (0: derselbe). Erlaubt: `CLONE_SETTLS`, `CLONE_PARENT_SETTID` (Speicher der Eltern), `CLONE_CHILD_SETTID` (Speicher des Kinds), `CLONE_CHILD_CLEARTID`; Austrittssignal nur `SIGCHLD`. `CLONE_FILES`, `CLONE_FS`, `CLONE_PARENT`, `CLONE_VFORK` ohne `CLONE_VM`, andere Signale und Bits `-ENOSYS`; kein Speicher für die Kopie `-ENOMEM`; kein Kernelthread frei `-EAGAIN` |
 | 435 | `clone3` | `clone_args` ab 64 Bytes (darunter `-EINVAL`, über 4096 `-E2BIG`, gesetzte Bytes hinter VER0 `-E2BIG`); `exit_signal` über 64 oder Signal in den Flagbits `-EINVAL`, `stack` und `stack_size` nur zusammen (Stackzeiger `stack + stack_size` wie Linux); sonst wie `clone` |
-| 9 | `mmap` `MAP_SHARED|MAP_ANONYMOUS` | jetzt eine namenlose memfd ohne Deskriptor (vorher privat): über fork geteilt. Mit `MAP_FIXED` weiter privat |
+| 9 | `mmap` `MAP_SHARED|MAP_ANONYMOUS` | jetzt eine namenlose memfd ohne Deskriptor (vorher privat): über fork geteilt. Mit `MAP_FIXED` weiter privat. Seit V24 (Review V21 P3) ist die Länge nicht an den Speicher des Prozesses gebunden: Frames zählen erst beim Zugriff gegen die Grenze, wie privat (1 GiB `MAP_NORESERVE` geht) |
+| 25 | `mremap` auf `MAP_SHARED|MAP_ANONYMOUS` | Vergrößern `-ENOMEM` wie bei allen Bereichen (V9), Verkleinern kürzt den geteilten Bereich wie `munmap` |
 | 202 | `futex` ohne `FUTEX_PRIVATE_FLAG` | `FUTEX_WAIT` liest den Wert nach jeder Scheibe (50 ms) neu und kehrt mit 0 zurück, sobald er sich geändert hat |
 
 Grenzen: **Kein Copy-on-Write** (Abkürzung): fork kopiert sofort alle belegten privaten Seiten; Zeit und Speicher wachsen mit dem belegten Speicher des
@@ -575,3 +575,22 @@ Ladybirds Prozesse aus dem D2-Bau (WebContent, RequestServer, ImageDecoder) sind
   Alpine 3.24): `dyn_hello` (Hilfsvektor, malloc, `dlopen` von `libgcc_s.so.1`) und `dyn_cxx` (iostream, Container, Ausnahme über 20 Rahmen, `std::thread` mit
   `thread_local`, statische Konstruktoren und Destruktoren) gleich wie unter Linux (`experiments/LinuxAbi/src/v25`, Bau mit `ALPINE_ROOT`). Nicht geprüft:
   `execve` eines dynamischen Programms aus einem laufenden Programm (gleicher Lader, anderer Dateizugriff), VMware.
+
+## Ausnahmen als Signal (V24)
+
+Plattformunabhängig in `ProjektZeh/Processes/LinuxSignals.cs` (`LinuxFault`, `LinuxSignalFrame.DeliverFault`, Hosttests in `LinuxThreadsTests`), Brücke
+`OnFault` in `ProjektZeh/Runtime/CosmosLinuxRun.cs`; Gastprogramme `experiments/LinuxAbi/src/v24/faultsig.c` (Erwartung Linux 6.12 in `expected/v24`) und
+`s3/sigsegv_status.c`. Anlass: Ladybird und LibJS fangen SIGSEGV (Stapelüberlauf auf dem Alternativstack, Schreibschutz).
+
+- Eine Ausnahme im Ring 3, die kein bedienbarer Seitenfehler ist, geht wie Linux `force_sig_fault` an den Handler: Rahmen wie bei V18 auf dem Stapel oder
+  Alternativstack, siginfo mit `si_addr`, sigcontext mit `err`, `trapno` und `cr2`. Der Handler läuft statt des Befehls; kehrt er per `rt_sigreturn`
+  zurück, läuft der Befehl noch einmal (oder ab dem RIP, den der Handler in den ucontext schrieb).
+- Signal und `si_code`: #PF SIGSEGV mit `SEGV_MAPERR` (kein Bereich) oder `SEGV_ACCERR` (Bereich, auch `PROT_NONE`), `si_addr` = CR2; #GP und der Rest
+  SIGSEGV mit `SI_KERNEL`, `si_addr` 0; #UD SIGILL `ILL_ILLOPN`, #DE SIGFPE `FPE_INTDIV`, #MF/#XM SIGFPE mit Code aus FSW beziehungsweise MXCSR, jeweils
+  `si_addr` = RIP; #NP/#SS SIGBUS `SI_KERNEL`, #AC SIGBUS `BUS_ADRALN`.
+- Ausnahmesignale reihen sich nicht ein und gehen anhängigen vor; danach folgen anhängige Signale mit eigenem Rahmen darüber (sie laufen zuerst), wie Linux.
+- Ist das Signal blockiert oder ignoriert oder hat es keinen Handler, endet der Prozess damit (Linux setzt dann SIG_DFL); ein zweiter Fehler im Handler
+  (Signal dort blockiert) ebenso. Passt der Rahmen nicht, endet er mit SIGSEGV.
+- Grenzen: `int3` (und `int 3`) im Ring 3 ist unter Cosmos ein #GP (das Gate für #BP hat DPL 0) und wird SIGSEGV statt SIGTRAP; #DB kommt nicht vor.
+  Ein Fehler im vfork-Kind vor execve bricht weiter den ganzen Lauf ab. Ein Zugriff hinter das Ende einer geteilten Datei ist SIGSEGV statt SIGBUS.
+  Nur QEMU/KVM geprüft.

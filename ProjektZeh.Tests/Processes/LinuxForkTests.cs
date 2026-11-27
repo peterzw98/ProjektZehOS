@@ -340,6 +340,57 @@ public sealed class LinuxForkTests
     }
 
     [TestMethod]
+    public void GrosserGeteilterAnonymerBereichWieNoreserve()
+    {
+        // V21-Review P3 (3): Die Länge hängt nicht am Speicher des Prozesses (64 MiB), erst die benutzten Seiten zählen; wie privat.
+        LinuxUserProcess parent = NewParent();
+        ulong big = MapAnon(parent, 1UL << 30, MapShared);
+        ulong priv = MapAnon(parent, 1UL << 30, MapPrivate);
+        Put(parent, big, 1);
+        Put(parent, big + (1UL << 30) - 1, 2);
+        Put(parent, priv, 3);
+        Assert.AreEqual(1, Get(parent, big));
+        Assert.AreEqual(2, Get(parent, big + (1UL << 30) - 1));
+        Assert.AreEqual(1, parent.SharedRegionCount);
+
+        // Die Speichergrenze greift beim Zugriff: Ein Prozess mit 4 Seiten bildet 1 GiB ab, kann aber nicht mehr Seiten belegen.
+        LinuxUserProcess small = NewParent(4 * Page);
+        ulong s = MapAnon(small, 1UL << 30, MapShared);
+        int touched = 0;
+        for (ulong i = 0; i < 8; i++)
+        {
+            if (small.TryWrite(s + (i * Page), new byte[] { 1 }))
+            {
+                touched++;
+            }
+        }
+
+        Assert.IsTrue(touched is > 0 and <= 4, $"belegt {touched}");
+    }
+
+    [TestMethod]
+    public void MremapAufGeteiltemAnonymemBereich()
+    {
+        // V21-Review P3 (2): mremap vergrößert nicht (-ENOMEM, auch an Ort und Stelle), also entsteht kein Stück ohne geteilten Bereich;
+        // Verkleinern kürzt den geteilten Bereich wie munmap.
+        const long Mremap = 25, ENOMEMr = -12;
+        LinuxUserProcess parent = NewParent();
+        ulong shared = MapAnon(parent, 2 * Page, MapShared);
+        Put(parent, shared, 7);
+        Assert.AreEqual(ENOMEMr, Call(parent, Mremap, shared, 2 * Page, 4 * Page, 0));
+        Assert.AreEqual(ENOMEMr, Call(parent, Mremap, shared, 2 * Page, 4 * Page, 1));
+        Assert.AreEqual(1, parent.SharedRegionCount);
+
+        Assert.IsTrue(Call(parent, LinuxSyscalls.Fork) > 0);
+        LinuxUserProcess child = _children[0];
+        Assert.AreEqual((long)shared, Call(parent, Mremap, shared, 2 * Page, Page, 0));
+        Assert.AreEqual(1, parent.SharedRegionCount);
+        Assert.IsFalse(parent.TryRead(shared + Page, new byte[1]), "Ende freigegeben");
+        Put(child, shared, 8);
+        Assert.AreEqual(8, Get(parent, shared), "der verbleibende Teil bleibt mit dem Kind geteilt");
+    }
+
+    [TestMethod]
     public void MunmapGeteiltImKindLaesstElternBereich()
     {
         LinuxUserProcess parent = NewParent();

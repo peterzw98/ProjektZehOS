@@ -14,6 +14,13 @@ internal interface ILinuxSharedMemory
     LinuxMemFile CreateMemFile(string name, bool sealing);
 
     /// <summary>
+    /// V24 (V21-Review P3 3): die namenlose Datei hinter MAP_SHARED|MAP_ANONYMOUS. Ihre Länge ist nicht an den Speicher des Prozesses
+    /// gebunden: Wie bei privaten anonymen Abbildungen kommen Frames erst beim Zugriff, und dort gilt die Grenze des Prozesses. Sonst
+    /// lieferte ein großer, nur teilweise benutzter Bereich (MAP_NORESERVE, Arenen) -ENOMEM, privat aber Erfolg.
+    /// </summary>
+    LinuxMemFile CreateAnonymousSharedFile();
+
+    /// <summary>
     /// Bildet <paramref name="len"/> Bytes (seitenweise) der Datei ab Seite <paramref name="pageOffset"/> geteilt ab; Adresse oder -errno.
     /// Frames kommen erst beim Zugriff (Seitenfehler oder Kernelzugriff) und gehören dann Datei und Abbildung gemeinsam.
     /// </summary>

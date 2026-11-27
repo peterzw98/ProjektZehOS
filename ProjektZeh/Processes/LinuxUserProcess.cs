@@ -826,6 +826,23 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         }
     }
 
+    /// <summary>
+    /// V24: Liegt <paramref name="address"/> in einem Bereich der Karte, auch PROT_NONE? Für den si_code eines Seitenfehlers: SEGV_ACCERR,
+    /// wenn ja (Zugriff verboten), sonst SEGV_MAPERR.
+    /// </summary>
+    public bool HasMapping(ulong address)
+    {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.HasMapping(address);
+        }
+
+        lock (_memGate)
+        {
+            return address < ElfLoader.UserEnd && _map.TryFind(address & ~(Page - 1), out _);
+        }
+    }
+
     private bool HandlePageFaultLocked(ulong address, ulong error)
     {
         if ((error & FaultPresent) != 0 || address >= ElfLoader.UserEnd)
