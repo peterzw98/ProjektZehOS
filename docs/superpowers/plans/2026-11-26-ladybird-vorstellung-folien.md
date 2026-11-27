@@ -1,6 +1,6 @@
 # Ladybird auf ZehOS: Stichpunkte für die Vorstellung (4.12.2026)
 
-> Arbeitsstand 27.11. vormittags, Story `story/ladybird` @ `a549bd61` (Tor N1-Z: **GO** von Peter am 27.11.). Zahlen nur aus den genannten Belegen; was bis Donnerstag dazukommt, wird nachgetragen, was fehlt, bleibt weg.
+> Stand 27. November 2026 nach den Generalproben. Peter gab am 27.11. das **GO** am Tor N1-Z. Teststände und Grenzen stehen im [Machbarkeitsbericht](../../LADYBIRD_FEASIBILITY.md#stand-nach-dem-go-am-27-november-2026), Befehle und Rückfall im [Demo-Ablauf](2026-12-04-ladybird-demo-ablauf.md).
 
 ## 1. Frage
 
@@ -16,7 +16,7 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 | Baustein | Inhalt |
 | --- | --- |
 | Cosmos-Patches | GDT/TSS je CPU, FPU-Zustand je Thread, Ring-3-Einstieg, CR3 je Thread, APIC über HHDM, sofortiges Yield |
-| ELF-Lader | statisch und statisch-PIE, Startstack mit auxv, W^X, gehärtet gegen 10 000 verfälschte Dateien |
+| ELF-Lader | statisch und statisch-PIE, Startstack mit auxv, W^X |
 | Linux-Systemaufrufe | Speicher, Dateien, Pipes, poll/ppoll/epoll, timerfd, eventfd, Threads (clone, futex), Prozesse (fork, vfork, execve, wait), Signale inkl. Fehlersignale aus Ring 3, Unix-Sockets (Stream, Datagramm, Dateien übergeben), TCP/UDP über Loopback, memfd, Dateisperren (fcntl, flock), CPU-Zeit |
 | Dynamisches Laden | `PT_INTERP`: dynamisch gelinkte musl-Programme (ld-musl, libstdc++, libgcc_s) starten, auch per `execve` aus laufenden Prozessen |
 | /proc | status, stat, maps, meminfo, cpuinfo je Prozess des Laufs |
@@ -28,39 +28,40 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 1. `run hello` im Desktop-Terminal → „Hallo aus dem Ring 3!“, Ende 0.
 2. Linux-Testsätze (`scripts/test-linux-all.py`): **12 von 13** Sätzen wie unter Linux (KVM, 1 und 4 CPUs, engineer 27.11. 09:10); einzige Abweichung `badptr` in s1, weil FAT keine symbolischen Links kennt.
 3. **Ladybirds JavaScript-Engine `js`** (statisch mit musl, 33 MB, unverändert) im ZehOS-Terminal: `1+1` → `2`, REPL mit `(7*6).toString(2)` → `"101010"`, Strg+C bricht Endlosschleife ab. Gastskript 11/11 bei 1 und 4 CPUs. Foto: `zehos-v3-out/js14-1/03-repl-antwort.png` (MSI).
-4. **Ladybird rendert eine Seite im ZehOS-Gast** (27.11., senior): `static.html` vollständig als PNG 798 × 4087 (alle 50 Absätze, Tabelle, Umlaute), 8 Ladybird-Prozesse im Ring 3, KVM: **3 von 3 Läufen mit 1 CPU und 3 von 3 mit 4 CPUs** ohne Absturz, dazu **TCG 3 von 3** (senior, 27.11. 12:25/12:39, `story/ladybird` mit V38); TCG auf dem Abnahmestand `0760f4b8` static und js je 1 von 1 (senior2, 18:11). Demo: `scripts/ladybird-demo-run.sh`. Ladezeit im Gast noch 5–8 s.
-5. **Abnahme aller vier Seiten** (27.11. 18:02, senior2, `story/ladybird` `0760f4b8` mit V43/V45, KVM, 2 GB, Demo-Skript): **8 von 8 im ersten Versuch**, keine Plattenausfälle (static, css, js, img je mit 1 und 4 CPUs, Gastlauf 82–89 s, Bild bei 1 und 4 CPUs gleich). Vorher auf `3a06a154` ebenfalls 8/8.
-6. **Seite über HTTP im Gast** (27.11. 17:34, engineer2): BusyBox-`httpd` (statisch, GPL-2.0) und Ladybird im selben ZehOS-Gast, Ladybird lädt `http://127.0.0.1:8080/zehos-projekt.html` über RequestServer und Loopback-TCP; PNG 798 × 720 wie unter Linux, 3 von 3 (KVM 1 CPU, 2 GB, Stände `e4f5eff6`, `6301341f`, `2dd30960`).
-7. **Weitere Seiten** (27.11., senior, Gast mit 2 GB, KVM 1 und 4 CPUs, je 1 Lauf, PNG je Seite bytegleich): `css.html` (Webfonts, Verläufe, sticky-Kopf), `js.html` (Ergebnis gleich wie node auf dem Host), `img.html` (PNG dekodiert und skaliert). Mit 512 MB Gastspeicher hält der Kernel noch an (Prozesse können den Kernel-Heap leeren, V43 in Arbeit).
+4. **Erster vollständiger Screenshot im Gast:** `static.html` auf `cbcdb6bb` (798 × 4087 Pixel, 50 Absätze und eine Tabelle). Nach V38 (`4c8f73e3`) lief dieselbe Seite auf KVM je **3/3 mit 1 und 4 CPUs** und auf TCG **3/3 mit 1 CPU** ohne Absturz.
+5. **Abnahme von vier Seiten:** `0760f4b8` mit V43/V45, KVM, 2 GiB, `lb-headless-99fb75b7`. HTML, CSS, JavaScript und PNG-Dekodierung je mit 1 und 4 CPUs, **8/8 im ersten Versuch**, Gastlauf 82–89 s, gleicher Anteil nicht-weißer Pixel je Seite. TCG auf demselben Stand, 1 CPU, `static.html` und `js.html` je 1/1.
+6. **Generalprobe mit dem Standardbündel:** KVM auf `ca0e3238` mit dem ISO `0760f4b8-run`. `static.html`, Projektseite und Canvas dauerten je 88 s gesamt. Die WSL-Probe mit TCG prüfte `static.html` zweimal in je 104 s, davon 96 s im Gast. Beide PNGs waren bytegleich zur MSI-Referenz. [Demo-Ablauf](2026-12-04-ladybird-demo-ablauf.md)
+7. **Seite über HTTP im Gast:** BusyBox-`httpd` und Ladybird in demselben LinuxRun-Prozessbaum. `http://127.0.0.1:8080/zehos-projekt.html` ergab 798 × 720 Pixel, **3/3** auf KVM mit 1 CPU und 2 GiB (`e4f5eff6`, `6301341f`, `2dd30960`, 68–91 s). [Machbarkeitsbericht](../../LADYBIRD_FEASIBILITY.md#stand-nach-dem-go-am-27-november-2026)
 
 ## 5. Zahlen zur Machbarkeit
 
 - **`js` im Gast so schnell wie unter Linux** (KVM, 1 CPU, je 3 Läufe, [Bericht](../specs/2026-11-26-ladybird-js-gast.md)): Sortieren 10 000 Einträge 10–11 ms vs. 9–10 ms, Schleife 1 Mio. 4–5 vs. 4 ms, `fib(25)` 6–10 vs. 6–7 ms, 10⁸ Durchläufe 407 vs. 402 ms. Nur der Programmstart ist langsamer: ~0,4 s im Gast vs. ~10 ms unter Linux.
 
 - Ladybird-Bau (glibc, ohne JIT) auf normalem PC: ~60 min, Spitzen-RAM ~4 GiB (der angenommene 32-GiB-Rechner war unnötig).
-- Laufzeitbedarf (L1-C): 334–438 MiB PSS für drei Testseiten, 7 Prozesse, 69 Threads.
-- Ganzes Ladybird mit musl: baut mit **87 Patchzeilen** (Grenze 1000); **unter Linux headless ohne Qt: Hub + 9 Dienste, `static.html` als PNG 798×4087** (senior25, 27.11., #636).
+- Laufzeitbedarf unter Linux (L1-C): 334–438 MiB PSS für drei Testseiten, meist 7 Prozesse und 69 Threads. [Messung L1](../../LADYBIRD_FEASIBILITY.md#messung-l1)
+- Ganzes Ladybird mit musl: **87 Patchzeilen** im Vollbau (Grenze 1000). Unter Linux startet Hub headless ohne Qt und rendert `static.html` mit 798 × 4087 Pixeln. [Bau und Laufzeitprobe #636](https://github.com/peterzw98/ProjektZehOS/issues/636#issuecomment-7211849801)
 - Systemaufrufe von Ladybird (C2): 94 verschiedene, keiner aus den Ausschlussgruppen → **trägt**.
 
 ## 6. Qualität
 
 - Jeder Baustein mit unabhängigem Review; mehrere Sicherheitsreviews (Linux-Schnittstelle, ELF-Lader, Dateisystem) fanden und schlossen u. a.: Kernel-OOM über Terminal, Zugriff auf Sicherheitsdatenbank per 8.3-Kurzname, Datenverlust beim Ordner-Umbenennen mit offenen Dateien.
-- Hosttests: rund 1980, Windows und Linux grün; Gasttests für jede Stufe.
+- Host- und Gasttests sind in den Berichten zu den jeweiligen Ständen dokumentiert. [Nachweise](../../LADYBIRD_FEASIBILITY.md)
 
 ## 7. Grenzen (ehrlich)
 
 - Alle Threads **aller Prozesse eines Laufs** auf einer CPU (4 CPUs bringen Ladybird noch keine Parallelität, laser Risiko-Review 27.11.); fork kopiert den Adressraum sofort (kein Copy-on-Write).
-- Netz nur über Loopback, keine Fenster für Linux-Programme; FAT ohne symbolische Links und ohne echte Rechte.
+- Geprüfter Netzpfad ist HTTP über IPv4-Loopback. Die Demo rendert headless. FAT stellt keine symbolischen Links oder nativen Unix-Rechte bereit.
+- Die Demo verwendet 2 GiB Gast-RAM. Seit V43 kann bei 512 MiB `WebContent` per `SIGKILL` enden. Neustarts können bis zum Zeitlimit laufen und ein weißes oder fehlendes PNG hinterlassen.
 - Nicht geprüft: VMware, echte Hardware.
 
-## 8. Ausblick und Aufwand
+## 8. Ausblick
 
 | Phase | Inhalt | Stand |
 | --- | --- | --- |
-| N1 Nachweise | Risiken klären | ~90 % |
-| N2 Prozesse, ELF, Systemaufrufe | Linux-Programme starten | ~75 % |
+| N1 Nachweise | Risiken klären | GO erteilt, förmliches D2-Urteil offen |
+| N2 Prozesse, ELF, Systemaufrufe | Linux-Programme starten | Statische und dynamische Beispiele im Gast gelaufen |
 | N3 Paketdienst | native Pakete | offen |
-| N4 Threads, IPC, Netz | mehrere Prozesse, Sockets | ~20 % |
-| N5/N6 | Apps umstellen, Ladybird mit Seite | offen |
+| N4 Threads, IPC, Netz | mehrere Prozesse und Sockets | Browser-Prozesse und HTTP-Loopback im Gast belegt |
+| N5/N6 | Apps umstellen, Ladybird mit Seite | Headless-Demo belegt, Browserfenster offen |
 
-Gesamt grob **25–30 %** des Plans (42–71 Personenwochen, Hypothese). Nächster großer Schritt: Prozesse starten Prozesse (Ladybird braucht WebContent als eigenen Prozess), dann Sockets und ein Fenster.
+Weitere Prüfpunkte und offene Fragen stehen im [Machbarkeitsbericht](../../LADYBIRD_FEASIBILITY.md#offene-punkte).
