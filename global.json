@@ -5,6 +5,6 @@
     "allowPrerelease": false
   },
   "msbuild-sdks": {
-    "Cosmos.Sdk": "3.0.97-zehos.0.g1fa47ed"
+    "Cosmos.Sdk": "3.0.97-zehos.0.gda5e44b"
   }
 }

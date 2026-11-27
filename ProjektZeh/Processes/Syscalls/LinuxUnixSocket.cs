@@ -456,11 +456,19 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     /// Beim letzten Verweis (close der letzten Nummer, auch unterwegs gehaltene): beide Richtungen zu; Ungelesenes verfällt wie bei Linux,
     /// mitgeschickte Dateien werden freigegeben. Der Aufrufer hält die Dateisperre oder keine Sperre; ein zweiter Aufruf ändert nichts.
     /// </summary>
+    private static int s_diagCloses;
+
     public void Close()
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0)
         {
             return;
+        }
+
+        // DIAG dep-handle (nie mergen): je 2000 Closes (= eine sockloop-Runde) GC erzwingen, damit DEPH je Runde geloggt wird
+        if ((Interlocked.Increment(ref s_diagCloses) % 2000) == 0)
+        {
+            GC.Collect();
         }
 
         OnLastClose(); // V16 senior2 (LinuxUnixSocket.Listen.cs): Namen freigeben, Wartende eines Listeners wecken
