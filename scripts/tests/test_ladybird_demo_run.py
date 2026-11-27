@@ -1,5 +1,6 @@
 """Hosttests für die Archivübergabe vom Ladybird-Demo-Runner an den Plattenbau."""
 
+import gzip
 import io
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import unittest
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 ABSOLUTE = b"<dir>/share/fonts/dejavu</dir><dir>/share/Lagom/fonts</dir>\n"
+CACHEDIR = b"<cachedir>/tmp/fontconfig</cachedir>\n"
 RELATIVE = (
     b'<dir prefix="relative">share/fonts/dejavu</dir>'
     b'<dir prefix="relative">share/Lagom/fonts</dir>\n'
@@ -73,7 +75,7 @@ class LadybirdDemoRunTests(unittest.TestCase):
         args = [] if use_default else ["-b", str(self.bundle)]
         return subprocess.run(
             ["bash", str(self.runner), "--iso", str(self.iso), "-o", str(self.output), *args],
-            env={"HOME": str(self.home), "DOTNET_ROOT": str(self.bin), "PATH": "/usr/bin:/bin"},
+            env={"HOME": str(self.home), "DOTNET_ROOT": str(self.bin), "PATH": os.environ["PATH"]},
             capture_output=True,
             text=True,
             timeout=15,
@@ -91,15 +93,28 @@ class LadybirdDemoRunTests(unittest.TestCase):
         self.assertNotIn("--strip", args)
 
     def test_explicit_prepared_bundle(self):
-        self.make_bundle("./etc/fonts/", ABSOLUTE)
-        args = self.disk_args(self.run_demo(use_default=False))
+        self.make_bundle("./etc/fonts/", ABSOLUTE + CACHEDIR)
+        result = self.run_demo(use_default=False)
+        args = self.disk_args(result)
         self.assertFalse(any(arg.startswith("/etc/fonts/") for arg in args), args)
+        self.assertNotIn("WARNUNG", result.stdout)
 
-    def test_prepared_fonts_under_bundle_directory(self):
-        self.make_bundle("ladybird-static/etc/fonts/", ABSOLUTE)
-        args = self.disk_args(self.run_demo())
+    @unittest.skipUnless(shutil.which("zstd"), "zstd erforderlich")
+    def test_prepared_fonts_under_bundle_directory_in_zstd(self):
+        self.make_bundle("./ladybird-static/etc/fonts/", ABSOLUTE + CACHEDIR)
+        raw = gzip.decompress(self.bundle.read_bytes())
+        self.bundle = self.bundle.with_suffix(".zst")
+        subprocess.run(["zstd", "-q", "-o", str(self.bundle)], input=raw, check=True, timeout=15)
+        args = self.disk_args(self.run_demo(use_default=False))
         self.assertEqual(args[args.index("--strip") + 1], "1")
         self.assertFalse(any(arg.startswith("/etc/fonts/") for arg in args), args)
+
+    def test_prepared_fonts_without_tmp_cache_warn(self):
+        self.make_bundle("./etc/fonts/", ABSOLUTE)
+        result = self.run_demo()
+        self.disk_args(result)
+        self.assertIn("WARNUNG", result.stdout)
+        self.assertIn("/tmp/fontconfig", result.stdout)
 
     def test_legacy_relative_fonts(self):
         self.make_bundle("./", RELATIVE)
