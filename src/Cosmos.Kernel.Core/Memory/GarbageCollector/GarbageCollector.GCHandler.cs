@@ -94,6 +94,7 @@ internal static unsafe partial class GarbageCollector
     /// <param name="handle">The handle to free. No-op if <see cref="IntPtr.Zero"/>.</param>
     internal static void FreeHandle(IntPtr handle)
     {
+        if (handle != 0 && ((GCHandle*)handle)->Type == (GCHandleType)6) System.Threading.Interlocked.Increment(ref Cosmos.Kernel.Core.Runtime.Memory.DepDiag.Frees);
         s_gCHandleManager.FreeHandle((GCHandle*)handle);
     }
 }

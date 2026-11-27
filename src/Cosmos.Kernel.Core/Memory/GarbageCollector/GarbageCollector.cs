@@ -474,7 +474,20 @@ internal static unsafe partial class GarbageCollector
         Serial.WriteNumber((uint)s_gCHandleManager.DependentHandleStore.Count);
         Serial.WriteString(" seg=");
         Serial.WriteNumber((uint)s_gCHandleManager.DependentHandleStore.SegmentCount);
+        {
+            uint live = 0, nosec = 0;
+            var en = s_gCHandleManager.DependentHandleStore.GetEnumerator();
+            while (en.MoveNext())
+            {
+                if (en.Current->Object != null) { live++; if (en.Current->ExtraInfo == 0) nosec++; }
+            }
+            Serial.WriteString(" liveprimary=");
+            Serial.WriteNumber(live);
+            Serial.WriteString(" livenosecondary=");
+            Serial.WriteNumber(nosec);
+        }
         Serial.WriteString("\n");
+        Cosmos.Kernel.Core.Runtime.Memory.DepDiag.Dump();
 
         // Sweep and rebuild free lists
         freedCount = SweepPhase();

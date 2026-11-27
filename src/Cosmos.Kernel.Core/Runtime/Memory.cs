@@ -193,7 +193,73 @@ internal static unsafe class Memory
     [RuntimeExport("RhpHandleAllocDependent")]
     internal static IntPtr RhpHandleAllocDependent(GCObject* primary, GCObject* secondary)
     {
+        DepDiag.Record();
         return GarbageCollector.AllocateHandler(primary, (GCHandleType)6, (nint)secondary);
+    }
+
+    // DIAG dep-handle (nie mergen): Aufrufer der Dependent-Handle-Anlage zaehlen (IP nach 1, 2, 3 Entrollschritten)
+    internal static unsafe class DepDiag
+    {
+        private const int Slots = 24;
+        private struct Tab { public fixed ulong Key[Slots]; public fixed ulong Ip1[Slots]; public fixed ulong Ip3[Slots]; public fixed ulong Cnt[Slots]; }
+        private static Tab s_t;
+        internal static ulong Total;
+        internal static ulong Frees;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void Record()
+        {
+            Interlocked.Increment(ref Total);
+            REGDISPLAY rd = default;
+            nuint ip = Cosmos.Kernel.Core.Bridge.ContextSwitchNative.CaptureRegDisplay(&rd);
+            UnwindState st = default;
+            ExceptionHelper.SeedUnwindStateFromRegDisplay(ref st, &rd, ip);
+            nuint ip1 = 0, ip2 = 0, ip3 = 0;
+            if (!ExceptionHelper.UnwindOneFrameWithCFI(ref st, ip)) { Add(0, 0, 0); return; }
+            ip1 = st.ReturnAddress;
+            if (ExceptionHelper.UnwindOneFrameWithCFI(ref st, ip1))
+            {
+                ip2 = st.ReturnAddress;
+                if (ExceptionHelper.UnwindOneFrameWithCFI(ref st, ip2)) ip3 = st.ReturnAddress;
+            }
+            Add(ip2, ip1, ip3);
+        }
+
+        private static void Add(nuint key, nuint ip1, nuint ip3)
+        {
+            for (int i = 0; i < Slots; i++)
+            {
+                ulong k = s_t.Key[i];
+                if (k == 0 && key != 0)
+                {
+                    k = (ulong)Interlocked.CompareExchange(ref *(long*)&s_t.Key[i], (long)key, 0);
+                    if (k == 0) { s_t.Ip1[i] = ip1; s_t.Ip3[i] = ip3; k = key; }
+                }
+                if (k == key) { Interlocked.Increment(ref *(long*)&s_t.Cnt[i]); return; }
+            }
+        }
+
+        internal static void Dump()
+        {
+            Serial.WriteString("[GC] DEPH allocs=");
+            Serial.WriteNumber((uint)Total);
+            Serial.WriteString(" frees=");
+            Serial.WriteNumber((uint)Frees);
+            Serial.WriteString("\n");
+            for (int i = 0; i < Slots; i++)
+            {
+                if (s_t.Key[i] == 0) continue;
+                Serial.WriteString("[GC] DEPH caller n=");
+                Serial.WriteNumber((uint)s_t.Cnt[i]);
+                Serial.WriteString(" ip2=");
+                Serial.WriteHexWithPrefix(s_t.Key[i]);
+                Serial.WriteString(" ip1=");
+                Serial.WriteHexWithPrefix(s_t.Ip1[i]);
+                Serial.WriteString(" ip3=");
+                Serial.WriteHexWithPrefix(s_t.Ip3[i]);
+                Serial.WriteString("\n");
+            }
+        }
     }
 
     // ZehOS patch gc-oom-throw, see PATCHES.md
