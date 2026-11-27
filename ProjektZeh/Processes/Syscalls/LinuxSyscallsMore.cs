@@ -48,7 +48,7 @@ internal sealed class LinuxSignalState
 internal static partial class LinuxSyscalls
 {
     public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
-        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99, RtSigpending = 127;
+        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99, RtSigpending = 127, Getrusage = 98;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
 
@@ -68,6 +68,7 @@ internal static partial class LinuxSyscalls
             case Getrandom: return DoGetrandom(p, a.A0, a.A1, (uint)a.A2);
             case Uname: return DoUname(p, a.A0);
             case Sysinfo: return DoSysinfo(p, a.A0);
+            case Getrusage: return DoGetrusage(p, (int)a.A0, a.A1);
             case RtSigaction: return DoSigaction(p, (int)a.A0, a.A1, a.A2, a.A3);
             case RtSigpending: return DoSigpending(p, a.A0, a.A1);
             case RtSigprocmask: return DoSigprocmask(p, (int)a.A0, a.A1, a.A2, a.A3);
@@ -125,6 +126,16 @@ internal static partial class LinuxSyscalls
 
         long ns;
         var host = p as ILinuxHost;
+        // V29c: CLOCK_PROCESS_CPUTIME_ID (2) und CLOCK_THREAD_CPUTIME_ID (3) zählen die Rechenzeit, nicht die Wanduhr.
+        if ((clock == 2 || clock == 3) && p is ILinuxCpuTime cpu)
+        {
+            long cpuNs = clock == 2 ? cpu.ProcessCpuNanos : cpu.CurrentThreadCpuNanos;
+            Span<byte> t = stackalloc byte[16];
+            BitConverter.TryWriteBytes(t.Slice(0, 8), cpuNs / 1_000_000_000L);
+            BitConverter.TryWriteBytes(t.Slice(8, 8), cpuNs % 1_000_000_000L);
+            return p.Memory.TryWrite(tsPtr, t) ? 0 : -EFAULT;
+        }
+
         // Realtime und grobe Realtime-Uhr (0, 5) laufen auf Wanduhr; alle anderen (auch CPU-Zeit) auf der monotonen Uhr.
         if (clock == 0 || clock == 5)
         {
@@ -139,6 +150,24 @@ internal static partial class LinuxSyscalls
         BitConverter.TryWriteBytes(b.Slice(0, 8), ns / 1_000_000_000L);
         BitConverter.TryWriteBytes(b.Slice(8, 8), ns % 1_000_000_000L);
         return p.Memory.TryWrite(tsPtr, b) ? 0 : -EFAULT;
+    }
+
+    /// <summary>
+    /// getrusage (V29c): ru_utime aus der CPU-Zeit (RUSAGE_SELF: Prozess, RUSAGE_THREAD: aufrufender Thread), ru_stime 0 (ZehOS trennt
+    /// Kernel- und Benutzerzeit nicht), alle übrigen Zähler 0. RUSAGE_CHILDREN liefert 0 (beendete Kinder werden nicht aufsummiert).
+    /// </summary>
+    private static long DoGetrusage(ILinuxProcess p, int who, ulong ptr)
+    {
+        if (who != 0 && who != -1 && who != 1)
+        {
+            return -EINVAL;
+        }
+
+        long ns = p is ILinuxCpuTime cpu && who != -1 ? (who == 1 ? cpu.CurrentThreadCpuNanos : cpu.ProcessCpuNanos) : 0;
+        byte[] buf = new byte[RusageSize];
+        BitConverter.TryWriteBytes(buf.AsSpan(0, 8), ns / 1_000_000_000L);
+        BitConverter.TryWriteBytes(buf.AsSpan(8, 8), ns % 1_000_000_000L / 1000);
+        return p.Memory.TryWrite(ptr, buf) ? 0 : -EFAULT;
     }
 
     private static long DoGetrandom(ILinuxProcess p, ulong buf, ulong len, uint flags)

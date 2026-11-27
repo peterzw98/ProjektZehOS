@@ -646,6 +646,7 @@ internal static unsafe class CosmosLinuxRun
         // V15 kill aus einem Kindprozess: Der aufrufende Thread gehört nicht zu diesem Prozess und bleibt im Ring 3, bis der Lauf ihn beendet.
         process.OnKilled = code => LeaveAll(run, CurrentBridge(run), (ulong)code);
         var main = new Bridge { Linux = process.MainThread, Process = process, Sched = FaultIsolation.CurrentSchedulerThread() };
+        BindCpuTime(main);
         run.Threads[0] = main;
         run.KernelThreads = 1;
         run.Process = process;
@@ -800,12 +801,29 @@ internal static unsafe class CosmosLinuxRun
         }
     }
 
+    /// <summary>
+    /// V29c: CPU-Zeit des Linux-Threads aus <c>SchedulerThread.TotalRuntime</c> des Kernelthreads, gezählt ab dem Zeitpunkt der Zuordnung
+    /// (der Kernelthread gehörte zuvor womöglich einer anderen Aufgabe). Die Laufzeit zählt der Zeitgeber je Tick (OnTick), nicht je Befehl.
+    /// </summary>
+    private static void BindCpuTime(Bridge b)
+    {
+        SchedulerThread? sched = Volatile.Read(ref b.Sched);
+        if (sched == null)
+        {
+            return;
+        }
+
+        ulong start = sched.TotalRuntime;
+        b.Linux.CpuNanosSource = () => (long)(sched.TotalRuntime - start);
+    }
+
     private static void ChildBody(Running run, UserPageTable table, LinuxUserProcess process, Bridge b)
     {
         bool bound = false;
         try
         {
             Volatile.Write(ref b.Sched, FaultIsolation.CurrentSchedulerThread());
+            BindCpuTime(b);
             table.BindToCurrentThread();
             bound = true;
             UserMode.SetFsBase(b.Linux.FsBase);
@@ -1275,6 +1293,7 @@ internal static unsafe class CosmosLinuxRun
         try
         {
             Volatile.Write(ref b.Sched, FaultIsolation.CurrentSchedulerThread());
+            BindCpuTime(b);
             table.BindToCurrentThread();
             bound = true;
             UserMode.SetFsBase(fsBase);

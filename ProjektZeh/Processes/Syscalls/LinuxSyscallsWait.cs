@@ -135,7 +135,7 @@ internal static partial class LinuxSyscalls
     }
 
     /// <summary>
-    /// rusage des Kindes: ZehOS zählt keine Rechenzeit je Prozess; Nullen sind der ehrliche Wert (Linux liefert dieselbe Struktur, nur gefüllt).
+    /// rusage des Kindes: ZehOS summiert die Rechenzeit beendeter Kinder nicht; Nullen sind der ehrliche Wert (Linux liefert dieselbe Struktur, nur gefüllt).
     /// </summary>
     private static bool WriteEmptyRusage(ILinuxProcess p, ulong rusagePtr) => rusagePtr == 0 || p.Memory.TryWrite(rusagePtr, new byte[RusageSize]);
 }

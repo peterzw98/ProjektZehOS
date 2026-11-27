@@ -45,7 +45,7 @@ internal interface IUserPages
 /// Start und <see cref="Destroy"/> nach dem Ende aller Threads laufen ohne Nebenläufigkeit.
 /// </para>
 /// </summary>
-internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
+internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
     ILinuxSystemInfo, ILinuxSpawn, ILinuxFdFlags, ILinuxOpenFileCount, ILinuxWait, ILinuxInFlight
 {
     /// <summary>
@@ -231,6 +231,31 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
     public LinuxFutexTable Futexes { get; }
 
     /// <summary>Anzahl Threads, die noch nicht geendet haben.</summary>
+    public long CurrentThreadCpuNanos => CurrentThread.CpuNanos;
+
+    // V29c: Summe der CPU-Zeit beendeter Threads (die Threadliste verwirft sie beim nächsten clone), unter _threadGate.
+    private long _exitedCpuNanos;
+
+    public long ProcessCpuNanos
+    {
+        get
+        {
+            lock (_threadGate)
+            {
+                long sum = _exitedCpuNanos;
+                foreach (LinuxThread t in _threads)
+                {
+                    if (!t.Exited)
+                    {
+                        sum += t.CpuNanos;
+                    }
+                }
+
+                return sum;
+            }
+        }
+    }
+
     public int LiveThreads
     {
         get
@@ -379,6 +404,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             }
 
             me.Exited = true;
+            _exitedCpuNanos += me.FreezeCpu();
             last = --_liveThreads == 0;
         }
 
@@ -405,6 +431,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             }
 
             thread.Exited = true;
+            _exitedCpuNanos += thread.FreezeCpu();
             _liveThreads--;
         }
     }

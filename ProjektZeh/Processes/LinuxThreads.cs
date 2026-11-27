@@ -38,6 +38,49 @@ internal sealed class LinuxThread
 
     /// <summary>Gehört der Brücke des Kernels (Kernelthread, gesicherte Register); der plattformunabhängige Teil liest es nie.</summary>
     public object? Host { get; set; }
+
+    /// <summary>
+    /// V29c: Quelle der CPU-Zeit dieses Threads in Nanosekunden (der Brückenteil des Kernels liest <c>SchedulerThread.TotalRuntime</c>);
+    /// null, solange kein Kernelthread zugeordnet ist oder in den Hosttests.
+    /// </summary>
+    public Func<long>? CpuNanosSource { get; set; }
+
+    private long _cpuFinal = -1;
+
+    /// <summary>CPU-Zeit in Nanosekunden: laufend aus der Quelle, nach <see cref="FreezeCpu"/> der eingefrorene Endwert.</summary>
+    public long CpuNanos
+    {
+        get
+        {
+            long frozen = Volatile.Read(ref _cpuFinal);
+            return frozen >= 0 ? frozen : CpuNanosSource?.Invoke() ?? 0;
+        }
+    }
+
+    /// <summary>Friert die CPU-Zeit beim Threadende ein und gibt die Quelle (den Kernelthread) frei; liefert den Endwert.</summary>
+    public long FreezeCpu()
+    {
+        long frozen = Volatile.Read(ref _cpuFinal);
+        if (frozen >= 0)
+        {
+            return frozen;
+        }
+
+        long now = CpuNanosSource?.Invoke() ?? 0;
+        Volatile.Write(ref _cpuFinal, now);
+        CpuNanosSource = null;
+        return now;
+    }
+}
+
+/// <summary>V29c: CPU-Zeit je Thread und Prozess (clock_gettime CPUTIME, getrusage, /proc/&lt;pid&gt;/stat). Nur die Brücke des Kernels zählt; ohne sie ist alles 0.</summary>
+internal interface ILinuxCpuTime
+{
+    /// <summary>CPU-Zeit des aufrufenden Threads in Nanosekunden.</summary>
+    long CurrentThreadCpuNanos { get; }
+
+    /// <summary>CPU-Zeit aller Threads des Prozesses (laufende und beendete) in Nanosekunden.</summary>
+    long ProcessCpuNanos { get; }
 }
 
 /// <summary>
