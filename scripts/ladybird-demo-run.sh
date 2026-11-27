@@ -2,7 +2,7 @@
 # Ladybird-Demo in einem Befehl: Cosmos-Werkzeuge + Kernel-Testbau (ZehOSLinuxRun) aus diesem Arbeitsbaum, Datenplatte aus dem
 # Buendel, Gastlauf von "Hub --headless=screenshot --disable-sandbox" auf static.html, Screenshot (PNG) aus der Platten-Kopie holen.
 #
-# Nutzung: scripts/ladybird-demo-run.sh [-b <buendel.tar.gz>] [-o <ausgabeordner>] [-u <url>] [-s <sekunden-verzoegerung>]
+# Nutzung: scripts/ladybird-demo-run.sh [-b <buendel.tar.gz|.tar.zst>] [-o <ausgabeordner>] [-u <url>] [-s <sekunden-verzoegerung>]
 #                                       [--smp N] [--timeout S] [--skip-cosmos] [--skip-build] [--iso <iso>] [--disk <qcow2>]
 #                                       [--page <name>] [--accel kvm|tcg] [--wait-scale F] [--memory 2G]
 # Ausgabe: <ausgabeordner>/shot.png (Standard ~/ladybird-demo-out/<zeitstempel>), run.log (alles, mit Zeitstempeln), times.txt,
@@ -10,7 +10,8 @@
 #          Bild (scripts/png-nonwhite.py: mindestens 0,1 % Pixel mit einem Kanal < 250); weisses Bild: Exit 1.
 #          Kernel-Halt im Gast (KERNEL PANIC, "System halting", [FAILFAST]): sofortiger Abbruch statt --timeout, Exit 3.
 # -o auf einen vorhandenen, nicht leeren Ordner: Lauf geht in einen neuen Unterordner <ausgabeordner>/<zeitstempel>; nichts wird geleert.
-# Voraussetzungen: dotnet (DOTNET_ROOT, Standard ~/.dotnet), KVM, qemu-img, mtools, Netz nur fuer den Cosmos-Quellbau.
+# Voraussetzungen: dotnet (DOTNET_ROOT, Standard ~/.dotnet), KVM, qemu-img, mtools, zstd fuer .tar.zst, Netz nur fuer den Cosmos-Quellbau.
+# Standardbuendel ohne -b: ~/ladybird-bundle/ladybird-static-with-images.tar.gz.
 # Ein Gast gleichzeitig: laeuft schon ein qemu-system-* (auch in einem anderen Slot), bricht das Skript mit dessen PID ab.
 #   QEMU_OK=1 startet trotzdem (nur, wenn der andere Gast abgesprochen ist; Messungen sind dann nicht gueltig).
 # --timeout: Sekunden vom Programmstart bis LINUXRUN END (Standard 600; Vorfuehrung: 180). Dazu kommen Boot/Anmeldung und Herunterfahren.
@@ -19,11 +20,11 @@
 # --disk: fertige Platte; der Gast schreibt nur in eine Kopie (<ausgabeordner>/guest/disk.qcow2), die Vorlage bleibt unveraendert. Eine
 #   schon benutzte Kopie (.../guest/disk.qcow2) wird abgelehnt: /tmp, Caches und Socketdateien vom Vorlauf (EADDRINUSE, 4096-Eintraege-Grenze).
 # --page: Demoseite aus experiments/Ladybird.Probe/pages (beim Plattenbau samt PNG-Bildern und fonts/ nach /share/zehos-probe gelegt).
-# --memory: Gastspeicher (QEMU -m, Standard 2G; mit 512M haelt der Kernel bei Ladybird aus Speichermangel).
+# --memory: Gastspeicher (QEMU -m, Standard 2G fuer die Demo). Mit 512M kann der Kernel WebContent per SIGKILL beenden.
 # --accel tcg: ohne KVM (feste Wartezeiten x10, --wait-scale aendert den Faktor); --timeout dann entsprechend hoeher setzen.
 set -u
 R=$(cd "$(dirname "$0")/.." && pwd)
-BUNDLE=$(ls -t "$HOME"/ladybird-bundle/lb-headless-*.tar.gz 2>/dev/null | head -1)
+BUNDLE=$HOME/ladybird-bundle/ladybird-static-with-images.tar.gz
 OUT=$HOME/ladybird-demo-out/$(date +%Y%m%d-%H%M%S)
 URL=file:///share/zehos-probe/static.html; DELAY=30; SMP=1; TIMEOUT=600; SKIPC=0; SKIPB=0; ISO=; DISK=; ACCEL=kvm; WSCALE=; MEM=2G
 while [ $# -gt 0 ]; do case $1 in
@@ -80,25 +81,40 @@ fi
 [ -f "$ISO" ] || die "ISO fehlt (--iso)"
 if [ -z "$DISK" ]; then
   DISK=$OUT/lb.qcow2
-  # Das Buendel-fonts.conf hat <dir prefix="relative">share/...</dir>: relativ zur Konfigurationsdatei, im Gast also /etc/fonts -> falsch.
-  # Wir legen eine Kopie mit absoluten Pfaden (Prozesswurzel = lb) nach /etc/fonts/fonts.conf (Standardsuchpfad von fontconfig; die
-  # Umgebung des Testbaus ist fest: HOME=/, kein FONTCONFIG_FILE/TMPDIR/XDG_*) und ein beschreibbares /tmp mit Cache-Ordner.
-  tar -xzOf "$BUNDLE" ./fonts.conf 2>/dev/null | sed -e 's#<dir prefix="relative">share/fonts/dejavu</dir>#<dir>/share/fonts/dejavu</dir>#' \
-      -e 's#<dir prefix="relative">share/Lagom/fonts</dir>#<dir>/share/Lagom/fonts</dir><cachedir>/tmp/fontconfig</cachedir>#' > "$OUT/fonts.conf"
-  grep -q '<dir>/share/fonts/dejavu</dir>' "$OUT/fonts.conf" || die "fonts.conf: relative <dir> nicht gefunden (Buendel geaendert?)"
+  tar -tf "$BUNDLE" > "$OUT/bundle-members.txt" || die "Buendel kann nicht gelesen werden: $BUNDLE"
+  BUNDLE_PREFIX=
+  DISK_ARGS=()
+  if grep -Eq '^(\./)?ladybird-static/etc/fonts/fonts\.conf$' "$OUT/bundle-members.txt"; then
+    BUNDLE_PREFIX=ladybird-static/
+    DISK_ARGS+=(--strip 1)
+  fi
   : > "$OUT/keep"
-  # conf.d (sans-serif-Alias, 45-generic/49-sansserif ...): fonts.conf hat <include>conf.d</include>, relativ -> /etc/fonts/conf.d. Ohne sie
-  # fehlt "DejaVu Sans" fuer sans-serif, FontPlugin::default_font liefert null (Befund senior 10:54). Nur regulaere Dateien (--add kennt keine Links).
-  rm -rf "$OUT/confd"; mkdir -p "$OUT/confd"
-  tar -xzf "$BUNDLE" -C "$OUT/confd" --wildcards './conf.d/*.conf' --strip-components=2 || die "conf.d aus Buendel"
-  CONFD_ADD=()
-  for f in "$OUT"/confd/*.conf; do [ -f "$f" ] && [ ! -L "$f" ] && CONFD_ADD+=(--add "/etc/fonts/conf.d/$(basename "$f")=$f"); done
-  [ ${#CONFD_ADD[@]} -gt 0 ] || die "conf.d leer"
+  if FONT_CONF=$(grep -m1 -Ex "(\./)?${BUNDLE_PREFIX}etc/fonts/fonts\.conf" "$OUT/bundle-members.txt"); then
+    # Die fertige Konfiguration samt Aliassen liegt bereits an ihrem Ziel im Gast.
+    grep -Eq "^(\./)?${BUNDLE_PREFIX}etc/fonts/conf\.d/[^/]+\.conf$" "$OUT/bundle-members.txt" || die "etc/fonts/conf.d leer"
+    tar -xOf "$BUNDLE" "$FONT_CONF" > "$OUT/fonts-prepared.conf" || die "etc/fonts/fonts.conf aus Buendel"
+    if ! grep -Eq '<cachedir>[[:space:]]*/tmp/fontconfig/?[[:space:]]*</cachedir>' "$OUT/fonts-prepared.conf"; then
+      step "WARNUNG: fonts.conf nennt /tmp/fontconfig nicht als Cache-Ordner"
+    fi
+  else
+    # Aeltere Buendel erwarten relative Pfade ab Buendelwurzel. Im Gast liegt die Kopie jedoch unter /etc/fonts.
+    tar -xOf "$BUNDLE" ./fonts.conf > "$OUT/fonts-relative.conf" || die "fonts.conf aus Buendel"
+    sed -e 's#<dir prefix="relative">share/fonts/dejavu</dir>#<dir>/share/fonts/dejavu</dir>#' \
+        -e 's#<dir prefix="relative">share/Lagom/fonts</dir>#<dir>/share/Lagom/fonts</dir><cachedir>/tmp/fontconfig</cachedir>#' \
+        "$OUT/fonts-relative.conf" > "$OUT/fonts.conf" || die "fonts.conf umschreiben"
+    grep -q '<dir>/share/fonts/dejavu</dir>' "$OUT/fonts.conf" || die "fonts.conf: relative <dir> nicht gefunden (Buendel geaendert?)"
+    mkdir "$OUT/confd" || die "Ausgabeordner conf.d"
+    tar -xf "$BUNDLE" -C "$OUT/confd" --wildcards './conf.d/*.conf' --strip-components=2 || die "conf.d aus Buendel"
+    CONFD_ADD=()
+    for f in "$OUT"/confd/*.conf; do [ -f "$f" ] && [ ! -L "$f" ] && CONFD_ADD+=(--add "/etc/fonts/conf.d/$(basename "$f")=$f"); done
+    [ ${#CONFD_ADD[@]} -gt 0 ] || die "conf.d leer"
+    DISK_ARGS+=(--add /etc/fonts/fonts.conf="$OUT/fonts.conf" "${CONFD_ADD[@]}")
+  fi
   # Demoseiten mit Webfonts und PNG-Bildern: Das Buendel enthaelt nur static.html.
   PAGES_ADD=(); P=$R/experiments/Ladybird.Probe/pages
   for f in "$P"/*.html "$P"/*.png "$P"/fonts/*; do [ -f "$f" ] && PAGES_ADD+=(--add "/share/zehos-probe/${f#"$P"/}=$f"); done
   timed platte python3 scripts/linux-root-disk.py "$BUNDLE" "$DISK" --dest lb --skip-dangling \
-    --add /etc/fonts/fonts.conf="$OUT/fonts.conf" --add /tmp/keep="$OUT/keep" "${CONFD_ADD[@]}" "${PAGES_ADD[@]}" || die "linux-root-disk.py"
+    --add /tmp/keep="$OUT/keep" "${DISK_ARGS[@]}" "${PAGES_ADD[@]}" || die "linux-root-disk.py"
 fi
 RUN="bin/Hub --headless=screenshot --disable-sandbox --force-cpu-painting --window-width 798 --window-height 519 --screenshot-delay $DELAY --screenshot-path /shot.png $URL"
 step "Gastlauf: $RUN"

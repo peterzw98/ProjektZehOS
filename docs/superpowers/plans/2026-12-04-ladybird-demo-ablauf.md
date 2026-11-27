@@ -6,21 +6,29 @@ Auf dem MSI den mit der Probe verwendeten ZehOSLinuxRun-ISO-Pfad als `ISO`
 setzen. Einen freien KVM-Slot absprechen. Das Bündel mit `ImageDecoder` und die
 fertigen PNGs bereitlegen.
 
+| Lokales Archiv auf dem MSI | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `ladybird-static-with-images.tar.gz` (Standard für die Demo) | 147158521 | `cd2fb1d7b5d90807791a41b9bf3f64818821ce1512d6169c703c28d6fa69cdd6` |
+| `ladybird-static-absolute.tar.zst` (schlanke Variante für `static.html`) | 118500639 | `a3f867b5ee3d05428eb4194c93e8a1750fe6a6b593ae7638dfcf41f079aa1283` |
+| `ladybird-loopback-demo.tar.gz` (HTTP-Erweiterung zum Bündel mit Bildern) | 2779980 | `94199579d9a7c06f00af47e11c148e222d42fa370894a195d67b125b0e32748a` |
+
 ```bash
 bundle="$HOME/ladybird-bundle/ladybird-static-with-images.tar.gz"
 demos="$HOME/ladybird-bundle/zehos-freitag-demos.zip"
 out=$(mktemp -d "${TMPDIR:-/tmp}/ladybird-demo.XXXXXX")
 static_ref="$HOME/zehos-v3-out/v38/diag2/shot.png"
 test -s "$ISO" && test -s "$bundle" && test -s "$static_ref"
+printf '%s  %s\n' cd2fb1d7b5d90807791a41b9bf3f64818821ce1512d6169c703c28d6fa69cdd6 "$bundle" | sha256sum -c -
 printf '%s  %s\n' 42c8c8db73245555c557c17d5a849209a9e36d6539546d0138c72b53683b0f5d "$demos" | sha256sum -c -
 unzip -q "$demos" -d "$out/png"
-file "$static_ref" "$out/png/zehos-projekt.png" "$out/png/canvas.png"
+cp -- "$static_ref" "$out/png/static-gast.png"
+file "$out/png/static-gast.png" "$out/png/zehos-projekt.png" "$out/png/canvas.png"
 ```
 
 Erwartet werden drei lesbare PNGs mit 798 × 4087, 798 × 720 und 798 × 639
-Pixeln. Vor der Vorführung einmal öffnen und bei weißer Fläche oder fehlender
-Datei den Rückfall vorbereiten; `python3 scripts/png-nonwhite.py <png>` zählt
-die nicht-weißen Pixel (Exit 1 bei weißem Bild).
+Pixeln. Vor der Vorführung alle drei öffnen und in dieser Reihenfolge im
+Bildbetrachter oder in den Folien bereitlegen. `python3 scripts/png-nonwhite.py <png>`
+zählt die nicht-weißen Pixel (Exit 1 bei weißem Bild).
 
 **Ein Gast gleichzeitig.** Das Skript bricht ab, solange irgendein
 `qemu-system-*` läuft, auch ein Gast aus einem anderen Slot, und nennt dessen
@@ -38,6 +46,11 @@ Versuch mit demselben `-o` landet in einem neuen Unterordner
 
 ## Live im ZehOS-Gast
 
+**Für die Vorführung 2 GiB verwenden** (`--memory 2G`, zugleich Standard).
+Bei nur 512 MiB kann der Kernel seit V43 `WebContent` mit `SIGKILL` beenden.
+Wiederholte Neustarts können bis zum Zeitlimit laufen und ein weißes oder
+fehlendes PNG hinterlassen.
+
 1. **HTML-Seite rendern.** Aus dem Repository-Stamm mit vorbereitetem ISO starten.
 
    ```bash
@@ -51,9 +64,7 @@ Versuch mit demselben `-o` landet in einem neuen Unterordner
    `OK: .../shot.png` im Runner (nur mit nicht weißem Bild, die Zeile davor
    nennt den Anteil nicht-weißer Pixel) und in der Vorschau 50 Absätze plus Tabelle
    bei 798 × 4087 Pixeln. `--timeout 180` begrenzt die Zeit vom Programmstart
-   bis zum Ende; Boot und Anmeldung kommen davor. Bei einem Kernel-Halt endet
-   das Skript sofort mit `KERNEL-HALT` (Exit 3). Hängt der Lauf, beendet
-   Strg+C das Skript und den Gast (Exit 130); danach auf den Rückfall wechseln. Der beobachtete KVM-smp1-Lauf dauerte 117 s
+   bis zum Ende. Boot und Anmeldung kommen davor. Der beobachtete KVM-smp1-Lauf dauerte 117 s
    mit Kernelbau (41 s) und Plattenbau (3 s), der Gastlauf selbst 67 s;
    mit fertigem ISO (`--iso`) also etwa 70 s (V42, `89d389776`, 2 GiB, `~/ladybird-demo-out/m28-*`).
    Der vollständige Screenshot mit 30 s Wartezeit ist zusätzlich durch
@@ -77,13 +88,23 @@ Versuch mit demselben `-o` landet in einem neuen Unterordner
    war in zwei Läufen bytegleich. Gastdauer für beide neuen Seiten steht bis
    zur Gastprobe aus.
 
-## Rückfall
+## Rückfall während der Vorführung
 
-Bei blockiertem MSI (anderer Gast läuft), `NICHT OK` (auch weißes PNG),
-`KERNEL-HALT`, fehlendem Screenshot oder nach drei Minuten ohne vorzeigbares
-Bild (Strg+C) auf die bereitliegenden PNGs wechseln.
-Das static-PNG stammt aus dem ZehOS-Gast, die beiden Demo-PNGs aus Ladybird
-unter Linux. Für die Diagnose `run.log`, `times.txt` und das Gastprotokoll im
+| Auslöser | Handgriff |
+| --- | --- |
+| KVM-Slot belegt, Start bricht ab | Direkt die vorbereiteten Bilder öffnen. |
+| `KERNEL-HALT` (Exit 3) | Der Runner beendet den Gast. Direkt auf die Bilder wechseln. |
+| `NICHT OK`, weißes oder fehlendes PNG | Das geprüfte Referenzbild der betroffenen Seite zeigen. |
+| Nach drei Minuten ab Runner-Start gibt es noch kein vorzeigbares Bild | Im Terminal dieses Laufs Strg+C drücken (Exit 130) und auf die Bilder wechseln. Diese Vorführgrenze enthält auch Boot und Anmeldung. |
+
+Mit `$out/png/static-gast.png` beginnen. Danach `zehos-projekt.png` und
+`canvas.png` zeigen. Beim Wechsel sagen:
+
+> Der Live-Lauf liefert gerade kein vorzeigbares Bild. Hier ist der zuvor
+> aufgezeichnete Screenshot aus dem ZehOS-Gast. Projektseite und Canvas
+> zeige ich anschließend anhand unserer Linux-Referenzbilder.
+
+Für die Diagnose `run.log`, `times.txt` und das Gastprotokoll im
 Ausgabeordner behalten.
 
 [Übersicht der Demoseiten und Laufzeitabhängigkeiten](../../../experiments/Ladybird.Probe/pages/README.md)
