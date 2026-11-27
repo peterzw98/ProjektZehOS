@@ -53,9 +53,11 @@ internal static partial class LinuxSyscalls
                 return 0;
             case Clone:
                 return p is ILinuxThreads cloner ? cloner.CloneThread(a.A0, a.A1, a.A2, a.A3, a.A4) : -ENOSYS;
+            case Fork:
             case Vfork:
             case Execve:
-                return DispatchSpawn(ref a, p); // V15: posix_spawn
+            case Clone3:
+                return DispatchSpawn(ref a, p); // V15: posix_spawn; V21: fork, clone3
             case Tgkill:
                 return p is ILinuxThreads tg ? tg.SignalThread((int)a.A0, (int)a.A1, (int)a.A2) : -ENOSYS;
             case Tkill:
@@ -255,6 +257,13 @@ internal static partial class LinuxSyscalls
             return MapFile(p, a.A0, (len + 0xfff) & ~0xfffUL, prot, flags, fd, a.A5);
         }
 
+        // V21: MAP_SHARED|MAP_ANONYMOUS bleibt über fork geteilt. Dahinter steht eine namenlose memfd ohne Deskriptor (Linux: shmem
+        // "/dev/zero (deleted)"); die Abbildung hält sie. Mit MAP_FIXED bleibt es privat wie bisher (Abweichung; MapFixed ersetzt nur anonym).
+        if ((flags & MapShared) != 0 && (flags & MapFixed) == 0 && p is ILinuxSharedMemory sharedAnon)
+        {
+            return MapSharedAnonymous(sharedAnon, (len + 0xfff) & ~0xfffUL, prot);
+        }
+
         if ((flags & MapFixed) != 0)
         {
             ulong flen = (len + 0xfff) & ~0xfffUL;
@@ -271,6 +280,23 @@ internal static partial class LinuxSyscalls
     }
 
     private const ulong MaxUserSpan = 1UL << 47;
+
+    private static long MapSharedAnonymous(ILinuxSharedMemory shared, ulong flen, int prot)
+    {
+        if (flen > MaxUserSpan)
+        {
+            return -ENOMEM;
+        }
+
+        LinuxMemFile mem = shared.CreateMemFile("dev/zero", sealing: false);
+        long r = mem.Truncate((long)flen);
+        const long EFBIG = 27; // Länge über dem Speicher des Prozesses: für mmap -ENOMEM
+        long at = r < 0 ? (r == -EFBIG ? -ENOMEM : r) : shared.MapShared(mem, flen, prot, 0);
+
+        // Kein Deskriptor: Nach Close hält nur noch die Abbildung die Datei; scheiterte sie, gibt Close die Frames sofort frei.
+        _ = mem.Close();
+        return at;
+    }
 
     private const int ProtWrite = 0x2, ProtReadWrite = 0x3;
 

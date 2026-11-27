@@ -264,7 +264,13 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
             return CloneVforkProcess(flags, stack);
         }
 
-        // fork (eigener Speicher, Kopie beim Schreiben) gibt es nicht; ehrlich ablehnen statt halb teilen.
+        // V21: fork und clone ohne CLONE_VM werden ein neuer Prozess mit kopiertem Adressraum (LinuxFork.cs).
+        if ((flags & (CloneVm | CloneThreadFlag | CloneSighand)) == 0)
+        {
+            return CloneForkProcess(flags, stack, parentTid, childTid, tls);
+        }
+
+        // Teilweise geteilter Thread (CLONE_VM ohne die übrigen Bits) gibt es nicht; ehrlich ablehnen statt halb teilen.
         if ((flags & CloneThreadSet) != CloneThreadSet || (flags & ~(CloneThreadSet | CloneKnownExtras)) != 0)
         {
             return -LinuxSyscalls.ENOSYS;

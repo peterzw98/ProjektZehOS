@@ -835,7 +835,8 @@ internal static partial class LinuxSyscalls
                     }
                 }
 
-                return table.Wait(p.Memory, a.A0, (int)a.A2, bitset, deadline);
+                // V21: ohne FUTEX_PRIVATE_FLAG kann der Wecker ein anderer Prozess sein (MAP_SHARED nach fork); siehe LinuxFutexTable.Wait.
+                return table.Wait(p.Memory, a.A0, (int)a.A2, bitset, deadline, shared: ((int)a.A1 & 128) == 0);
             }
 
             case Wake:

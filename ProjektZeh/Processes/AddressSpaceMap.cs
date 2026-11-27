@@ -119,6 +119,19 @@ internal sealed class AddressSpaceMap
     /// <summary>true, wenn [address, address+length) lückenlos belegt ist (gleich mit welchem Zugriff); ungültige Bereiche sind false.</summary>
     public bool IsMapped(ulong address, ulong length) => ValidateRange(address, length, true).IsOK() && IsFullyCovered(address, address + length);
 
+    /// <summary>V21 fork: übernimmt alle Bereiche von <paramref name="from"/> (gleiche Grenzen des Adressraums); bisherige Bereiche fallen weg.</summary>
+    public void CopyFrom(AddressSpaceMap from)
+    {
+        ArgumentNullException.ThrowIfNull(from);
+        if (from._start != _start || from._end != _end)
+        {
+            throw new ArgumentException("Beide Karten müssen denselben Adressraum beschreiben.", nameof(from));
+        }
+
+        _regions.Clear();
+        _regions.AddRange(from._regions);
+    }
+
     public bool TryFind(ulong address, out MapAccess access)
     {
         int index = FirstEndingAfter(address);
