@@ -653,7 +653,8 @@ internal static unsafe class CosmosLinuxRun
             }
 
             // V34: Eigentümer der Dateien = Benutzer des Prozesses (AT_UID/getuid); sonst meldet stat 0, und Ladybird lehnt sein Crash-Verzeichnis ab.
-            fileSystem = new LinuxFileSystem(store.Value!, run.Terminal, uid: (uint)image.Uid, gid: (uint)image.Gid);
+            // V40: Lese-Cache für Dateiseiten aller Prozesse des Laufs (Ladybird startet WebContent dreimal aus derselben 175-MB-Datei).
+            fileSystem = new LinuxFileSystem(store.Value!, run.Terminal, uid: (uint)image.Uid, gid: (uint)image.Gid, readCacheBytes: LinuxReadCache.DefaultMaxBytes);
         }
 
         UserPageTable? table = UserPageTable.TryCreate();

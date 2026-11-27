@@ -165,7 +165,9 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
     private readonly bool _append;
     private long _position;
 
-    public LinuxRegularFile(LinuxFileSystem fs, ILinuxStoreFile file, string storePath, LinuxStoreNode node, bool read, bool write, bool append)
+    /// <param name="fileNode">V40: schon angehängter Knoten (<see cref="LinuxFileSystem.AttachNode"/>); der Deskriptor gibt ihn bei close zurück.</param>
+    public LinuxRegularFile(LinuxFileSystem fs, ILinuxStoreFile file, string storePath, LinuxStoreNode node, LinuxFileNode fileNode, bool read, bool write,
+        bool append)
         : base(fs, "/" + storePath, read, write)
     {
         _file = file;
@@ -174,7 +176,7 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
         _append = append;
         // Am Deskriptor festhalten: fstat nach unlink oder rename meldet weiter dieselbe Datei.
         _ino = fs.InodeOf(storePath);
-        _fileNode = fs.AttachNode(storePath);
+        _fileNode = fileNode;
     }
 
     /// <summary>V32: Zugriffsrechte des Deskriptors für mmap mit MAP_SHARED.</summary>
@@ -301,8 +303,10 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
     protected override long Release()
     {
         _ = SharedPages?.Flush(0, long.MaxValue);
+        // V40: erst schließen (gibt den Halt der Speicherdatei zurück), dann lösen: Ohne Abbildung verlässt der Knoten das Register sofort.
+        long r = _shared.ReleaseChecked();
         FileSystem.DetachNode(_fileNode);
-        return _shared.ReleaseChecked();
+        return r;
     }
 
     // V32: fsync schreibt auch, was Abbildungen in die Frames geschrieben haben.

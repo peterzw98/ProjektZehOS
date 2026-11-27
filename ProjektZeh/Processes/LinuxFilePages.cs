@@ -62,7 +62,8 @@ internal sealed class LinuxSharedStoreFile : ILinuxPageSource
 
     public ILinuxStoreFile File => _file;
 
-    public long ReadAt(long offset, Span<byte> dst) => _file.ReadAt(offset, dst);
+    /// <summary>V40: Seiten kommen über den Lese-Cache des Laufs, wenn die Datei einen hat (<see cref="LinuxCachedStoreFile"/>).</summary>
+    public long ReadAt(long offset, Span<byte> dst) => _file is LinuxCachedStoreFile cached ? cached.ReadPages(offset, dst) : _file.ReadAt(offset, dst);
 
     /// <summary>V32: Länge der Datei oder -errno (Seitenablage bei MAP_SHARED); sperrt wie <see cref="ReadAt"/> im Speicher selbst.</summary>
     public long Length() => _file.Length();

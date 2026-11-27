@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using ProjektZeh.Processes.Syscalls;
 
 namespace ProjektZeh.Processes.Vfs;
@@ -68,11 +69,16 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
     private readonly Dictionary<string, LinuxFileNode> _nodes;
     private int _nodeSweepAt = 64;
 
+    // V40: Lese-Cache für Dateiseiten aller Prozesse des Laufs; null ohne Cache (Speicher im Arbeitsspeicher braucht keinen).
+    private readonly LinuxReadCache? _readCache;
+
     /// <param name="store">Speicher der Prozesswurzel.</param>
     /// <param name="terminal">Ziel von <c>/dev/tty</c>; sinnvoll derselbe <see cref="TerminalDescriptor"/> wie für fd 0 bis 2,
     /// damit Zeilen aus beiden Wegen in der richtigen Reihenfolge erscheinen.</param>
-    public LinuxFileSystem(ILinuxFileStore store, ILinuxDescriptor terminal, int maxOpenFiles = DefaultMaxOpenFiles, uint uid = 0, uint gid = 0)
+    public LinuxFileSystem(ILinuxFileStore store, ILinuxDescriptor terminal, int maxOpenFiles = DefaultMaxOpenFiles, uint uid = 0, uint gid = 0,
+        long readCacheBytes = 0)
     {
+        _readCache = readCacheBytes > 0 ? new LinuxReadCache(readCacheBytes) : null;
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _terminal = terminal ?? throw new ArgumentNullException(nameof(terminal));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxOpenFiles);
@@ -90,6 +96,9 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
     public int OpenFiles { get; private set; }
 
     internal ILinuxFileStore Store => _store;
+
+    /// <summary>V40: Lese-Cache für Dateiseiten oder null.</summary>
+    internal LinuxReadCache? ReadCache => _readCache;
 
     /// <summary>
     /// statfs (V20): Platte als vfat mit dem Kontingent als Größe (frei = Kontingent minus Nettowachstum), Arbeitsspeicher als tmpfs mit seinen
@@ -176,7 +185,10 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
             }
 
             var node = new LinuxStoreNode(LinuxNodeKind.File, 0, mode & LinuxMode.PermissionMask, 0);
-            file = new LinuxRegularFile(this, created!, loc.Path, node, read, write, append);
+            // V40: Ein Knoten gleichen Namens kann aus einer früheren, außerhalb des Laufs gelöschten Datei stammen: neue Generation.
+            LinuxFileNode fileNode = AttachNode(loc.Path);
+            _ = Interlocked.Increment(ref fileNode.Generation);
+            file = new LinuxRegularFile(this, new LinuxCachedStoreFile(created!, fileNode, _readCache), loc.Path, node, fileNode, read, write, append);
             OpenFiles++;
             return 0;
         }
@@ -258,19 +270,23 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
             return r;
         }
 
+        // V40: Knoten vor dem Kürzen anhängen, damit auch O_TRUNC die Generation für den Lese-Cache erhöht.
+        LinuxFileNode fileNode = AttachNode(loc.Path);
+        var cached = new LinuxCachedStoreFile(opened!, fileNode, _readCache);
         if (write && (flags & OTrunc) != 0)
         {
             // V32: Eine lebende Seitenablage verliert ihre Frames mit (sonst schriebe sie alten Inhalt zurück).
-            LinuxMemFile? pages = LivePages(PeekNode(loc.Path));
-            r = pages != null ? pages.TruncateThrough(opened!, 0) : opened!.SetLength(0);
+            LinuxMemFile? pages = LivePages(fileNode);
+            r = pages != null ? pages.TruncateThrough(cached, 0) : cached.SetLength(0);
             if (r < 0)
             {
-                _ = opened!.Close(); // der Fehler von SetLength ist der maßgebliche
+                _ = cached.Close(); // der Fehler von SetLength ist der maßgebliche
+                DetachNode(fileNode);
                 return r;
             }
         }
 
-        file = new LinuxRegularFile(this, opened!, loc.Path, loc.Node, read, write, append);
+        file = new LinuxRegularFile(this, cached, loc.Path, loc.Node, fileNode, read, write, append);
         return 0;
     }
 
@@ -624,6 +640,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
             }
 
             node.Descriptors++;
+            _ = Interlocked.Increment(ref node.Holders);
             return node;
         }
     }
@@ -634,7 +651,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         lock (_sharedGate)
         {
             node.Descriptors--;
-            if (node.Descriptors == 0 && node.Key != null && LivePagesLocked(node) == null)
+            if (node.Descriptors == 0 && node.Key != null && Volatile.Read(ref node.Holders) == 0 && LivePagesLocked(node) == null)
             {
                 _ = _nodes.Remove(node.Key);
                 node.Key = null;
@@ -759,7 +776,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         var dead = new List<string>();
         foreach (KeyValuePair<string, LinuxFileNode> e in _nodes)
         {
-            if (e.Value.Descriptors == 0 && LivePagesLocked(e.Value) == null)
+            if (e.Value.Descriptors == 0 && Volatile.Read(ref e.Value.Holders) == 0 && LivePagesLocked(e.Value) == null)
             {
                 dead.Add(e.Key);
             }
@@ -1201,4 +1218,16 @@ internal sealed class LinuxFileNode
     public int Descriptors { get; set; }
 
     public LinuxMemFile? Pages { get; set; }
+
+    /// <summary>
+    /// V40: Generation des Inhalts für den Lese-Cache; nur mit Interlocked/Volatile, ohne Registersperre (geändert unter FileGate oder der
+    /// Speichersperre eines Prozesses).
+    /// </summary>
+    public long Generation;
+
+    /// <summary>
+    /// V40: offene Speicherdateien (<see cref="LinuxCachedStoreFile"/>) am Knoten, auch nach close eines Deskriptors, solange eine Abbildung
+    /// die Datei hält. Erhöht unter der Registersperre (AttachNode), gesenkt mit Interlocked ohne sie; ein Knoten mit Haltern bleibt im Register.
+    /// </summary>
+    public int Holders;
 }
