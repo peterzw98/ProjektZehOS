@@ -49,6 +49,8 @@ prepare_demo() {
 prepare_demo
 ```
 
+Der Ausgabeordner liegt unter `${TMPDIR:-/tmp}`. Auf dem MSI ist `/tmp` ein tmpfs mit 7,8 GB; ein Durchlauf belegt dort etwa 0,8 GB Ausgabe und 1,1 GB Arbeitsplatz. Vorher mit `df -h "${TMPDIR:-/tmp}"` mindestens 3 GB frei prüfen, alte `ladybird-demo.*`-Ordner räumen oder `TMPDIR` auf die Platte legen; sonst bricht `qemu-img` mit `ENOSPC` ab (senior2, Generalprobe 27.11.).
+
 Erst nach erfolgreicher Vorbereitung den Gast starten. Erwartet werden drei
 lesbare PNGs mit 798 × 4087, 798 × 720 und 798 × 639
 Pixeln. Vor der Vorführung alle drei öffnen und in dieser Reihenfolge im
