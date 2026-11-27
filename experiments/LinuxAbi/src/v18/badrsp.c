@@ -1,7 +1,9 @@
 /* Review V18 P3: rt_sigreturn mit einem RSP, den der Handler im Signalrahmen (uc_mcontext) verbogen hat. Ohne KERNEL_RSP
- * nichtkanonisch (0x8000000000000000), mit KERNEL_RSP in der Kernelhälfte (0xffff800000001000). Linux lädt den Wert und der
- * erste Stapelzugriff nach dem Rücksprung endet mit SIGSEGV; ZehOS lehnt die Rückkehr in den Ring 3 schon in UserMode.Prepare ab
- * (RSP >= 0x0000800000000000) und beendet den Prozess ebenso mit Signal 11. Erwartet: beide Zeilen, dann "signal 11".
+ * nichtkanonisch (0x8000000000000000, Programm rspnc), mit KERNEL_RSP in der Kernelhälfte (0xffff800000001000, Programm rspkern);
+ * beide baut src/v18/build.sh. Linux lädt den Wert, und der erste Stapelzugriff nach dem Rücksprung schlägt fehl: nichtkanonisch
+ * ist das ein #SS und endet mit SIGBUS (signal 7), in der Kernelhälfte ein Seitenfehler mit SIGSEGV (signal 11). ZehOS beendet
+ * nichtkanonisch ebenso mit SIGBUS und lehnt die Kernelhälfte schon in UserMode.Prepare ab (RSP >= 0x0000800000000000, signal 11).
+ * Erwartet: "vor kill", "handler setzt rsp", dann signal 7 (rspnc) beziehungsweise signal 11 (rspkern).
  * Ausgabe nur per write, damit nichts in einem Puffer hängen bleibt. */
 #define _GNU_SOURCE
 #include <signal.h>
