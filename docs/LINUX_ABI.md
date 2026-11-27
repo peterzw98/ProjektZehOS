@@ -340,18 +340,25 @@ Benutzerspeicher noch eine andere Sperre. `read` auf dem Leseende prüft den Puf
 
 Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `LinuxSyscallsSocket.cs` (Hosttests `LinuxUnixSocketTests`, Gastprogramm
 `experiments/LinuxAbi/src/v16/pair.c`, Erwartung Linux 6.12 in `expected/v16/pair.txt`). Anlass: Ladybird (LibIPC) verbindet Browser und WebContent über
-`socketpair(AF_UNIX)` und reicht Dateien mit `SCM_RIGHTS` weiter. Namen, `socket`/`bind`/`listen`/`connect`/`accept4` stehen in `LinuxUnixNames.cs` (V16, zweiter Teil).
+`socketpair(AF_UNIX)` und reicht Dateien mit `SCM_RIGHTS` weiter. Namen, `socket`/`bind`/`listen`/`connect`/`accept4` stehen in `LinuxUnixNames.cs`,
+`LinuxUnixSocket.Listen.cs` und `LinuxSyscallsUnixBind.cs` (Hosttests `LinuxUnixNamesTests`, `LinuxUnixListenTests`, Gastprogramm `src/v16/unix.c`).
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
+| 41 | `socket` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`, kein Netz), `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` `-ESOCKTNOSUPPORT`), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
+| 49 | `bind` | abstrakte Namen (führendes Nullbyte, binär) und Pfade relativ zum Arbeitsverzeichnis; ein Pfad legt eine leere Datei an (vorhanden: `-EADDRINUSE`), die nach `close` stehen bleibt; Länge 2 bindet automatisch (`\0` und fünf Hexziffern); schon gebunden `-EINVAL`; Namen gelten je Lauf |
+| 50 | `listen` | unbenannt oder verbunden `-EINVAL`; Rückstand bis 4096, wie Linux wartet eine Verbindung mehr als angegeben |
+| 42 | `connect` | legt das Gegenende sofort an (Senden vor `accept` geht); volle Warteschlange: blockierend warten, sonst `-EAGAIN`; kein Lauschender, gewöhnliche Datei oder anderer Typ unter abstraktem Namen `-ECONNREFUSED`, anderer Typ unter Pfad `-EPROTOTYPE`, fehlender Pfad `-ENOENT` (auch nach `unlink`), verbunden `-EISCONN`, Länge bis 2 `-EINVAL` |
+| 43, 288 | `accept`, `accept4` | älteste Verbindung; nicht lauschend `-EINVAL`, leer mit `O_NONBLOCK` `-EAGAIN`; Name des Verbindenden (unbenannt: Länge 2); `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `close` des Lauschenden beendet nicht angenommene Verbindungen (EOF beim Verbindenden) |
+| 51, 52 | `getsockname`, `getpeername` | Länge wie Linux (Pfad mit Nullbyte, abstrakt genau, unbenannt 2), gekürzt auf den Puffer; das angenommene Ende trägt den Namen des Lauschenden; `getpeername` unverbunden `-ENOTCONN` |
 | 53 | `socketpair` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` und andere `-ESOCKTNOSUPPORT`), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
 | 46, 44 | `sendmsg`, `sendto` | Puffer je Richtung 212992 Bytes (`wmem_default`); Stream blockierend ganz, mit `O_NONBLOCK`/`MSG_DONTWAIT` so viel wie passt; Seqpacket ganz oder `-EAGAIN`, über 212992 Bytes `-EMSGSIZE`; Stream mit Zieladresse `-EISCONN`; `MSG_OOB` `-EOPNOTSUPP`; nach Ende oder `shutdown` `-EPIPE` (kein `SIGPIPE`, `MSG_NOSIGNAL` daher ohne Wirkung) |
-| 47, 45 | `recvmsg`, `recvfrom` | Stream fasst Nachrichten zusammen und endet nach der ersten mit Dateien; Seqpacket eine Nachricht, Rest verworfen mit `MSG_TRUNC` (`MSG_TRUNC` im Aufruf liefert die volle Länge); `MSG_PEEK`, `MSG_WAITALL`, `MSG_DONTWAIT`, `MSG_CMSG_CLOEXEC`; `msg_namelen` 0 (unbenannte Gegenseite) |
+| 47, 45 | `recvmsg`, `recvfrom` | Stream fasst Nachrichten zusammen und endet nach der ersten mit Dateien; Seqpacket eine Nachricht, Rest verworfen mit `MSG_TRUNC` (`MSG_TRUNC` im Aufruf liefert die volle Länge); `MSG_PEEK`, `MSG_WAITALL`, `MSG_DONTWAIT`, `MSG_CMSG_CLOEXEC`; `msg_name` ist der Name des Senders, `msg_namelen` 0 bei unbenanntem Sender |
 | 46/47 | `SCM_RIGHTS` | bis 253 Dateien je Nachricht; die Nachricht hält jede Datei wie eine Nummer (`LinuxOpenFiles` des Laufs), also überlebt sie das `close` des Senders und das Ende eines Kindprozesses; zu kleiner Hilfsdatenpuffer oder volle Tabelle: Rest geschlossen, `MSG_CTRUNC`; `MSG_PEEK` gibt zusätzliche Nummern; `read`/`recvfrom` verwerfen mitgeschickte Dateien; `SCM_CREDENTIALS` angenommen, nicht weitergereicht; andere Typen `-EINVAL` |
 | 48 | `shutdown` | `SHUT_RD`: Gepuffertes bleibt lesbar, dann EOF, Gegenseite `-EPIPE`; `SHUT_WR`: eigenes Senden `-EPIPE`, Gegenseite liest den Rest und EOF; sonst `-EINVAL`, ohne Verbindung `-ENOTCONN` |
 | 3 | `close` | letzter Verweis (Nummern und Nachrichten): Gegenseite EOF/`-EPIPE`; Ungelesenes und mitgeschickte Dateien verfallen; lag Ungelesenes vor, meldet die Gegenseite einmal `-ECONNRESET` (`send`, `recv`, `SO_ERROR`, `POLLERR`) wie Linux |
 | 7 | `poll` | `POLLIN` mit Daten oder nach dem Ende der Gegenseite, `POLLRDHUP` nach deren `SHUT_WR`/`close`, `POLLHUP` wenn beide Richtungen zu sind, `POLLOUT` solange höchstens ein Viertel des Sendepuffers belegt ist |
-| 55, 54 | `getsockopt`, `setsockopt` | `SO_TYPE`, `SO_ERROR`, `SO_SNDBUF`/`SO_RCVBUF` (212992), `SO_PEERCRED` (bei `socketpair` PID des Erzeugers), `SO_DOMAIN`, `SO_PROTOCOL`, `SO_PASSCRED`, `SO_ACCEPTCONN`; `setsockopt` nimmt Puffergrößen, `SO_PASSCRED` und `SO_PASSSEC` still an, alles andere (etwa `SO_RCVTIMEO`) `-ENOPROTOOPT` |
+| 55, 54 | `getsockopt`, `setsockopt` | `SO_TYPE`, `SO_ERROR`, `SO_SNDBUF`/`SO_RCVBUF` (212992), `SO_PEERCRED` (bei `socketpair` PID des Erzeugers), `SO_DOMAIN`, `SO_PROTOCOL`, `SO_PASSCRED`, `SO_ACCEPTCONN` (1 nach `listen`); `setsockopt` nimmt Puffergrößen, `SO_PASSCRED` und `SO_PASSSEC` still an, alles andere (etwa `SO_RCVTIMEO`) `-ENOPROTOOPT` |
 | 5 | `fstat` | `S_IFSOCK` mit 0777, Größe 0 |
 
 Grenzen: Ein Socket, das sich selbst (oder einen Kreis von Sockets) in einer ungelesenen Nachricht trägt, wird nie geschlossen (Linux räumt solche Kreise mit
