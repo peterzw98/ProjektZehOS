@@ -826,6 +826,75 @@ public sealed class LinuxThreadsTests
         Assert.AreEqual(-LinuxSyscalls.EINTR, f.Call(LinuxSyscalls.Futex, f.Mem + 0x600, 0, 0, f.Mem + 0x610));
     }
 
+    [TestMethod]
+    public void SigsuspendWartetUnterDerMaskeUndDerRahmenTraegtDieAlte()
+    {
+        // V46 (ash `sleep 3 & wait` hing): waitproc blockiert alle Signale und wartet mit sigsuspend(leere Maske) auf SIGCHLD. Ohne
+        // rt_sigsuspend kam -ENOSYS sofort zurück, SIGCHLD blieb blockiert anhängig, und die Schleife drehte endlos.
+        const int Chld = 17, Usr1 = 10;
+        const ulong ChldBit = 1UL << (Chld - 1), Usr1Bit = 1UL << (Usr1 - 1), All = ~0UL;
+        var f = new Fixture();
+        ulong set = f.Mem + 0x700;
+        Assert.IsTrue(f.P.TryWrite(set, BitConverter.GetBytes(0UL)));
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, f.Call(LinuxSyscalls.RtSigsuspend, set, 4), "sigsetsize vor der Maske");
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, f.Call(LinuxSyscalls.RtSigsuspend, 8, 8));
+        Assert.AreEqual(0UL, f.P.MainThread.Blocked, "Fehler ändern die Maske nicht");
+
+        // Wie ash: SIGCHLD mit Handler, alles blockiert, SIGCHLD kommt vor dem Warten und bleibt anhängig.
+        SetAction(f, Chld, HandlerAddr, 0);
+        SetMask(f, 2, All);
+        f.P.RaiseSignal(Chld);
+        Assert.IsFalse(f.P.SignalWaiting, "blockiert");
+        Assert.AreEqual(-LinuxSyscalls.EINTR, f.Call(LinuxSyscalls.RtSigsuspend, set, 8), "anhängiges Signal wird frei: sofort -EINTR");
+        Assert.AreEqual(0UL, f.P.MainThread.Blocked, "Wartemaske bis zum Rahmen");
+
+        // Rücksprung aus dem Aufruf: Handler unter Wartemaske plus SIGCHLD, uc_sigmask trägt die alte Maske, rt_sigreturn stellt sie her.
+        LinuxUserRegs r = Regs(f);
+        r.Rax = unchecked((ulong)-LinuxSyscalls.EINTR); // wie die Brücke: Ergebnis in rax vor dem Rahmen
+        byte[] fpu = Fpu(0x1F80);
+        After(f, ref r, fpu, LinuxSyscalls.RtSigsuspend, rsi: 8, result: -LinuxSyscalls.EINTR);
+        Assert.AreEqual(HandlerAddr, r.Rip, "Handler angesprungen");
+        Assert.AreEqual(ChldBit, f.P.MainThread.Blocked, "Wartemaske und das Signal selbst");
+        Assert.AreEqual(All & ~((1UL << 8) | (1UL << 18)), Read64(f, r.Rsp + 304), "uc_sigmask = Maske vor sigsuspend (ohne KILL/STOP)");
+        Assert.AreEqual(0UL, f.P.PendingSignals & ChldBit, "zugestellt");
+        r.Rsp += 8;
+        Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, fpu));
+        Assert.AreEqual(0x400123UL, r.Rip, "kein Neustart: hinter dem syscall weiter");
+        Assert.AreEqual(unchecked((ulong)-LinuxSyscalls.EINTR), r.Rax);
+        Assert.AreEqual(All & ~((1UL << 8) | (1UL << 18)), f.P.MainThread.Blocked, "alte Maske wieder");
+
+        // Echtes Warten: ein blockiertes Signal weckt nicht, ein in der Wartemaske freies (kill von außen) schon.
+        SetAction(f, Usr1, HandlerAddr, 0);
+        Assert.IsTrue(f.P.TryWrite(set, BitConverter.GetBytes(Usr1Bit)));
+        long result = 1;
+        var t = new Thread(() => result = f.Call(LinuxSyscalls.RtSigsuspend, set, 8));
+        t.Start();
+        Thread.Sleep(50);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, Usr1));
+        Assert.IsFalse(t.Join(150), "SIGUSR1 bleibt in der Wartemaske blockiert");
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, Chld));
+        Assert.IsTrue(t.Join(5000));
+        Assert.AreEqual(-LinuxSyscalls.EINTR, result);
+        Assert.AreEqual(Usr1Bit, f.P.MainThread.Blocked);
+        r = Regs(f);
+        r.Rax = unchecked((ulong)-LinuxSyscalls.EINTR);
+        After(f, ref r, fpu, LinuxSyscalls.RtSigsuspend, rsi: 8, result: -LinuxSyscalls.EINTR);
+        Assert.AreEqual(HandlerAddr, r.Rip, "SIGCHLD-Handler");
+        Assert.AreEqual(All & ~((1UL << 8) | (1UL << 18)), Read64(f, r.Rsp + 304), "uc_sigmask = Maske vor sigsuspend");
+        r.Rsp += 8;
+        Assert.IsTrue(LinuxSignalFrame.Return(f.P, ref r, fpu));
+
+        // -EINTR ohne genommenes Signal (ein anderer nahm es): Nach dem Rücksprung gilt die alte Maske sofort wieder.
+        // SIGUSR1 von oben ist noch anhängig und bleibt in der Wartemaske blockiert.
+        f.P.MainThread.Blocked = ChldBit;
+        f.P.BeginWaitMask(f.P.MainThread, Usr1Bit);
+        r = Regs(f);
+        After(f, ref r, fpu, LinuxSyscalls.RtSigsuspend, rsi: 8, result: -LinuxSyscalls.EINTR);
+        Assert.AreEqual(0x400123UL, r.Rip, "kein Handler");
+        Assert.AreEqual(ChldBit, f.P.MainThread.Blocked);
+        Assert.AreEqual(Usr1Bit, f.P.PendingSignals & Usr1Bit, "SIGUSR1 weiter anhängig");
+    }
+
     // ---- V24 Ausnahmen im Ring 3 als Signal (LinuxFault, LinuxSignalFrame.DeliverFault) ----
 
     [TestMethod]

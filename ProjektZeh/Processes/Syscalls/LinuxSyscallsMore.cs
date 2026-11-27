@@ -49,7 +49,7 @@ internal sealed class LinuxSignalState
 internal static partial class LinuxSyscalls
 {
     public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Msync = 26, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
-        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99, RtSigpending = 127, Getrusage = 98;
+        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99, RtSigpending = 127, RtSigsuspend = 130, Getrusage = 98;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
 
@@ -93,6 +93,7 @@ internal static partial class LinuxSyscalls
             case Getegid: return (long)p.Gid;
             case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
             case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // bis ein Signal mit Handler kommt (-EINTR, V18) oder der Prozess endet
+            case RtSigsuspend: return DoSigsuspend(p, a.A0, a.A1); // V46
             case Wait4:
             case Waitid:
             case Getppid:
@@ -369,6 +370,43 @@ internal static partial class LinuxSyscalls
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// V46 rt_sigsuspend: Die Maske aus <paramref name="maskPtr"/> gilt, bis ein Signal mit Handler kommt oder der Prozess endet; dann immer
+    /// -EINTR (Linux -ERESTARTNOHAND, nie neu gestartet). Das ist dieselbe Wartemaske wie bei ppoll (V19): Der Handler läuft unter ihr, und der
+    /// erste Signalrahmen trägt in uc_sigmask die Maske von vorher, die rt_sigreturn herstellt (Linux saved_sigmask). Stellte der Aufruf die
+    /// alte Maske vor dem Handler her, bliebe ein Signal, das sie blockiert, anhängig und unzugestellt. Anlass: ash (busybox) blockiert in
+    /// waitproc alle Signale und wartet mit sigsuspend auf SIGCHLD; ohne den Aufruf kam -ENOSYS sofort zurück und `wait` drehte endlos.
+    /// Reihenfolge wie Linux: sigsetsize ≠ 8 -EINVAL, Maske unlesbar -EFAULT.
+    /// </summary>
+    private static long DoSigsuspend(ILinuxProcess p, ulong maskPtr, ulong sigsetsize)
+    {
+        if (p is not LinuxUserProcess up)
+        {
+            return -ENOSYS; // ohne Threadmaske und futex-Tabelle gibt es kein Warten auf ein Signal
+        }
+
+        if (sigsetsize != 8)
+        {
+            return -EINVAL;
+        }
+
+        Span<byte> m = stackalloc byte[8];
+        if (!p.Memory.TryRead(maskPtr, m))
+        {
+            return -EFAULT;
+        }
+
+        LinuxThread thread = up.CurrentThread;
+        up.BeginWaitMask(thread, BitConverter.ToUInt64(m));
+        long r = up.Futexes.Sleep(-1);
+        if (r != -EINTR)
+        {
+            up.EndWaitMask(thread); // darf nicht vorkommen (Sleep ohne Frist endet nur mit -EINTR); die Maske nie stehen lassen
+        }
+
+        return -EINTR;
     }
 
     /// <summary>
