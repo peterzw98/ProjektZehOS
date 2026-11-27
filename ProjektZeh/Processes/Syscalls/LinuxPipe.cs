@@ -107,7 +107,8 @@ internal sealed class LinuxPipe
 
     // V16: der Abbruch des aufrufenden Prozesses; nur ohne ihn (Aufrufe über ILinuxInput/ILinuxDescriptor) der des Erzeugers wie bisher.
     // Sonst bekäme ein Prozess, dem die Pipe per vfork oder SCM_RIGHTS gehört, nach dem Ende des Erzeugers nur noch -EINTR.
-    private bool Aborted(ILinuxAbort? caller) => (caller ?? _abort) is { IsAborted: true };
+    // V18: Ein wartendes Signal zählt nur beim Aufrufer (nicht beim Erzeuger der Pipe, der ein anderer Prozess sein kann).
+    private bool Aborted(ILinuxAbort? caller) => (caller ?? _abort) is { IsAborted: true } || caller is ILinuxSignalWake { SignalWaiting: true };
 
     /// <summary>Liest verfügbare Bytes; 0 am Ende (kein Schreibende mehr offen), -EAGAIN ohne Daten bei O_NONBLOCK, -EINTR beim Abbruch.</summary>
     public long Read(Span<byte> dst, bool nonBlocking, ILinuxAbort? caller = null)

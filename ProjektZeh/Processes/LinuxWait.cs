@@ -41,7 +41,7 @@ internal interface ILinuxWait
 
     /// <summary>
     /// kill(pid, sig) im Lauf: <paramref name="pid"/> &gt; 0 ein Prozess, 0 oder -Gruppe alle des Laufs, -1 alle außer dem Aufrufer und dem
-    /// ersten Prozess. Liefert 0, -EINVAL (Signalnummer), -ESRCH (kein Ziel) oder -ENOSYS (Handler, die der Kernel nicht anspringen kann).
+    /// ersten Prozess. Liefert 0, -EINVAL (Signalnummer) oder -ESRCH (kein Ziel); ein Handler läuft beim nächsten Rücksprung des Ziels (V18).
     /// </summary>
     long KillProcess(int pid, int signal);
 }
@@ -51,8 +51,8 @@ internal interface ILinuxWait
 /// <see cref="LinuxChild.WaitStatus"/> ist ein Zombie, bis wait4 ihn austrägt.
 /// <para>
 /// Abweichungen von Linux: Waisen gehen nicht an init (PID 1 ist hier der erste Prozess des Laufs, etwa der Browser, kein init, das
-/// fremde Kinder abholt); getppid eines Waisen liefert weiter die PID des toten Elternprozesses. SIGCHLD wird nicht zugestellt (nur
-/// Warten); gestoppte und fortgesetzte Kinder gibt es nicht, WUNTRACED/WCONTINUED warten nur auf das Ende.
+/// fremde Kinder abholt); getppid eines Waisen liefert weiter die PID des toten Elternprozesses. SIGCHLD geht beim Ende an die Eltern (V18,
+/// LinuxSpawn.cs); gestoppte und fortgesetzte Kinder gibt es nicht, WUNTRACED/WCONTINUED warten nur auf das Ende.
 /// </para>
 /// </summary>
 internal sealed partial class LinuxUserProcess : ILinuxWait
@@ -222,7 +222,7 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
     {
         if (ReferenceEquals(target, this))
         {
-            return DeliverSignal(signal, fromOutside: false);
+            return DeliverSignal(signal, fromOutside: false, SiUser, Pid);
         }
 
         while (true)
@@ -247,7 +247,7 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
                 }
             }
 
-            return target.DeliverSignal(signal, fromOutside: true);
+            return target.DeliverSignal(signal, fromOutside: true, SiUser, Pid);
         }
     }
 

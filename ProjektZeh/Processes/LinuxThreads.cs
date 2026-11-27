@@ -127,7 +127,7 @@ internal sealed class LinuxFutexTable
             {
                 while (!me.Woken)
                 {
-                    if (_aborted)
+                    if (_aborted || Interrupted())
                     {
                         return -LinuxSyscalls.EINTR;
                     }
@@ -251,7 +251,7 @@ internal sealed class LinuxFutexTable
     {
         lock (_gate)
         {
-            while (!_aborted)
+            while (!_aborted && !Interrupted())
             {
                 int slice = SliceMs;
                 if (deadlineNanos >= 0)
@@ -269,6 +269,23 @@ internal sealed class LinuxFutexTable
             }
 
             return -LinuxSyscalls.EINTR;
+        }
+    }
+
+    /// <summary>
+    /// V18: true, solange ein Signal mit Handler wartet (der Prozess setzt es); Wait und Sleep kehren dann mit -EINTR zurück. Nur flüchtige
+    /// Felder lesen: Der Aufruf geschieht unter der Sperre der Tabelle, und _threadGate steht in der Reihenfolge darunter.
+    /// </summary>
+    public Func<bool>? SignalWaiting { get; set; }
+
+    private bool Interrupted() => SignalWaiting?.Invoke() == true;
+
+    /// <summary>V18: Ein Signal mit Handler ist angekommen: Wartende prüfen sofort, nicht erst nach ihrer Scheibe.</summary>
+    public void Kick()
+    {
+        lock (_gate)
+        {
+            Monitor.PulseAll(_gate);
         }
     }
 

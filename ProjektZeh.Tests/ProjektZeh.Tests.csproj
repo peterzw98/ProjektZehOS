@@ -67,6 +67,7 @@
     <Compile Include="..\ProjektZeh\Processes\LinuxUserProcess.cs" Link="Processes\LinuxUserProcess.cs" />
     <Compile Include="..\ProjektZeh\Processes\LinuxUserProcessShared.cs" Link="Processes\LinuxUserProcessShared.cs" />
     <Compile Include="..\ProjektZeh\Processes\LinuxThreads.cs" Link="Processes\LinuxThreads.cs" />
+    <Compile Include="..\ProjektZeh\Processes\LinuxSignals.cs" Link="Processes\LinuxSignals.cs" />
     <Compile Include="..\ProjektZeh\Processes\LinuxOpenFiles.cs" Link="Processes\LinuxOpenFiles.cs" />
     <Compile Include="..\ProjektZeh\Processes\LinuxWait.cs" Link="Processes\LinuxWait.cs" />
     <Compile Include="..\ProjektZeh\Processes\LinuxSpawn.cs" Link="Processes\LinuxSpawn.cs" />
