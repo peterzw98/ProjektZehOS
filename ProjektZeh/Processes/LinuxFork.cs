@@ -125,6 +125,7 @@ internal sealed partial class LinuxUserProcess
             child._brkStart = _brkStart;
             child._brk = _brk;
             child._stackSize = _stackSize;
+            child._stackTop = _stackTop;
 
             // Geteilte Bereiche: dieselbe Datei, ein Verweis mehr; Seiten holt sich das Kind beim ersten Zugriff aus der Datei (PopulateShared).
             foreach (SharedRegion r in _regions)

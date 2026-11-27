@@ -313,7 +313,7 @@ Ladybird sucht seine ICU-Daten (`icudt78l.dat`, 27 MB) über `readlink("/proc/se
 - `readlink`/`readlinkat` auf `/proc/self/exe` oder `/proc/<eigene PID>/exe` (nach Normalisierung) liefern den Programmpfad im Prozess. `run` setzt ihn
   aus dem Pfad der Shell relativ zur Prozesswurzel: `cd /data/app`, `run bin/js` ergibt `/bin/js`. Liegt das Programm außerhalb der Wurzel
   (`run /data/t/js` aus `/data/app`) oder läuft der Prozess ohne Wurzel auf der Platte (Shell in `/` oder direkt auf einem Laufwerk), gibt es den
-  Link nicht (`-ENOENT`). Sonst gibt es kein `/proc`.
+  Link nicht (`-ENOENT`). Seit V29 auch `/proc/<pid>/exe` anderer Prozesse des Laufs; das übrige `/proc` steht im Abschnitt V29.
 - `mmap` mit Datei-fd ist eine **Kopie**: Der Bereich wird anonym belegt, ab dem Versatz (seitenausgerichtet, sonst `-EINVAL`) wie mit `pread` gefüllt,
   hinter dem Dateiende mit Nullen, und erst danach auf den gewünschten Schutz gesetzt. Die Dateiposition bleibt. Das ist `MAP_PRIVATE` bis auf einen
   Punkt: Spätere Änderungen an der Datei sieht die Abbildung nicht. `MAP_SHARED` geht deshalb nur ohne `PROT_WRITE`; beschreibbar geteilt bleibt
@@ -490,7 +490,7 @@ ppoll, setzt im Helferkind `PR_SET_PDEATHSIG` und schließt vor `execve` mit `cl
 | 271 | `ppoll` | wie `poll` mit Frist als `timespec` und Signalmaske; Reihenfolge wie Linux: Frist unlesbar `-EFAULT`, negativ oder `tv_nsec` ≥ 10^9 `-EINVAL`, dann `sigsetsize` ≠ 8 `-EINVAL`, Maske unlesbar `-EFAULT`. Die Maske gilt nur während des Wartens (SIGKILL/SIGSTOP bleiben frei); mit Ergebnis gilt sofort wieder die alte, bei `-EINTR` laufen die Handler unter der Wartemaske und der erste Rahmen trägt die alte (rt_sigreturn stellt sie her). Die Restzeit steht danach in `tmo_p`, auch bei sehr großen Fristen ohne Überlauf; ppoll wird nie neu gestartet |
 | 157 | `prctl` | `PR_SET_PDEATHSIG` (0 bis 64, sonst `-EINVAL`; 0 schaltet ab) und `PR_GET_PDEATHSIG` (int, `-EFAULT`); endet der Elternprozess, bekommt das Kind sein Signal (`SI_USER`, si_pid 0). Bleibt über `execve`, gilt nicht für ein neues vfork-Kind |
 | 436 | `close_range` | schließt alle offenen Nummern von `first` bis `last` (`~0` erlaubt) oder setzt mit `CLOSE_RANGE_CLOEXEC` nur `FD_CLOEXEC`; `CLOSE_RANGE_UNSHARE` ohne Wirkung (es gibt keine geteilten Tabellen); andere Flags oder `first > last` `-EINVAL` |
-| 2, 257 | `open`, `openat` auf `/proc/self/fd` | auch `/proc/<eigene PID>/fd`: Verzeichnis, nur lesen; `O_CREAT|O_EXCL` `-EEXIST`, `O_CREAT` oder Schreibzugriff `-EISDIR`; `fstat` `S_IFDIR`; `getdents64` liefert `.`, `..` und jede offene Nummer (Typ `DT_LNK`). Ein fremder Prozess `-ENOENT`; sonst gibt es kein `/proc` |
+| 2, 257 | `open`, `openat` auf `/proc/self/fd` | auch `/proc/<eigene PID>/fd`: Verzeichnis, nur lesen; `O_CREAT|O_EXCL` `-EEXIST`, `O_CREAT` oder Schreibzugriff `-EISDIR`; `fstat` `S_IFDIR`; `getdents64` liefert `.`, `..` und jede offene Nummer (Typ `DT_LNK`). Ein fremder Prozess `-ENOENT`; weitere `/proc`-Dateien siehe V29 |
 | 59 | `execve` außerhalb eines vfork-Kinds | ersetzt das Abbild des Prozesses unter derselben PID (neue Seitentabelle, FPU im Grundzustand, Nummern mit `FD_CLOEXEC` geschlossen, Handler auf `SIG_DFL` wie V15); Kinder und ihre Waisen gehen an das neue Abbild über, der Elternprozess sieht weiter dieselbe PID. Mit weiteren Threads `-ENOSYS` |
 
 Grenzen: Die Wartemaske gilt wie jede Maske je Prozess, nicht je Thread. Warten mehrere Threads gleichzeitig in ppoll, gilt die zuletzt gesetzte Wartemaske,
@@ -628,3 +628,34 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxSignals.cs` (`LinuxFault`, `L
 - Grenzen: `int3` (und `int 3`) im Ring 3 ist unter Cosmos ein #GP (das Gate für #BP hat DPL 0) und wird SIGSEGV statt SIGTRAP; #DB kommt nicht vor.
   Ein Fehler im vfork-Kind vor execve bricht weiter den ganzen Lauf ab. Ein Zugriff hinter das Ende einer geteilten Datei ist SIGSEGV statt SIGBUS.
   Nur QEMU/KVM geprüft.
+
+## Minimales /proc (V29)
+
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxProcFiles.cs` (Weiche, Formate, Textdatei) und `ProjektZeh/Processes/LinuxProcView.cs`
+(Schnappschuss eines Prozesses im Lauf); Hosttests `LinuxProcFilesTests`, Gastprogramm `experiments/LinuxAbi/src/v29/proc.c` (Erwartung Linux 6.12 in
+`expected/v29`). Anlass: Lesestudie #636 Nr. 11. Ladybird liest `/proc/self/status` (`TracerPid`, `Process::is_being_debugged`), im Prozessmanager
+`/proc/stat` (Zeile `cpu`, dieselbe Datei nach `seek(0)` erneut) sowie `/proc/<pid>/stat` (utime, stime) und `/proc/<pid>/status` (`RssAnon`,
+`RssShmem`, `VmSwap`) **seiner Helferprozesse**. `maps`, `meminfo` und `cpuinfo` liest Ladybird laut Quellen nicht; sie sind für Bibliotheken da.
+Es gibt kein Dateisystem `/proc`: `open`/`openat`, `stat`/`newfstatat`, `access`/`faccessat2` und `readlink` leiten nur diese normalisierten Pfade um.
+
+| Pfad | Inhalt |
+| --- | --- |
+| `/proc/self/status`, `/proc/<pid>/status` | Felder und Reihenfolge wie Linux 6.1 (`Name` = comm, Dateiname des Programms auf 15 Bytes gekürzt, Zeilenumbruch und Backslash als `\n` und `\\` maskiert wie Linux (V29b); `State` R für den Leser selbst, S für andere, Z für nicht abgeholte; `TracerPid` 0; Speicherzeilen in kB mit Tab und Breite 8: `VmSize` Summe der Bereiche, `VmRSS` = `RssAnon` (private Frames) + `RssShmem` (geteilte memfd-Seiten), `VmData` brk, `VmStk` Stackgröße, `VmSwap` 0; bei Zombies ohne Speicherzeilen; `Threads`, `SigPnd`/`SigBlk`/`SigIgn`/`SigCgt` aus dem Signalzustand des Prozesses) |
+| `/proc/self/stat`, `/proc/<pid>/stat` | 52 Felder wie Linux 6.1 (pid, (comm), Zustand, ppid, pgrp, session, …, `num_threads`, `vsize`, `rss` in Seiten, `startstack`, `start_brk`, Signalfelder als untere 32 Bit; comm unmaskiert wie Linux); utime, stime, starttime und Fehlerzähler 0 |
+| `/proc/self/maps`, `/proc/<pid>/maps` | eine Zeile je Bereich der Karte, `start-end rwxp 00000000 00:00 0`, Name ab Spalte 74: `[heap]` (brk), `[stack]` (Hauptstack), geteilte memfd-Bereiche mit `s` und `/memfd:<name> (deleted)`. Ein Zeilenumbruch im Namen erscheint wie Linux als `\012`. Nebeneinanderliegende anonyme Bereiche mit gleichem Schutz stehen in einer Zeile; an den Grenzen von Heap, Stack und memfd wird geteilt (V29b; `[stack]` heißt jeder Teil des Hauptstacks, Linux nur die VMA mit `start_stack`); Programmdatei und Versatz fehlen (Abbild und Datei-`mmap` sind Kopien, V12) |
+| `/proc/self/fd` | Verzeichnis wie V19 (nur der Aufrufer selbst) |
+| `/proc/<pid>/exe` | Link auf den Programmpfad jedes Prozesses im Lauf (V12 nur der eigene) |
+| `/proc/stat` | `cpu` und `cpu0` mit aller Zeit seit dem Start als idle in USER_HZ (100), übrige Felder 0; `btime`, `processes` (laufende Prozesse des Laufs), `procs_running 1` |
+| `/proc/meminfo` | `MemTotal`, `MemFree`, `MemAvailable` aus demselben Wert wie `sysinfo` (V13), übrige Zeilen 0 (kein Swap, kein Cache) |
+| `/proc/cpuinfo` | ein Prozessor (passend zu `sched_getaffinity`), Flags nur aus der x86-64-Grundausstattung (`fpu tsc cx8 cmov mmx fxsr sse sse2 syscall nx lm`) |
+
+`<pid>` ist `self` oder die Dezimalzahl eines Prozesses desselben Laufs (Suche wie bei `kill`, nach `execve` das neue Abbild); andere Prozesse,
+führende Nullen, unbekannte Dateien und `task/` `-ENOENT`. Die Dateien sind nur lesbar: `stat` liefert `S_IFREG|0444` mit Größe 0 wie Linux,
+Schreibzugriff `-EACCES`, `O_CREAT|O_EXCL` `-EEXIST`, `O_DIRECTORY` `-ENOTDIR`; `access` mit `W_OK` oder `X_OK` `-EACCES`. Der Inhalt entsteht wie
+bei Linux (seq_file) bei jedem Lesen ab Position 0 neu und setzt sich ab einer anderen Position aus dem zuletzt erzeugten Text fort; `lseek` mit
+`SEEK_END` `-EINVAL`. Ist der Prozess einer offenen Datei inzwischen abgeholt, liefert das Lesen `-ESRCH`.
+
+Grenzen: CPU-Zeiten zählt der Kernel je Prozess nicht (Ladybirds CPU-Anzeige bleibt 0 %); `/proc/self/mem`, `/proc/self/fd/<n>` als Link, `environ`,
+`cmdline`, `smaps`, `task/` und das Auflisten von `/proc` fehlen. `cpuinfo` nennt keine echte CPU (Modell und Flags erfragen Skia und musl über CPUID).
+Geprüft im Gast (KVM, smp1 und smp4 je 5 Läufe): `proc` (Ladybird-Muster: `TracerPid`, `sscanf` auf `/proc/stat` vor und nach `seek(0)`, `stat` und
+`status` eines Kindes über `posix_spawn`, `exe` des Kindes, ENOENT nach dem Abholen, `maps` mit `[stack]`, `meminfo`, `cpuinfo`, Rechte).

@@ -135,20 +135,6 @@ internal static partial class LinuxSyscalls
 
         return 0;
     }
-
-    /// <summary>"/proc/self/fd" oder "/proc/&lt;eigene PID&gt;/fd" (normalisierter Pfad).</summary>
-    private static bool IsProcSelfFd(ILinuxProcess p, string path)
-    {
-        const string Prefix = "/proc/", Suffix = "/fd";
-        if (!path.StartsWith(Prefix, StringComparison.Ordinal) || !path.EndsWith(Suffix, StringComparison.Ordinal)
-            || path.Length <= Prefix.Length + Suffix.Length)
-        {
-            return false;
-        }
-
-        string who = path.Substring(Prefix.Length, path.Length - Prefix.Length - Suffix.Length);
-        return who == "self" || who == p.Pid.ToString(CultureInfo.InvariantCulture);
-    }
 }
 
 /// <summary>

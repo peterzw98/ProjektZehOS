@@ -90,6 +90,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
     private ulong _uid = 1000;
     private ulong _gid = 1000;
     private ulong _stackSize = 8UL << 20;
+    private ulong _stackTop; // V29: Ende des Hauptstacks für /proc ([stack], startstack); unter _memGate wie _stackSize
 
     /// <param name="maxBytes">Obergrenze für den Speicher des Prozesses; darüber endet ein Seitenfehler mit Abbruch.</param>
     /// <param name="host">Zeit, Zufall und Schlafen des Kernels (V2b); ohne Host liefern Uhren 0 und getrandom scheitert.</param>
@@ -768,6 +769,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
         }
 
         _stackSize = image.StackTop - image.StackBottom;
+        _stackTop = image.StackTop;
 
         ulong stackContent = image.StackPointer & ~(Page - 1);
         foreach (UserRegion region in image.Regions)

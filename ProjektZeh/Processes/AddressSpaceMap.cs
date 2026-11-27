@@ -132,6 +132,16 @@ internal sealed class AddressSpaceMap
         _regions.AddRange(from._regions);
     }
 
+    /// <summary>V29 (/proc/&lt;pid&gt;/maps): hängt alle Bereiche aufsteigend an <paramref name="into"/> an.</summary>
+    public void CopyRegionsTo(List<(ulong Start, ulong End, MapAccess Access)> into)
+    {
+        ArgumentNullException.ThrowIfNull(into);
+        foreach (Region r in _regions)
+        {
+            into.Add((r.Start, r.End, r.Access));
+        }
+    }
+
     public bool TryFind(ulong address, out MapAccess access)
     {
         int index = FirstEndingAfter(address);
