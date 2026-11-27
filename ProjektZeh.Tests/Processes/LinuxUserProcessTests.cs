@@ -832,21 +832,101 @@ public sealed class LinuxUserProcessTests
     }
 
     [TestMethod]
-    public void MmapDateiFrameMangelMittenInDerKopieIstFehler()
+    public void MmapDateiBelegtKeineFramesErstDerZugriffLiest()
     {
-        // Review Stufe c: Fehlt mitten in der Kopie ein Frame, darf mmap keinen Erfolg mit teilgenullter Abbildung melden.
+        // V30: mmap einer Datei kopiert nichts mehr; jede Seite kommt beim ersten Zugriff aus der Datei. Fehlt dann ein Frame, scheitert
+        // nur dieser Zugriff (Linux: SIGBUS/OOM beim Zugriff), nicht mmap.
         var pages = new FakePages();
-        const int Pages = 20; // mehr als ein Kopierstück (64 KiB = 16 Seiten): das erste Stück gelingt, das zweite nicht
-        var (process, _) = StartWithFile(Pages * (int)Page, pages);
+        const int Pages = 20;
+        var (process, content) = StartWithFile(Pages * (int)Page, pages);
         long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
         int before = pages.Frames.Count;
-        pages.Limit = before + 17;
-        Assert.AreEqual(-LinuxSyscalls.ENOMEM, Sys(process, LinuxSyscalls.Mmap, 0, Pages * Page, ProtR, MapPrivateFlag, (ulong)fd, 0));
-        Assert.AreEqual(before, pages.Frames.Count, "teilgefüllte Abbildung freigegeben");
-        pages.Limit = int.MaxValue;
+        long at = Sys(process, LinuxSyscalls.Mmap, 0, Pages * Page, ProtR, MapPrivateFlag, (ulong)fd, 0);
+        Assert.IsTrue(at > 0, "mmap " + at);
+        Assert.AreEqual(before, pages.Frames.Count, "mmap belegt keinen Frame");
         Assert.AreEqual(0L, Sys(process, 8, (ulong)fd, 0, 1), "Dateiposition unverändert");
-        Assert.IsTrue(Sys(process, LinuxSyscalls.Mmap, 0, Pages * Page, ProtR, MapPrivateFlag, (ulong)fd, 0) > 0, "danach wieder möglich");
+        Assert.AreEqual(0L, Sys(process, 3, (ulong)fd), "close nach mmap");
+
+        byte[] got = new byte[16];
+        Assert.IsTrue(process.TryRead((ulong)at + (7 * Page) + 5, got));
+        CollectionAssert.AreEqual(content.AsSpan((7 * (int)Page) + 5, 16).ToArray(), got, "Inhalt nach close");
+        Assert.AreEqual(before + 1, pages.Frames.Count, "genau eine Seite gelesen");
+        Assert.IsTrue(process.HandlePageFault((ulong)at + (3 * Page), NotPresentRead));
+        Assert.AreEqual(before + 2, pages.Frames.Count);
+
+        pages.Limit = pages.Frames.Count;
+        Assert.IsFalse(process.TryRead((ulong)at + (9 * Page), got), "ohne Frame scheitert der Zugriff");
+        Assert.IsFalse(process.HandlePageFault((ulong)at + (9 * Page), NotPresentRead));
+        pages.Limit = int.MaxValue;
+        Assert.AreEqual(1, process.FileExtentCount);
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Munmap, (ulong)at, Pages * Page));
+        Assert.AreEqual(0, process.FileExtentCount, "munmap gibt die Datei frei");
         process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapDateiMunmapMitteUndMadviseLesenNeuAusDerDatei()
+    {
+        var (process, content) = StartWithFile(4 * (int)Page);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        long at = Sys(process, LinuxSyscalls.Mmap, 0, 4 * Page, ProtRW, MapPrivateFlag, (ulong)fd, 0);
+        Assert.IsTrue(at > 0, "mmap " + at);
+        Assert.IsTrue(process.TryWrite((ulong)at + (3 * Page), "zz"u8));
+
+        // Mitte heraus: Rest links und rechts lesen weiter mit dem richtigen Versatz; neues anonymes MAP_FIXED im Loch ist genullt.
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Munmap, (ulong)at + Page, Page));
+        Assert.AreEqual(2, process.FileExtentCount);
+        Assert.AreEqual(at + (long)Page, Sys(process, LinuxSyscalls.Mmap, (ulong)at + Page, Page, ProtRW, MapAnon | MapFixedFlag, ulong.MaxValue, 0));
+        byte[] got = new byte[8];
+        Assert.IsTrue(process.TryRead((ulong)at + Page, got));
+        Assert.IsTrue(got.All(b => b == 0), "neuer Bereich liest nicht aus der alten Datei");
+        Assert.IsTrue(process.TryRead((ulong)at + (2 * Page) + 1, got));
+        CollectionAssert.AreEqual(content.AsSpan((2 * (int)Page) + 1, 8).ToArray(), got, "rechter Rest mit Versatz");
+
+        // MADV_DONTNEED auf einer privaten Dateiseite: Linux liest danach wieder den Dateiinhalt, die eigene Änderung ist weg.
+        Assert.AreEqual(0L, Sys(process, 28, (ulong)at + (3 * Page), Page, 4));
+        Assert.IsTrue(process.TryRead((ulong)at + (3 * Page), got));
+        CollectionAssert.AreEqual(content.AsSpan(3 * (int)Page, 8).ToArray(), got);
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void DateiQuelleSchliesstMitDemLetztenVerweis()
+    {
+        var store = new MemoryFileStore();
+        Assert.AreEqual(0L, store.CreateFile("f", 0x1A4, out ILinuxStoreFile? created));
+        Assert.AreEqual(3L, created!.WriteAt(0, "abc"u8));
+        var shared = new LinuxSharedStoreFile(created);
+        shared.AddRef();
+        Assert.AreEqual(0L, shared.ReleaseChecked(), "erster Verweis");
+        Span<byte> two = stackalloc byte[2];
+        Assert.AreEqual(2L, shared.ReadAt(1, two), "Datei noch offen");
+        Assert.AreEqual(0L, shared.ReleaseChecked());
+        Assert.AreEqual(0, shared.References);
+        Assert.IsTrue(shared.ReadAt(0, two) < 0, "nach dem letzten Verweis zu");
+        Assert.ThrowsException<InvalidOperationException>(() => shared.Release());
+
+        // Ausschnitte: byte-genaue Grenzen, Schnitt mit Versatz, Lesefehler.
+        var failing = new FailingSource();
+        var extents = new LinuxFileExtents();
+        extents.Add(0x10_0010, 0x20, 0, failing);
+        byte[] frame = new byte[Page];
+        Assert.IsFalse(extents.Fill(0x10_0000, frame), "Lesefehler");
+        extents.Cut(0x10_0000, 0x10_0018);
+        Assert.AreEqual(1, extents.Count);
+        extents.Clear();
+        Assert.AreEqual(0, failing.Refs, "alle Verweise zurück");
+    }
+
+    private sealed class FailingSource : ILinuxPageSource
+    {
+        public int Refs { get; private set; } = 1;
+
+        public long ReadAt(long offset, Span<byte> dst) => -5;
+
+        public void AddRef() => Refs++;
+
+        public void Release() => Refs--;
     }
 
     [TestMethod]

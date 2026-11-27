@@ -23,7 +23,7 @@ Hosttests: `ProjektZeh.Tests/Processes/LinuxSyscallsTests.cs`.
 | 20 | `writev` | höchstens 1024 Einträge, Summe über 0x7ffff000 ergibt `-EINVAL` (Abweichung: Linux kürzt stattdessen), Einträge werden vorab gelesen |
 | 60, 231 | `exit`, `exit_group` | `ILinuxProcess.Exit(code & 0xff)` |
 | 12 | `brk` | wie Linux: bei Fehler der alte Wert, nie ein Fehlercode |
-| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), `MAP_SHARED` einer memfd geteilt (V17), Datei mit `MAP_FIXED` ersetzt den Bereich (V25, siehe unten); fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
+| 9 | `mmap` | genau eines von `MAP_PRIVATE`/`MAP_SHARED`; Länge wird auf Seiten aufgerundet; unbekannte `prot`-Bits `-EINVAL`; anonym mit `MAP_FIXED` ersetzt den Bereich (V2c; unausgerichtet oder über 2^47 `-EINVAL`); Datei-fd als Kopie (V12), reguläre Datei seit V30 Seiten erst beim Zugriff, `MAP_SHARED` einer memfd geteilt (V17), Datei mit `MAP_FIXED` ersetzt den Bereich (V25, siehe unten); fd < 0 ohne ANONYMOUS `-EBADF`; `-EINVAL`, `-ENOMEM` |
 | 11, 10 | `munmap`, `mprotect` | Länge wird auf Seiten aufgerundet; `-EINVAL` bei unausgerichteter Adresse, Länge oder Adresse über 2^47, unbekannten `prot`-Bits, `munmap` mit Länge 0; `mprotect` mit Länge 0 liefert 0; `mprotect` ohne Abdeckung `-ENOMEM` |
 | 158 | `arch_prctl` | `ARCH_SET_FS` (nur Adressen der Benutzerhälfte, sonst `-EPERM`), `ARCH_GET_FS`; sonst `-EINVAL` |
 | 218 | `set_tid_address` | merkt die Adresse je Thread, liefert die Thread-ID (V10) |
@@ -220,7 +220,8 @@ Grenzen (Review V2, bewusst offen):
   Name mit 199 Zeichen, gemischte und kleine Schreibweise in `readdir`, aufgelöste Datei- und Ordnerlinks, Datei mit 20 MB. Grenzen: Ausführungsrechte gehen
   verloren (vorhandene Dateien melden 0755, V26). `run` und `execve` lesen vom Programm nur Kopf, Programmköpfe und die Dateibytes von `PT_LOAD` und
   `PT_INTERP` (`ElfFile.LoadedLength`); die Grenze von 128 MiB gilt für diesen Teil, Debugabschnitte dahinter zählen nicht (Ladybirds `WebContent`:
-  175 MB Datei, 117 MB ladbar). Der Teil liegt beim Laden zweimal im Speicher (Puffer und Seiten); Seiten erst beim Zugriff aus der Datei zu füllen steht aus.
+  175 MB Datei, 117 MB ladbar). Seit V30 liest `execve` davon nur den Kopf bis zum Ende der Programmköpfe; die Seiten der Programmsegmente kommen beim ersten Zugriff aus der Datei
+  (Abschnitt „Dateiseiten erst beim Zugriff (V30)“). Der Interpreter und das erste Programm von `run` werden weiter ganz gelesen.
 - Gastprobe: jedes Programm bekommt wie bei `run-linux.py` ein frisches Verzeichnis, `/data/linuxrun/<name>` (wenn `/data` eingehängt ist, sonst Arbeitsspeicher);
   die serielle Zeile `LINUX_RUN root <name> <wurzel|memory>` nennt es. Arbeitsverzeichnis ist der Unterordner `/w` darin (wird angelegt), weil `run-linux.py`
   ebenfalls in einem Unterordner startet: In "/" zeigte `ls .` den virtuellen Ordner `dev`, und `s1/dirs` erwartet vor `/d/e` noch einen Ordnernamen. Das Gastskript startet mit einem frischen Datenimage; ein zweiter Lauf auf demselben Image
@@ -317,14 +318,16 @@ Ladybird sucht seine ICU-Daten (`icudt78l.dat`, 27 MB) über `readlink("/proc/se
   aus dem Pfad der Shell relativ zur Prozesswurzel: `cd /data/app`, `run bin/js` ergibt `/bin/js`. Liegt das Programm außerhalb der Wurzel
   (`run /data/t/js` aus `/data/app`) oder läuft der Prozess ohne Wurzel auf der Platte (Shell in `/` oder direkt auf einem Laufwerk), gibt es den
   Link nicht (`-ENOENT`). Seit V29 auch `/proc/<pid>/exe` anderer Prozesse des Laufs; das übrige `/proc` steht im Abschnitt V29.
-- `mmap` mit Datei-fd ist eine **Kopie**: Der Bereich wird anonym belegt, ab dem Versatz (seitenausgerichtet, sonst `-EINVAL`) wie mit `pread` gefüllt,
+- `mmap` mit Datei-fd war bis V29 eine **Kopie** (seit V30 nur noch für andere Dateiarten als reguläre Dateien, etwa `/proc`; reguläre Dateien siehe
+  „Dateiseiten erst beim Zugriff (V30)“): Der Bereich wird anonym belegt, ab dem Versatz (seitenausgerichtet, sonst `-EINVAL`) wie mit `pread` gefüllt,
   hinter dem Dateiende mit Nullen, und erst danach auf den gewünschten Schutz gesetzt. Die Dateiposition bleibt. Das ist `MAP_PRIVATE` bis auf einen
   Punkt: Spätere Änderungen an der Datei sieht die Abbildung nicht. `MAP_SHARED` geht deshalb nur ohne `PROT_WRITE`; beschreibbar geteilt bleibt
   `-ENODEV` (nichts flösse in die Datei zurück). Weitere Fehler: Terminal und Verzeichnis `-ENODEV`, nur zum Schreiben geöffnet `-EACCES`,
   unbekannter fd `-EBADF`. Seiten hinter dem Dateiende lesen sich als Nullen statt `SIGBUS`; über 2 GiB hinaus bleibt der Rest Null.
 - `MAP_FIXED` mit Datei-fd: seit V25 erlaubt (siehe „Dynamisch gelinkte Programme (V25)“). Scheitert die Kopie mittendrin (Speichermangel `-ENOMEM`, Lesefehler, Abbruch `-EINTR`), gibt `mmap` den Bereich frei und meldet den Fehler;
   eine teilweise gefüllte Abbildung bleibt nie zurück.
-- Die Kopie belegt sofort Speicher in voller Länge (ICU: 27 MB von 512 MiB je Programm) und läuft unter der Dateisperre (V11), darin die Speichersperre.
+- Die Kopie belegte sofort Speicher in voller Länge (ICU: 27 MB von 512 MiB je Programm) und lief unter der Dateisperre (V11), darin die Speichersperre;
+  seit V30 belegt die ICU-Abbildung nur die berührten Seiten.
 - Geprüft im Gast (KVM, smp1): `js` findet und lädt die ICU-Daten; der nächste fehlende Aufruf ist `pipe2` (Ereignisschleife, `EventLoopImplementationUnix.cpp:165`).
 
 ## Pipes und sysinfo (V13)
@@ -696,3 +699,42 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxFileLocks.cs` (Tabel
   Nummer `-EBADF`. Abweichung: Pipes, Sockets und Terminal `0` ohne Wirkung. `close_range` gibt POSIX-Sperren frei wie `close`.
 - **chmod, link:** siehe Tabelle der Dateiaufrufe (V2): `chmod` ohne Wirkung auf FAT, `link` `-EPERM` wie vfat (fontconfig fällt für seine Sperrdatei auf `mkdir` zurück).
 - **HOME:** `CosmosLinuxRun.Environment` setzt `HOME=/` (Prozesswurzel); `experiments/LinuxAbi/run-linux.py` und `expected/s1/args_env_auxv.txt` mit derselben Umgebung.
+
+## Dateiseiten erst beim Zugriff (V30)
+
+Plattformunabhängig in `ProjektZeh/Processes/LinuxFilePages.cs` und `LinuxUserProcessFilePages.cs` (Hosttests in `LinuxUserProcessTests`, Gastprogramm
+`experiments/LinuxAbi/src/v30/mmap_file.c`, Erwartung Linux 6.12 in `expected/v30`). Anlass: Ladybirds `WebContent` hat 117 MB ladbaren Teil, dazu bildet
+`ld-musl` die Bibliotheken mit `mmap` ab; bis V29 wurde all das beim Laden gelesen und kopiert, obwohl der Prozess nur einen Teil berührt.
+
+- **`mmap` einer regulären Datei** (`MAP_PRIVATE`, und `MAP_SHARED` ohne `PROT_WRITE` wie bisher): Der Bereich bekommt sofort seinen Schutz, aber keine
+  Frames. Der erste Zugriff (Seitenfehler oder ein Kernelzugriff wie `write` aus dem Bereich) holt einen Frame, liest die Seite ab dem Versatz aus der Datei
+  und füllt hinter dem Dateiende mit Nullen. Schreiben trifft nur den privaten Frame. Die Abbildung hält die Datei offen: `close` und `unlink` danach sind
+  erlaubt. Eine noch nicht berührte Seite sieht spätere Änderungen an der Datei, eine schon gelesene nicht (wie Linux, wo die private Seite bis zum
+  Schreiben die Seite des Caches ist). `munmap`, `MAP_FIXED` und `madvise(MADV_DONTNEED)` schneiden den Dateiausschnitt mit (nach `DONTNEED` kommt die
+  Seite wieder aus der Datei), `fork` gibt dem Kind dieselben Ausschnitte. Andere Dateien (`/proc`, Geräte) werden weiter kopiert.
+- **`execve`:** liest vom Programm nur Kopf und Programmköpfe (`ElfFile.HeadLength`); `ElfLoadOptions.FileLength` prüft, dass jedes Segment in der
+  Datei liegt. Die Dateiteile der `PT_LOAD`-Segmente sind Ausschnitte wie oben, `.bss` bleibt anonym. Der Interpreter (`ld-musl`) und das erste
+  Programm von `run` (`FileService.ReadExecutable`) werden weiter ganz gelesen.
+- **Sperren:** Der Seitenfehler liest unter der Speichersperre des Prozesses (`_memGate`), ohne die Dateisperre (`FileGate`); die Quelle ist gezählt
+  und wird erst mit dem letzten Ausschnitt geschlossen. Der Ring-3-Seitenfehler läuft in Cosmos mit eingeschalteten Interrupts
+  (`UserMode.HandleFault`, Cosmos `5790fa7`, `UserMode.cs:214`); Plattenzugriffe sind dort deshalb so zulässig wie in einem Systemaufruf.
+- **Grenzen:** Scheitert das Lesen im Seitenfehler, endet der Prozess wie bei Speichermangel (Linux: `SIGBUS`). Wird die Datei nach `mmap` gekürzt,
+  liest der Zugriff Nullen statt `SIGBUS`. Ein Fehler beim Schließen der Datei nach dem letzten Ausschnitt geht verloren (Linux: `close` schreibt auch
+  nicht zurück). Dateien des Arbeitsspeichers (`MemoryFileStore`, nur ohne Wurzel auf der Platte) werden ohne eigene Sperre gelesen.
+
+Gemessen im Gast (KVM, 3 GiB, `bin/rssw <n> /libexec/WebContent --disable-sandbox --headless` aus Ladybirds D2-Bündel; `WebContent` läuft bis zur
+Übernahme des IPC-Sockets, `Non-existent socket requested`, Exit 1; Höchstwert von `VmRSS` und Abfall von `MemFree`, abgefragt alle 2 ms):
+
+| Stand | smp | Prozesse | VmRSS je Prozess | MemFree-Abfall |
+| --- | --- | --- | --- | --- |
+| vorher (0cff214d) | 1 | 1 | 153 548 kB | 288 MB |
+| vorher (0cff214d) | 4 | 1 | 151 472 kB | 286 MB |
+| vorher (0cff214d) | 4 | 4 | ein Wert 153 552 kB (die übrigen nicht erfasst: `execve` las noch) | 745 MB |
+| V30 | 1 | 1 | 18 100 kB (zweimal) | 54 MB |
+| V30 | 4 | 1 | 18 100 kB | 54 MB |
+| V30 | 4 | 4 | 15 108 bis 18 204 kB | 176 MB |
+| V30 | 1 | 6 | 17 636 bis 18 168 kB (ein Prozess nicht erfasst) | 279 MB |
+
+Geprüft im Gast (KVM, smp1 und smp4 je ein Lauf): `mmap_file` sowie die bisherigen `proc`, `mmap_anon`, `fork_cow`, `exec`, `memfd_seal`, `start`,
+`spawn`, `shm` (9/9). Der Lauf „vorher“ mit 6 Prozessen kam nicht zustande: In 4 von 13 Gaststarts dieser Reihe (beide Stände) blieb die Anmeldung
+nach `SATA: command completion timeout` beim Desktop-Start stehen, bevor ein Linux-Programm lief.

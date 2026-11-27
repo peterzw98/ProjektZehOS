@@ -308,7 +308,20 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             return -LinuxSyscalls.ENOSYS;
         }
 
-        long read = ReadExecutable(path, out byte[] elf);
+        // V30: Vom Programm nur der Kopfteil; die Segmente liest der neue Prozess beim Zugriff über source (eigener Verweis je Segment).
+        long read = ReadProgram(path, true, out byte[] elf, out long fileLength, out ILinuxPageSource? source);
+        try
+        {
+            return ExecRead(path, argv, envp, inVfork, read, elf, fileLength, ref source);
+        }
+        finally
+        {
+            source?.Release();
+        }
+    }
+
+    private long ExecRead(string path, string[] argv, string[] envp, bool inVfork, long read, byte[] elf, long fileLength, ref ILinuxPageSource? source)
+    {
         bool startsSelf = ExePath != null && string.Equals(LinuxPath.Normalize(path), ExePath, StringComparison.OrdinalIgnoreCase);
         if (read == -LinuxErrno.ENOENT && ExePath != null && StartPath != null
             && string.Equals(LinuxPath.Normalize(path), StartPath, StringComparison.OrdinalIgnoreCase))
@@ -317,7 +330,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             // Kernelpfad außerhalb der Prozesswurzel). Ein Programm, das sich damit selbst startet, findet es unter seinem Pfad in der Wurzel.
             path = ExePath;
             startsSelf = true;
-            read = ReadExecutable(path, out elf);
+            source?.Release();
+            source = null;
+            read = ReadProgram(path, true, out elf, out fileLength, out source);
         }
 
         if (read < 0)
@@ -343,6 +358,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 Uid = _uid,
                 Gid = _gid,
                 ReadInterpreter = ReadExecutable,
+                FileLength = source != null ? fileLength : null,
             });
         }
         catch (ElfLoadException exception)
@@ -356,7 +372,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             };
         }
 
-        IUserPages? pages = CreatePages();
+        IUserPages? pages = CreatePages?.Invoke(); // Exec hat CreatePages geprüft
         if (pages == null)
         {
             return -LinuxSyscalls.ENOMEM;
@@ -370,7 +386,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             // execve auf argv[0] fälschlich das ursprüngliche Programm statt ENOENT starten).
             StartPath = startsSelf ? StartPath : null,
         };
-        if (!next.Load(image, elf).IsOK())
+        if (!(source != null ? next.Load(image, elf, source) : next.Load(image, elf)).IsOK())
         {
             next.DestroyMemory();
             return -LinuxSyscalls.ENOMEM;
@@ -399,9 +415,17 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     }
 
     /// <summary>Liest den ladbaren Teil des Programms über das Dateisystem des Prozesses (reguläre Dateien, Teil bis <see cref="MaxExecFileSize"/>).</summary>
-    private long ReadExecutable(string path, out byte[] elf)
+    private long ReadExecutable(string path, out byte[] elf) => ReadProgram(path, false, out elf, out _, out _);
+
+    /// <summary>
+    /// V30: Mit <paramref name="lazy"/> und einer regulären Datei des Speichers nur der Kopfteil (<see cref="ElfFile.HeadLength"/>) und eine
+    /// Quelle mit eigenem Verweis für die Segmente (der Aufrufer gibt ihn zurück); sonst wie bisher der ganze ladbare Teil, Quelle null.
+    /// </summary>
+    private long ReadProgram(string path, bool lazy, out byte[] elf, out long fileLength, out ILinuxPageSource? source)
     {
         elf = [];
+        fileLength = 0;
+        source = null;
         lock (_fileGate)
         {
             long r = FileSystem.Open(path, ORdOnly, 0, out ILinuxFile? file);
@@ -442,7 +466,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                     return at < 0 ? at : f.Read(dst);
                 }
 
-                r = ElfFile.LoadedLength(st.Size, ReadAt, out long needed);
+                ILinuxPageSourceFile? sourceFile = lazy ? file as ILinuxPageSourceFile : null;
+                long needed;
+                r = sourceFile != null ? ElfFile.HeadLength(st.Size, ReadAt, out needed) : ElfFile.LoadedLength(st.Size, ReadAt, out needed);
                 if (r < 0)
                 {
                     return r;
@@ -461,6 +487,8 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 }
 
                 elf = r == bytes.Length ? bytes : bytes.AsSpan(0, (int)r).ToArray();
+                fileLength = st.Size;
+                source = sourceFile?.OpenPageSource();
                 return 0;
             }
             finally

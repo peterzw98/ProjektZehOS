@@ -192,7 +192,15 @@ internal sealed class ElfFile
     /// ganze Datei (höchstens <paramref name="fileLength"/>), damit <see cref="Parse"/> den Fehler wie bisher meldet.
     /// Rückgabe 0 oder -errno des Lesers.
     /// </summary>
-    public static long LoadedLength(long fileLength, ElfRangeReader read, out long length)
+    public static long LoadedLength(long fileLength, ElfRangeReader read, out long length) => PrefixLength(fileLength, read, true, out length);
+
+    /// <summary>
+    /// V30: Länge des Kopfteils für den Lader, wenn die Segmente beim Zugriff aus der Datei kommen: ELF-Kopf, Programmköpfe und PT_INTERP,
+    /// ohne PT_LOAD. Sonst wie <see cref="LoadedLength"/> (nicht als ELF64 deutbar: ganze Datei).
+    /// </summary>
+    public static long HeadLength(long fileLength, ElfRangeReader read, out long length) => PrefixLength(fileLength, read, false, out length);
+
+    private static long PrefixLength(long fileLength, ElfRangeReader read, bool includeLoads, out long length)
     {
         ArgumentNullException.ThrowIfNull(read);
         length = fileLength;
@@ -239,7 +247,7 @@ internal sealed class ElfFile
         {
             ReadOnlySpan<byte> p = table.AsSpan(i * ProgramHeaderSize, ProgramHeaderSize);
             uint type = BinaryPrimitives.ReadUInt32LittleEndian(p);
-            if (type != ElfProgramHeader.Load && type != ElfProgramHeader.Interpreter)
+            if ((type != ElfProgramHeader.Load || !includeLoads) && type != ElfProgramHeader.Interpreter)
             {
                 continue;
             }

@@ -37,6 +37,12 @@ internal sealed class ElfLoadOptions
     /// <summary>V25: liest den Interpreter aus PT_INTERP (absoluter Pfad in der Prozesswurzel). Ohne Leser lehnt der Lader dynamisch
     /// gelinkte Programme mit ENOENT ab, wie Linux bei fehlendem Interpreter.</summary>
     public ElfFileReader? ReadInterpreter { get; init; }
+
+    /// <summary>
+    /// V30: Länge der ganzen Programmdatei, wenn <c>elf</c> nur ihr Kopfteil ist (<see cref="ElfFile.HeadLength"/>): Die Segmente werden
+    /// gegen diese Länge geprüft und später aus der Datei gelesen. null: <c>elf</c> ist der ganze ladbare Teil (bisheriger Weg).
+    /// </summary>
+    public long? FileLength { get; init; }
 }
 
 /// <summary>Liest eine Datei ganz: 0 oder -errno (etwa -ENOENT), bei Erfolg der Inhalt in <paramref name="content"/>.</summary>
@@ -107,7 +113,13 @@ internal static class ElfLoader
         ulong guard = stackBottom - PageSize;
 
         ulong total = 0;
-        List<ElfProgramHeader> loads = CollectLoads(file, elf, options, ref total, out ulong lowestPage, out bool hasPhdr, out ulong phdrVaddr, out string? interpreterPath);
+        if (options.FileLength is long declared && declared < elf.Length)
+        {
+            throw new ArgumentException("Die Dateilänge ist kürzer als der gelesene Kopfteil.", nameof(options));
+        }
+
+        List<ElfProgramHeader> loads = CollectLoads(file, elf, options.FileLength ?? elf.Length, options, ref total, out ulong lowestPage, out bool hasPhdr,
+            out ulong phdrVaddr, out string? interpreterPath);
 
         // ET_EXEC liegt, wo die Datei sagt; ET_DYN so, dass die niedrigste Seite auf PieBase kommt.
         ulong bias = 0;
@@ -147,7 +159,7 @@ internal static class ElfLoader
                 throw new ElfLoadException("Der Interpreter " + interpreterPath + " ist kein ET_DYN.");
             }
 
-            List<ElfProgramHeader> interpreterLoads = CollectLoads(interpreterFile, interpreter, options, ref total, out ulong interpreterLowest, out _, out _, out string? nested);
+            List<ElfProgramHeader> interpreterLoads = CollectLoads(interpreterFile, interpreter, interpreter.Length, options, ref total, out ulong interpreterLowest, out _, out _, out string? nested);
             if (nested != null)
             {
                 throw new ElfLoadException("Der Interpreter " + interpreterPath + " verlangt selbst einen Interpreter.");
@@ -215,7 +227,7 @@ internal static class ElfLoader
     }
 
     /// <summary>Liest die ladbaren Segmente einer Datei, zählt sie gegen <see cref="ElfLoadOptions.MaxImageSize"/> und findet PT_PHDR und PT_INTERP.</summary>
-    private static List<ElfProgramHeader> CollectLoads(ElfFile file, ReadOnlySpan<byte> bytes, ElfLoadOptions options, ref ulong total, out ulong lowestPage,
+    private static List<ElfProgramHeader> CollectLoads(ElfFile file, ReadOnlySpan<byte> bytes, long fileLength, ElfLoadOptions options, ref ulong total, out ulong lowestPage,
         out bool hasPhdr, out ulong phdrVaddr, out string? interpreterPath)
     {
         List<ElfProgramHeader> loads = new();
@@ -236,7 +248,7 @@ internal static class ElfLoader
                     phdrVaddr = ph.VirtualAddress;
                     break;
                 case ElfProgramHeader.Load:
-                    ValidateLoad(ph, bytes.Length);
+                    ValidateLoad(ph, fileLength);
                     if (ph.MemorySize == 0)
                     {
                         break;
@@ -346,7 +358,7 @@ internal static class ElfLoader
         return false;
     }
 
-    private static void ValidateLoad(ElfProgramHeader ph, int fileLength)
+    private static void ValidateLoad(ElfProgramHeader ph, long fileLength)
     {
         if (ph.FileSize > ph.MemorySize)
         {

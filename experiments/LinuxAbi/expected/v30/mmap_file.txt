@@ -1,0 +1,18 @@
+Datei angelegt=1
+mmap privat=1
+pwrite Seite 2=1
+Seite 0 Inhalt=1
+Seite 3 Rest=1
+hinter Dateiende Nullen=1
+Seite 2 sieht pwrite=1
+Schreiben privat=1 Datei unveraendert=1
+kopierte Seite sieht pwrite nicht=1
+mmap Versatz=1
+Kind liest ungelesene Seiten=1
+Kind schreibt nicht zurueck=1 1
+nach close und unlink=1
+munmap Mitte=0
+Nachbarn bleiben=1 1
+MADV_DONTNEED=0
+Seite wieder aus Datei=1
+munmap Rest=0 0 0

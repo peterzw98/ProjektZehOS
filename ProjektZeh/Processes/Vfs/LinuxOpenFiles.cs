@@ -151,9 +151,12 @@ internal abstract class LinuxOpenFile : ILinuxFile
 }
 
 /// <summary>Eine reguläre Datei des Speichers mit eigener Position (lseek, O_APPEND).</summary>
-internal sealed class LinuxRegularFile : LinuxOpenFile
+internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
 {
     private readonly ILinuxStoreFile _file;
+
+    // V30: Abbildungen (mmap, PT_LOAD) teilen die Speicherdatei; geschlossen wird sie mit dem letzten Verweis, nicht mit dem Deskriptor.
+    private readonly LinuxSharedStoreFile _shared;
     private readonly LinuxStoreNode _node;
     private readonly ulong _ino;
     private readonly bool _append;
@@ -163,6 +166,7 @@ internal sealed class LinuxRegularFile : LinuxOpenFile
         : base(fs, "/" + storePath, read, write)
     {
         _file = file;
+        _shared = new LinuxSharedStoreFile(file);
         _node = node;
         _append = append;
         // Am Deskriptor festhalten: fstat nach unlink oder rename meldet weiter dieselbe Datei.
@@ -237,7 +241,20 @@ internal sealed class LinuxRegularFile : LinuxOpenFile
         return 0;
     }
 
-    protected override long Release() => _file.Close();
+    // Bleibt eine Abbildung, schließt erst sie die Datei; ein Fehler beim Zurückschreiben geht dann verloren (Linux: close schreibt auch nicht).
+    protected override long Release() => _shared.ReleaseChecked();
+
+    /// <summary>V30: Quelle für Seiten aus dieser Datei, unter FileGate geholt; null nach close.</summary>
+    public ILinuxPageSource? OpenPageSource()
+    {
+        if (IsClosed)
+        {
+            return null;
+        }
+
+        _shared.AddRef();
+        return _shared;
+    }
 
     protected override long TruncateCore(long length) => length < 0 ? -LinuxErrno.EINVAL : _file.SetLength(length);
 }

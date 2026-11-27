@@ -97,8 +97,10 @@ internal sealed class UserImage
     /// <summary>
     /// Schreibt den Anfangsinhalt der Seite ab <paramref name="pageAddress"/> nach <paramref name="page"/>: Dateibytes der Segmente,
     /// Nullen für .bss und Lücken, den vorbereiteten Teil des Stacks. <paramref name="elf"/> muss dieselbe Datei wie beim Laden sein.
+    /// V30: Mit <paramref name="skipProgram"/> bleiben die Dateibytes des Programms aus (sie kommen beim Zugriff aus der Datei);
+    /// <paramref name="elf"/> ist dann nur der Kopfteil, den der Lader las.
     /// </summary>
-    public void FillPage(ReadOnlySpan<byte> elf, ulong pageAddress, Span<byte> page)
+    public void FillPage(ReadOnlySpan<byte> elf, ulong pageAddress, Span<byte> page, bool skipProgram = false)
     {
         if (elf.Length != _elfLength)
         {
@@ -114,6 +116,11 @@ internal sealed class UserImage
         ulong pageEnd = pageAddress + AddressSpaceMap.PageSize;
         foreach (UserSegment segment in _segments)
         {
+            if (skipProgram && !segment.Interpreter)
+            {
+                continue;
+            }
+
             // Nur der Dateiteil wird kopiert; der Rest bis MemorySize bleibt null (.bss).
             ulong from = Math.Max(segment.Address, pageAddress);
             ulong to = Math.Min(segment.Address + segment.FileSize, pageEnd);
