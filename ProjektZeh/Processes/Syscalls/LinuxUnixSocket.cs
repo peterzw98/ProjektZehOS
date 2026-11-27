@@ -73,7 +73,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     public const int MaxDgramQueue = 10;
 
     /// <summary>
-    /// Leere Nachrichten (0 Byte) zählen nicht gegen <see cref="Capacity"/>; Linux belastet jede mit der Größe ihres sk_buff (rund 768 Byte,
+    /// Leere Nachrichten (0 Byte) zählen seit <see cref="MessageOverhead"/> mit diesem Aufschlag gegen <see cref="Capacity"/> (P2-2); Linux belastet jede mit der Größe ihres sk_buff (rund 768 Byte,
     /// also etwa 277 je 212992). Ohne Grenze wüchse die Warteschlange unbegrenzt (1 Mio. = 54 MiB Heap). Gilt für SEQPACKET und UDP.
     /// </summary>
     public const int MaxEmptyQueue = 256;
@@ -206,7 +206,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     /// <summary>
     /// Sendet <paramref name="data"/>; <paramref name="fds"/> reisen mit der ersten Nachricht (<paramref name="fdsTaken"/>: übernommen,
     /// sonst gibt der Aufrufer sie frei). Stream: blockierend alles, O_NONBLOCK so viel wie passt; Seqpacket: ganz oder gar nicht,
-    /// länger als <see cref="Capacity"/> -EMSGSIZE. -EPIPE nach dem Ende der Gegenseite oder shutdown, -ENOTCONN unverbunden, -EINTR beim
+    /// länger als <see cref="Capacity"/> minus <see cref="MessageOverhead"/> -EMSGSIZE. -EPIPE nach dem Ende der Gegenseite oder shutdown, -ENOTCONN unverbunden, -EINTR beim
     /// Abbruch; wurde schon etwas gesendet, zählt das.
     /// </summary>
     public long Send(ReadOnlySpan<byte> data, LinuxSocketFds? fds, bool nonBlocking, ILinuxAbort? abort, out bool fdsTaken)
