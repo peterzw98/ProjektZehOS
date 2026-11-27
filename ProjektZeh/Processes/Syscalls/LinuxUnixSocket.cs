@@ -611,6 +611,35 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
         return r;
     }
 
+    /// <summary>
+    /// ioctl FIONREAD/SIOCINQ (V33): ungelesene Bytes wie Linux' unix_inq_len. Stream und Seqpacket: alle wartenden Bytes; Datagramm
+    /// (auch UDP): Länge des vordersten Datagramms; unverbunden 0; lauschend -EINVAL. Mitgeschickte Dateien zählen nicht.
+    /// </summary>
+    public long ReadableBytes()
+    {
+        if (IsListening)
+        {
+            return -EINVAL;
+        }
+
+        Link? l = Volatile.Read(ref _link);
+        if (l == null)
+        {
+            return IsInetDgram ? FirstDatagramLength() : 0;
+        }
+
+        lock (l.Gate)
+        {
+            Channel ch = Incoming(l);
+            if (IsDgram)
+            {
+                return ch.Records.Count > 0 ? ch.Records.Peek().Data.Length : 0;
+            }
+
+            return ch.Bytes;
+        }
+    }
+
     public bool InputReady => PollEvents(LinuxPipe.PollIn) != 0;
 
     public bool WaitInput(long timeoutMs) => WaitPoll(LinuxPipe.PollIn, timeoutMs, null);

@@ -435,6 +435,15 @@ internal sealed partial class LinuxUnixSocket
         }
     }
 
+    /// <summary>FIONREAD eines UDP-Sockets: Länge des vordersten Datagramms, 0 ohne (Linux udp_ioctl SIOCINQ).</summary>
+    private long FirstDatagramLength()
+    {
+        lock (_inboxGate)
+        {
+            return _inbox.Count > 0 ? _inbox.Peek().Data.Length : 0;
+        }
+    }
+
     private long DatagramSeq
     {
         get

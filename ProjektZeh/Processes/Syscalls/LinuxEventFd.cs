@@ -236,6 +236,18 @@ internal sealed class LinuxInotify : ILinuxPollable, ILinuxStatusFlags, ILinuxIn
 
     public int StatusFlags => (NonBlocking ? LinuxPipeEnd.ONonblock : 0); // O_RDONLY wie Linux (inotify_init1 öffnet nur lesend)
 
+    /// <summary>ioctl FIONREAD (V33): Bytes der wartenden Ereignisse (alle ohne Namen, je <see cref="EventHeader"/>).</summary>
+    public int PendingBytes
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _events.Count * EventHeader;
+            }
+        }
+    }
+
     /// <summary>Anzahl der Watches (Hosttests).</summary>
     public int WatchCount
     {
