@@ -15,6 +15,8 @@
 .equ USER_CODE, 0x4B
 
 // UserFrame: 15 GPRs, 4 info words, then the interrupt frame.
+.equ FRAME_R11,    32
+.equ FRAME_RCX,    104
 .equ FRAME_INFO_SIZE, 32
 .equ FRAME_RIP,    152
 .equ FRAME_CS,     160
@@ -22,6 +24,8 @@
 .equ FRAME_RSP,    176
 .equ FRAME_SS,     184
 .equ FPU_SIZE,     512
+// RFLAGS that sysretq cannot give back as they are: RF it clears, TF traps right after it.
+.equ SYSRET_UNSAFE_FLAGS, 0x10100
 
 .section .rodata
 .balign 16
@@ -145,6 +149,19 @@ _native_x64_user_syscall:
     test    rax, rax
     jnz     .Luser_leave_rax
 
+    // ZehOS patch sigreturn-iretq, see PATCHES.md
+    // sysretq takes RIP from RCX and RFLAGS from R11. Only a frame that already holds those
+    // values goes that way (every plain call: the syscall instruction put them there); one a
+    // handler rewrote, a signal return to a fault's frame for one, needs every register back.
+    mov     rax, qword ptr [rsp + FPU_SIZE + FRAME_RCX]
+    cmp     rax, qword ptr [rsp + FPU_SIZE + FRAME_RIP]
+    jne     .Luser_syscall_iretq
+    mov     rax, qword ptr [rsp + FPU_SIZE + FRAME_R11]
+    cmp     rax, qword ptr [rsp + FPU_SIZE + FRAME_RFLAGS]
+    jne     .Luser_syscall_iretq
+    test    rax, SYSRET_UNSAFE_FLAGS
+    jnz     .Luser_syscall_iretq
+
     fxrstor64 [rsp]
     add     rsp, FPU_SIZE
     pop     r15
@@ -169,6 +186,29 @@ _native_x64_user_syscall:
     pop     rsp
     swapgs
     sysretq
+
+// The checked frame as it is: CS and SS are the user's (UserMode.Prepare), so iretq cannot fault.
+.Luser_syscall_iretq:
+    fxrstor64 [rsp]
+    add     rsp, FPU_SIZE
+    pop     r15
+    pop     r14
+    pop     r13
+    pop     r12
+    pop     r11
+    pop     r10
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rbp
+    pop     rbx
+    pop     rdx
+    pop     rcx
+    pop     rax
+    add     rsp, FRAME_INFO_SIZE
+    swapgs
+    iretq
 
 // uint64_t _native_x64_user_syscall_address()
 .global _native_x64_user_syscall_address
