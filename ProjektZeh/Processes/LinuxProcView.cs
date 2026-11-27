@@ -90,33 +90,15 @@ internal sealed partial class LinuxUserProcess : ILinuxProcView
             stackSize = mem._stackSize;
             shmem = mem._shared.Count;
             anon = mem._frames.Count - shmem; // geteilte Seiten stehen auch in _frames (LinuxUserProcessShared.cs)
-            ulong heapStart = brkStart & ~(Page - 1);
-            ulong heapEnd = (brk + Page - 1) & ~(Page - 1);
-            foreach ((ulong start, ulong end, MapAccess access) in raw)
+            var shared = new List<(ulong Start, ulong End, string Name)>(mem._regions.Count);
+            foreach (SharedRegion r in mem._regions)
             {
-                string name = string.Empty;
-                bool shared = false;
-                foreach (SharedRegion r in mem._regions)
-                {
-                    if (r.Start <= start && start < r.End)
-                    {
-                        name = r.Mem.Path;
-                        shared = true;
-                        break;
-                    }
-                }
-
-                if (!shared && heapEnd > heapStart && start >= heapStart && start < heapEnd)
-                {
-                    name = "[heap]";
-                }
-                else if (!shared && stackTop != 0 && start < stackTop && stackTop <= end)
-                {
-                    name = "[stack]";
-                }
-
-                regions.Add(new LinuxProcRegion(start, end, access, shared, name));
+                shared.Add((r.Start, r.End, r.Mem.Path));
             }
+
+            // AddressSpaceMap verschmilzt Nachbarn gleicher Rechte; NameRegions trennt sie wieder an Heap-, Stack- und memfd-Grenzen.
+            ulong stackLow = stackTop > stackSize ? stackTop - stackSize : 0;
+            LinuxProcFiles.NameRegions(raw, shared, brkStart & ~(Page - 1), (brk + Page - 1) & ~(Page - 1), stackLow, stackTop, regions);
         }
 
         return new LinuxProcSnapshot

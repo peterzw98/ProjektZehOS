@@ -53,10 +53,10 @@ public sealed class LinuxProcFilesTests
         public readonly ulong Mem;
         public LinuxUserProcess? Child;
 
-        public Fixture()
+        public Fixture(int pid = Pid)
         {
             var term = new TerminalDescriptor(new Lines());
-            Parent = new LinuxUserProcess(new Pages(), term, Pid, 64 << 20, Clock, new LinuxFileSystem(new MemoryFileStore(), term));
+            Parent = new LinuxUserProcess(new Pages(), term, pid, 64 << 20, Clock, new LinuxFileSystem(new MemoryFileStore(), term));
             Parent.StartThread = _ => true;
             Parent.StartVfork = (c, _) =>
             {
@@ -69,9 +69,9 @@ public sealed class LinuxProcFilesTests
             Assert.AreNotEqual(0UL, Mem);
         }
 
-        public static long Call(LinuxUserProcess p, long n, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0)
+        public static long Call(LinuxUserProcess p, long n, ulong a0 = 0, ulong a1 = 0, ulong a2 = 0, ulong a3 = 0, ulong a4 = 0)
         {
-            var a = new SyscallArgs { Number = n, A0 = a0, A1 = a1, A2 = a2, A3 = a3 };
+            var a = new SyscallArgs { Number = n, A0 = a0, A1 = a1, A2 = a2, A3 = a3, A4 = a4 };
             return LinuxSyscalls.Dispatch(ref a, p);
         }
 
@@ -326,5 +326,134 @@ public sealed class LinuxProcFilesTests
     {
         Assert.AreEqual("ImageDecoderSer", LinuxProcFiles.CommOf("/usr/libexec/ImageDecoderServer"));
         Assert.AreEqual("linux", LinuxProcFiles.CommOf(null));
+    }
+
+    [TestMethod]
+    public void ProzessEinesAnderenLaufsBleibtUnsichtbar()
+    {
+        // V29b: Zwei Läufe nebeneinander (je eigener Prozessbaum); keiner sieht Status, stat oder exe des anderen.
+        var a = new Fixture();
+        Assert.AreEqual(0, Fixture.Call(a.Parent, LinuxSyscalls.Clone, Spawn, 0));
+        string childPid = a.Child!.Pid.ToString(CultureInfo.InvariantCulture);
+        var b = new Fixture(pid: 50);
+        Assert.IsTrue(b.ReadFile(b.Parent, "/proc/50/stat").StartsWith("50 (Ladybird) R 0 ", StringComparison.Ordinal), "eigener Lauf");
+
+        foreach (string path in new[] { "/proc/1/status", "/proc/1/stat", "/proc/1/maps", "/proc/" + childPid + "/stat" })
+        {
+            Assert.AreEqual(-LinuxErrno.ENOENT, b.Open(b.Parent, path), path);
+            Assert.AreEqual(-LinuxErrno.ENOENT, Fixture.Call(b.Parent, Access, b.Path(path), 4), path);
+        }
+
+        Assert.AreEqual(-LinuxErrno.ENOENT, Fixture.Call(b.Parent, Readlink, b.Path("/proc/1/exe"), b.Mem + (12 * Page), 256));
+        Assert.AreEqual(-LinuxErrno.ENOENT, a.Open(a.Parent, "/proc/50/status"), "umgekehrt ebenso");
+        Assert.AreEqual(-LinuxErrno.ENOENT, a.Open(a.Child, "/proc/50/stat"), "auch nicht aus dem Kind");
+    }
+
+    [TestMethod]
+    public void KurzesLesenUndSeekHinterDasEnde()
+    {
+        var f = new Fixture();
+        long fd = f.Open(f.Parent, "/proc/self/stat");
+        Assert.IsTrue(fd >= 0);
+        ulong buf = f.Mem + (12 * Page);
+
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Read, (ulong)fd, buf, 0), "Länge 0");
+        Assert.AreEqual(5, Fixture.Call(f.Parent, Read, (ulong)fd, buf, 5), "Kurzlesen liefert genau die erbetene Länge");
+        byte[] head = new byte[5];
+        Assert.IsTrue(f.Parent.TryRead(buf, head));
+        Assert.AreEqual("1 (La", Encoding.UTF8.GetString(head));
+        string rest = f.ReadAll(f.Parent, fd, 3);
+        Assert.IsTrue(rest.StartsWith("dybird) R 0 ", StringComparison.Ordinal), rest);
+        long length = 5 + Encoding.UTF8.GetByteCount(rest);
+
+        // Hinter das Ende: lseek gelingt wie bei Linux, Lesen liefert 0 (EOF), keinen Fehler und keine fremden Bytes.
+        Assert.AreEqual(length + 100, Fixture.Call(f.Parent, Lseek, (ulong)fd, (ulong)(length + 100), 0));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Read, (ulong)fd, buf, 4096));
+        Assert.AreEqual(long.MaxValue, Fixture.Call(f.Parent, Lseek, (ulong)fd, long.MaxValue, 0));
+        Assert.AreEqual(0, Fixture.Call(f.Parent, Read, (ulong)fd, buf, 4096), "größte Position");
+        Assert.AreEqual(-LinuxErrno.EINVAL, Fixture.Call(f.Parent, Lseek, (ulong)fd, 1, 1), "SEEK_CUR über long.MaxValue");
+        Assert.AreEqual(-LinuxErrno.EINVAL, Fixture.Call(f.Parent, Lseek, (ulong)fd, unchecked((ulong)-1), 0), "negativ");
+
+        // Seek vor dem ersten Lesen auf einer neuen Datei: Text entsteht, gelesen wird ab der Position.
+        long fd2 = f.Open(f.Parent, "/proc/self/stat");
+        Assert.AreEqual(3, Fixture.Call(f.Parent, Lseek, (ulong)fd2, 3, 0));
+        Assert.IsTrue(f.ReadAll(f.Parent, fd2).StartsWith("Ladybird) ", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void ZeilenumbruchImNamenWirdMaskiert()
+    {
+        var f = new Fixture();
+        f.Parent.ExePath = "/bin/a\nb\\c";
+        string status = f.ReadFile(f.Parent, "/proc/self/status");
+        Assert.IsTrue(status.StartsWith("Name:\ta\\nb\\\\c\nUmask:", StringComparison.Ordinal), status);
+        Assert.IsTrue(f.ReadFile(f.Parent, "/proc/self/stat").StartsWith("1 (a\nb\\c) R ", StringComparison.Ordinal), "stat roh wie Linux");
+
+        var s = new LinuxProcSnapshot
+        {
+            Regions = [new LinuxProcRegion(0x7000_0000_0000, 0x7000_0000_1000, MapAccess.ReadWrite, true, "/memfd:x\ny\\z (deleted)")],
+        };
+        string maps = LinuxProcFiles.Maps(s);
+        Assert.AreEqual(1, maps.Split('\n').Length - 1, "eine Zeile");
+        Assert.IsTrue(maps.EndsWith(" /memfd:x\\012y\\z (deleted)\n", StringComparison.Ordinal), maps);
+    }
+
+    [TestMethod]
+    public void VerschmolzeneBereicheWerdenAnHeapStackUndMemfdGeteilt()
+    {
+        // Karte nach Verschmelzung: BSS und Heap in einem rw-Bereich, memfd mitten in anonymem rw-Speicher, Stack mit anonymem Nachbarn.
+        var raw = new List<(ulong Start, ulong End, MapAccess Access)>
+        {
+            (0x400000, 0x401000, MapAccess.ReadExecute),
+            (0x402000, 0x506000, MapAccess.ReadWrite),
+            (0x7000_0000_0000, 0x7000_0000_4000, MapAccess.ReadWrite),
+            (0x7FFF_0000_0000, 0x7FFF_0090_0000, MapAccess.ReadWrite),
+        };
+        var shared = new List<(ulong Start, ulong End, string Name)> { (0x7000_0000_1000, 0x7000_0000_2000, "/memfd:skia (deleted)") };
+        var regions = new List<LinuxProcRegion>();
+        LinuxProcFiles.NameRegions(raw, shared, 0x500000, 0x503000, 0x7FFF_0010_0000, 0x7FFF_0090_0000, regions);
+
+        var expected = new List<LinuxProcRegion>
+        {
+            new(0x400000, 0x401000, MapAccess.ReadExecute, false, string.Empty),
+            new(0x402000, 0x500000, MapAccess.ReadWrite, false, string.Empty),
+            new(0x500000, 0x503000, MapAccess.ReadWrite, false, "[heap]"),
+            new(0x503000, 0x506000, MapAccess.ReadWrite, false, string.Empty),
+            new(0x7000_0000_0000, 0x7000_0000_1000, MapAccess.ReadWrite, false, string.Empty),
+            new(0x7000_0000_1000, 0x7000_0000_2000, MapAccess.ReadWrite, true, "/memfd:skia (deleted)"),
+            new(0x7000_0000_2000, 0x7000_0000_4000, MapAccess.ReadWrite, false, string.Empty),
+            new(0x7FFF_0000_0000, 0x7FFF_0010_0000, MapAccess.ReadWrite, false, string.Empty),
+            new(0x7FFF_0010_0000, 0x7FFF_0090_0000, MapAccess.ReadWrite, false, "[stack]"),
+        };
+        CollectionAssert.AreEqual(expected, regions);
+
+        // Ohne Heap (brk unverändert) und ohne Stack bleibt die Karte ungeteilt.
+        regions.Clear();
+        LinuxProcFiles.NameRegions(raw, Array.Empty<(ulong, ulong, string)>(), 0x500000, 0x500000, 0, 0, regions);
+        Assert.AreEqual(raw.Count, regions.Count);
+    }
+
+    [TestMethod]
+    public void MapsNenntMemfdMittenInAnonymemSpeicher()
+    {
+        // Ende-zu-Ende über den Schnappschuss: memfd (MAP_SHARED) direkt hinter dem anonymen rw-Bereich der Fixture, dahinter anonymer
+        // Speicher gleicher Rechte per MAP_FIXED_NOREPLACE; die Karte verschmilzt die drei, maps muss sie trotzdem getrennt nennen.
+        var f = new Fixture();
+        long mfd = Fixture.Call(f.Parent, 319 /* memfd_create */, f.Path("skia"), 0);
+        Assert.IsTrue(mfd >= 0, "memfd_create: " + mfd);
+        Assert.AreEqual(0, Fixture.Call(f.Parent, 77 /* ftruncate */, (ulong)mfd, Page));
+        long at = Fixture.Call(f.Parent, 9 /* mmap */, 0, Page, 3, 0x01 /* MAP_SHARED */, (ulong)mfd);
+        Assert.IsTrue(at > 0, "mmap memfd: " + at);
+        ulong m = (ulong)at;
+        const ulong NoReplaceAnon = 0x100000 | 0x20 | 0x02; // MAP_FIXED_NOREPLACE | MAP_ANONYMOUS | MAP_PRIVATE
+        Assert.AreEqual(f.Mem + (16 * Page), m, "memfd direkt hinter dem anonymen Bereich der Fixture");
+        Assert.AreEqual((long)(m + Page), Fixture.Call(f.Parent, 9, m + Page, Page, 3, NoReplaceAnon, unchecked((ulong)-1)));
+
+        string X(ulong v) => v.ToString("x8", CultureInfo.InvariantCulture);
+        string maps = f.ReadFile(f.Parent, "/proc/self/maps");
+        Assert.IsTrue(maps.Contains(X(m) + "-" + X(m + Page) + " rw-s ", StringComparison.Ordinal), maps);
+        Assert.IsTrue(maps.Contains(" /memfd:skia (deleted)\n" + X(m + Page) + "-", StringComparison.Ordinal), maps);
+        Assert.IsTrue(maps.Contains(X(f.Mem) + "-" + X(m) + " rw-p 00000000 00:00 0\n", StringComparison.Ordinal), maps);
+        Assert.IsTrue(maps.Contains(X(m + Page) + "-" + X(m + (2 * Page)) + " rw-p 00000000 00:00 0\n", StringComparison.Ordinal), maps);
     }
 }

@@ -226,6 +226,101 @@ internal static class LinuxProcFiles
         return name;
     }
 
+    /// <summary>
+    /// V29b: teilt die (verschmolzenen) Bereiche der Adressraumkarte an den Grenzen von Heap, Stack und geteilten Abbildungen und benennt
+    /// die Teile. Linux führt diese als eigene VMAs (eigene Flags oder Datei), die Karte hier fasst Nachbarn gleicher Rechte zusammen; ohne
+    /// Teilung trüge ein Heap direkt hinter dem Programm-BSS keinen Namen und ein memfd neben anonymem Speicher gleicher Rechte keine Datei.
+    /// Ein Teil gilt als Stack, wenn er in [stackLow, stackTop) liegt (Linux nennt nur die VMA mit start_stack; bei geteiltem Stack weicht
+    /// das ab).
+    /// </summary>
+    internal static void NameRegions(
+        IReadOnlyList<(ulong Start, ulong End, MapAccess Access)> raw,
+        IReadOnlyList<(ulong Start, ulong End, string Name)> shared,
+        ulong heapStart,
+        ulong heapEnd,
+        ulong stackLow,
+        ulong stackTop,
+        List<LinuxProcRegion> output)
+    {
+        bool heap = heapEnd > heapStart;
+        bool stack = stackTop > stackLow;
+        foreach ((ulong start, ulong end, MapAccess access) in raw)
+        {
+            ulong cur = start;
+            while (cur < end)
+            {
+                // Nächste Grenze hinter cur innerhalb des Bereichs.
+                ulong next = end;
+                if (heap)
+                {
+                    next = Cut(cur, next, heapStart);
+                    next = Cut(cur, next, heapEnd);
+                }
+
+                if (stack)
+                {
+                    next = Cut(cur, next, stackLow);
+                    next = Cut(cur, next, stackTop);
+                }
+
+                foreach ((ulong sStart, ulong sEnd, _) in shared)
+                {
+                    next = Cut(cur, next, sStart);
+                    next = Cut(cur, next, sEnd);
+                }
+
+                // Das Stück [cur, next) liegt ganz in einer Klasse; der Anfang entscheidet.
+                string name = string.Empty;
+                bool isShared = false;
+                foreach ((ulong sStart, ulong sEnd, string sName) in shared)
+                {
+                    if (sStart <= cur && cur < sEnd)
+                    {
+                        name = sName;
+                        isShared = true;
+                        break;
+                    }
+                }
+
+                if (!isShared && heap && heapStart <= cur && cur < heapEnd)
+                {
+                    name = "[heap]";
+                }
+                else if (!isShared && stack && stackLow <= cur && cur < stackTop)
+                {
+                    name = "[stack]";
+                }
+
+                output.Add(new LinuxProcRegion(cur, next, access, isShared, name));
+                cur = next;
+            }
+        }
+    }
+
+    private static ulong Cut(ulong cur, ulong next, ulong boundary) => boundary > cur && boundary < next ? boundary : next;
+
+    /// <summary>
+    /// V29b: comm in /proc/&lt;pid&gt;/status wie Linux (<c>proc_task_name</c> mit <c>seq_escape_str(..., ESCAPE_SPACE | ESCAPE_SPECIAL, "\n\\")</c>):
+    /// nur Zeilenumbruch und Backslash werden zu <c>\n</c> und <c>\\</c>, damit ein Programmname keine Zeile der Datei vortäuscht.
+    /// In stat bleibt comm roh (Linux ebenso; Leser suchen die letzte Klammer).
+    /// </summary>
+    internal static string EscapeStatusName(string name)
+    {
+        if (name.IndexOfAny(['\n', '\\']) < 0)
+        {
+            return name;
+        }
+
+        return name.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// V29b: Pfad in /proc/&lt;pid&gt;/maps wie Linux (<c>seq_file_path(m, file, "\n")</c>, <c>mangle_path</c>): ein Zeilenumbruch wird
+    /// oktal zu <c>\012</c>, sonst bleibt der Name (auch ein Backslash) unverändert.
+    /// </summary>
+    internal static string EscapeMapsName(string name) =>
+        name.Contains('\n', StringComparison.Ordinal) ? name.Replace("\n", "\\012", StringComparison.Ordinal) : name;
+
     private static ulong Ino(Entry entry, int pid) => 0xF000_0000UL | ((ulong)(uint)Math.Max(pid, 0) << 4) | (ulong)entry;
 
     // pid: -1, wenn der Pfad einen Prozess nennt, den es nicht gibt; 0 für Dateien ohne Prozess.
@@ -404,7 +499,7 @@ internal static class LinuxProcFiles
         long rss = s.RssAnonPages + s.RssShmemPages;
         long vm = (long)VmSizeKb(s);
         long data = Math.Max(0, (long)(s.Brk > s.BrkStart ? (s.Brk - s.BrkStart) / 1024 : 0));
-        b.Append("Name:\t").Append(s.Name).Append('\n');
+        b.Append("Name:\t").Append(EscapeStatusName(s.Name)).Append('\n');
         b.Append("Umask:\t0022\n");
         b.Append("State:\t").Append(StateText(s.State)).Append('\n');
         b.Append("Tgid:\t").Append(I(s.Pid)).Append('\n');
@@ -518,7 +613,7 @@ internal static class LinuxProcFiles
             if (r.Name.Length > 0)
             {
                 b.Append(' ', Math.Max(1, 73 - (b.Length - start)));
-                b.Append(r.Name);
+                b.Append(EscapeMapsName(r.Name));
             }
 
             b.Append('\n');
