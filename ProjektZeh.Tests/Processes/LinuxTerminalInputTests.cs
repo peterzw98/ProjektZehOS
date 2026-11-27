@@ -265,6 +265,25 @@ public sealed class LinuxTerminalInputTests
     }
 
     [TestMethod]
+    public void ReadvLiefertDatenNurImErstenPufferBisChunkGrenze()
+    {
+        var input = new RecordingInput();
+        var p = new Proc(input);
+        void Iov(int i, ulong b, ulong l)
+        {
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16, 8), b);
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16 + 8, 8), l);
+        }
+        // laser-Fall: readv({8192},{1024}) lieferte 5001 B, Bytes ab 4096 landeten im 2. Puffer (musl fread > 4 KiB).
+        Iov(0, Base + 0x100, 8192);
+        Iov(1, Base + 0x2200, 1024);
+        Assert.AreEqual(4096, Call(p, LinuxSyscalls.Readv, 0, Base, 2));
+        Assert.AreEqual(4096, input.LastBuffer);
+        Assert.IsTrue(System.Linq.Enumerable.All(p.Mem.Data[0x100..0x1100], b => b == (byte)'x'), "Daten im 1. Puffer");
+        Assert.IsTrue(System.Linq.Enumerable.All(p.Mem.Data[0x2200..0x2600], b => b == 0), "2. Puffer unberuehrt");
+    }
+
+    [TestMethod]
     public void PollMeldetEingabeUndWartetOhneFristAufEnter()
     {
         var (session, _, clock, p) = Program();
