@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 
 namespace ProjektZeh.Processes;
 
@@ -9,20 +10,60 @@ namespace ProjektZeh.Processes;
 /// </summary>
 internal static class FrameReclaim
 {
-    /// <summary>Anteil der Gesamtseiten (1/<c>FreeShift</c>-Potenz), unter dem am Prozessende gesammelt wird: 1/4.</summary>
+    /// <summary>Anteil der Gesamtseiten (1 geteilt durch 2 hoch ThresholdShift), unter dem am Prozessende gesammelt wird: 1/4.</summary>
     private const int ThresholdShift = 2;
 
-    /// <summary>Holt einen Frame; bei 0 einmal <paramref name="collect"/> und ein zweiter Versuch. 0 bleibt 0 (ENOMEM).</summary>
-    public static ulong Allocate(Func<ulong> allocate, Action collect)
+    private static readonly object CollectGate = new();
+    private static long generation;
+    private static long lastCollectMs = long.MinValue / 2;
+
+    /// <summary>Mindestabstand zweier Sammlungen (ms): Bei einem Sturm von Fehlschlägen nahe der Reserve sammelt nicht jeder Thread voll.</summary>
+    private const long MinIntervalMs = 20;
+
+    /// <summary>
+    /// Führt <paramref name="attempt"/> aus; scheitert er, wird einmal gesammelt und er läuft ein zweites Mal. Der Aufrufer hält dabei
+    /// <b>keine</b> Sperre (_memGate, _gate, StorageLock): Ein Voll-GC unter einer Sperre hielte jeden anderen Thread, der sie braucht, so lange fest.
+    /// Hat ein anderer Thread inzwischen gesammelt (Generationszähler) oder lag die letzte Sammlung weniger als <see cref="MinIntervalMs"/> zurück,
+    /// entfällt die eigene Sammlung (Sturmbremse). Wirft die Sammlung (etwa OOM beim Markieren), zählt sie als erfolglos und der zweite Versuch läuft trotzdem.
+    /// </summary>
+    public static bool Retry(Func<bool> attempt, Action collect, Func<long> nowMs)
     {
-        ulong frame = allocate();
-        if (frame != 0)
+        long seen = Volatile.Read(ref generation);
+        if (attempt())
         {
-            return frame;
+            return true;
         }
 
-        collect();
-        return allocate();
+        lock (CollectGate)
+        {
+            long now = nowMs();
+            if (Volatile.Read(ref generation) == seen && now - lastCollectMs >= MinIntervalMs)
+            {
+                try
+                {
+                    collect();
+                }
+                catch (Exception)
+                {
+                    // Der ENOMEM-Pfad bleibt erhalten; der zweite Versuch entscheidet.
+                }
+
+                lastCollectMs = nowMs();
+                Interlocked.Increment(ref generation);
+            }
+        }
+
+        return attempt();
+    }
+
+    /// <summary>Nur für Tests: Zustand der Sturmbremse zurücksetzen.</summary>
+    internal static void ResetForTests()
+    {
+        lock (CollectGate)
+        {
+            lastCollectMs = long.MinValue / 2;
+            generation = 0;
+        }
     }
 
     /// <summary>Soll am Prozessende gesammelt werden? Ja, wenn frei unter einem Viertel der Seiten oder nahe der Reserve liegt.</summary>

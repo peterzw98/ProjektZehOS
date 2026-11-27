@@ -1662,8 +1662,8 @@ internal static unsafe class CosmosLinuxRun
 
         public UserPageTable Table => _table;
 
-        // V47: vor ENOMEM einmal sammeln, der Heap hält sonst Seiten, die nur der GC freigibt.
-        public ulong AllocateFrame() => FrameReclaim.Allocate(UserPageTable.AllocateFrame, static () => GC.Collect());
+        // V47: Sammeln vor ENOMEM geschieht nicht hier (der Aufrufer hält _memGate, _gate oder StorageLock), sondern im Aufrufer ohne Sperre.
+        public ulong AllocateFrame() => UserPageTable.AllocateFrame();
 
         public void FreeFrame(ulong frame) => UserPageTable.FreeFrame(frame);
 

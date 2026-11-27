@@ -1,3 +1,4 @@
+using System;
 using ProjektZeh.Processes;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -6,32 +7,44 @@ namespace ProjektZeh.Tests;
 [TestClass]
 public sealed class FrameReclaimTests
 {
+    [TestInitialize]
+    public void Init() => FrameReclaim.ResetForTests();
+
     [TestMethod]
-    public void Allocate_SammeltNichtWennFrameDa()
+    public void Retry_SammeltNichtWennErsterVersuchGelingt()
     {
         int collects = 0;
-        ulong f = FrameReclaim.Allocate(() => 0x1000, () => collects++);
-        Assert.AreEqual(0x1000UL, f);
+        Assert.IsTrue(FrameReclaim.Retry(() => true, () => collects++, () => 1000));
         Assert.AreEqual(0, collects);
     }
 
     [TestMethod]
-    public void Allocate_SammeltEinmalUndWiederholt()
+    public void Retry_SammeltEinmalUndWiederholt()
     {
         bool collected = false;
         int calls = 0;
-        ulong f = FrameReclaim.Allocate(() => { calls++; return collected ? 0x2000UL : 0; }, () => collected = true);
-        Assert.AreEqual(0x2000UL, f);
+        bool ok = FrameReclaim.Retry(() => { calls++; return collected; }, () => collected = true, () => 1000);
+        Assert.IsTrue(ok);
         Assert.AreEqual(2, calls);
     }
 
     [TestMethod]
-    public void Allocate_BleibtNullNachEinerSammlung()
+    public void Retry_SturmbremseUebersprungeneSammlungInnerhalbDesIntervalls()
     {
-        int collects = 0, calls = 0;
-        ulong f = FrameReclaim.Allocate(() => { calls++; return 0; }, () => collects++);
-        Assert.AreEqual(0UL, f);
+        int collects = 0;
+        Assert.IsFalse(FrameReclaim.Retry(() => false, () => collects++, () => 1000));
+        Assert.IsFalse(FrameReclaim.Retry(() => false, () => collects++, () => 1005));
         Assert.AreEqual(1, collects);
+        Assert.IsFalse(FrameReclaim.Retry(() => false, () => collects++, () => 1100));
+        Assert.AreEqual(2, collects);
+    }
+
+    [TestMethod]
+    public void Retry_WerfenderCollectBleibtEnomemPfad()
+    {
+        int calls = 0;
+        bool ok = FrameReclaim.Retry(() => { calls++; return calls > 1; }, () => throw new InvalidOperationException(), () => 1000);
+        Assert.IsTrue(ok);
         Assert.AreEqual(2, calls);
     }
 

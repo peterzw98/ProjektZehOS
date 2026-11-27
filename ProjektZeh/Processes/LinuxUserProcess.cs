@@ -937,13 +937,25 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             return _vforkOf.HandlePageFault(address, error, out busError, out outOfMemory);
         }
 
-        lock (_memGate)
+        // V47: Fehlt ein Frame, wird einmal gesammelt und der Fehler neu behandelt, aber nach dem Loslassen von _memGate (und damit auch von
+        // _gate und StorageLock, die darunter liegen): Ein Voll-GC unter Sperre hielte jeden anderen Thread des Prozesses fest.
+        bool bus = false;
+        bool oom = false;
+        bool handled = false;
+        FrameReclaim.Retry(() =>
         {
-            _noFrame = false;
-            bool handled = HandlePageFaultLocked(address, error, out busError);
-            outOfMemory = !handled && _noFrame;
-            return handled;
-        }
+            lock (_memGate)
+            {
+                _noFrame = false;
+                handled = HandlePageFaultLocked(address, error, out bus);
+                oom = !handled && _noFrame;
+                // Nur Speichermangel ist einen zweiten Versuch wert; jedes andere Scheitern (Segfault, SIGBUS) bleibt endgültig.
+                return !oom;
+            }
+        }, static () => GC.Collect(), static () => System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency);
+        busError = bus;
+        outOfMemory = oom;
+        return handled;
     }
 
     /// <summary>
