@@ -575,8 +575,13 @@ internal static unsafe class PageAllocator
     /// <param name="aType">A type of pages to alloc.</param>
     /// <param name="aPageCount">Number of pages to alloc. (default = 1)</param>
     /// <param name="zero">When true, the pages are cleared before they are returned.</param>
+    /// <param name="aKeepFree">
+    /// Pages that must stay free after the allocation; it fails otherwise.
+    /// Checked under the lock, so callers that pass it never take the last
+    /// <paramref name="aKeepFree"/> pages, while callers that pass 0 still can.
+    /// </param>
     /// <returns>A pointer to the first page on success, null on failure.</returns>
-    public static void* AllocPages(PageType aType, ulong aPageCount = 1, bool zero = false)
+    public static void* AllocPages(PageType aType, ulong aPageCount = 1, bool zero = false, ulong aKeepFree = 0)
     {
         byte* pageAddress;
 
@@ -585,6 +590,12 @@ internal static unsafe class PageAllocator
         // thread claim the same pages.
         using (s_ratLock.AcquireCollectorLock())
         {
+            // ZehOS patch user-frame-reserve, see PATCHES.md
+            if (aKeepFree != 0 && (FreePageCount < aPageCount || FreePageCount - aPageCount < aKeepFree))
+            {
+                return null;
+            }
+
             // Alloc single pages and small runs at bottom, large runs at top to help reduce
             // fragmentation (ZehOS patch page-alloc-split, see PATCHES.md).
             // Each search starts where the last one of its kind ended, and scans the whole
