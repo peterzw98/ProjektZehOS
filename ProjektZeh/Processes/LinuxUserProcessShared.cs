@@ -37,13 +37,16 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
     private int _memFiles;
 
     // Inode: Prozessnummer und laufende Nummer, eindeutig unter den lebenden Prozessen eines Laufs; Threads zählen atomar hoch.
+    // V43b: Die Frames zählen gegen die Grenze des Erzeugers (im vfork-Kind die des Elternprozesses, dessen Speicher es benutzt).
     public LinuxMemFile CreateMemFile(string name, bool sealing) => new(_vforkOf?._pages ?? _pages, name, sealing, (long)(_maxFrames * Page),
-        0x6d65_6d00_0000_0000UL | ((ulong)(uint)Pid << 24) | (uint)System.Threading.Interlocked.Increment(ref _memFiles));
+        0x6d65_6d00_0000_0000UL | ((ulong)(uint)Pid << 24) | (uint)System.Threading.Interlocked.Increment(ref _memFiles),
+        (_vforkOf ?? this)._budget);
 
     // Länge bis zum Ende des Benutzeradressraums: Ohne Deskriptor gibt es kein write und kein ftruncate, jeder Frame kommt über einen
-    // Seitenfehler oder Kernelzugriff dieses Prozesses (PopulateShared) und zählt dort gegen _maxFrames.
+    // Seitenfehler oder Kernelzugriff (PopulateShared) und zählt gegen die Grenze dieses Prozesses (V43b: gebucht wie memfd).
     public LinuxMemFile CreateAnonymousSharedFile() => new(_vforkOf?._pages ?? _pages, "dev/zero", false, 1L << 47,
-        0x6d65_6d00_0000_0000UL | ((ulong)(uint)Pid << 24) | (uint)System.Threading.Interlocked.Increment(ref _memFiles));
+        0x6d65_6d00_0000_0000UL | ((ulong)(uint)Pid << 24) | (uint)System.Threading.Interlocked.Increment(ref _memFiles),
+        (_vforkOf ?? this)._budget);
 
     // V32: Seitenablage einer regulären Datei; Frames aus demselben Allokator wie memfd (im Kernel der gemeinsame PageAllocator).
     public LinuxMemFile CreateFilePages(LinuxSharedStoreFile backing, bool backingWritable, string path, ulong ino) =>
@@ -130,16 +133,23 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
             }
 
             isShared = true;
-            if ((ulong)_frames.Count >= _maxFrames)
+
+            // V43b: Frames einer gebuchten Datei (memfd) zählen beim Erzeuger, die Datei prüft die Grenze selbst. Seitenablagen regulärer
+            // Dateien zählen wie private Seiten gegen diesen Prozess.
+            if (!r.Mem.Budgeted && !_budget.AllowsPrivate(PrivateFrames))
             {
+                _noFrame = true; // V43-Review P2: wie bei privaten Seiten SIGKILL
                 return 0;
             }
 
             // V32-P2: beschreibbar abgebildet zählt als geschrieben (nur solche Seiten gehen in die Datei zurück).
-            LinuxSharedFrame? f = r.Mem.Acquire(r.FirstIndex + (long)((page - r.Start) / Page), access == MapAccess.ReadWrite);
+            LinuxSharedFrame? f = r.Mem.Acquire(r.FirstIndex + (long)((page - r.Start) / Page), access == MapAccess.ReadWrite, out bool noFrame);
             if (f == null)
             {
-                busError = true; // hinter dem Dateiende: Linux gibt SIGBUS (V30-P3)
+                // V43-Review P2: Ohne Frame (Grenze, Kernel-Reserve) SIGKILL wie bei privaten Seiten; nur hinter dem Dateiende oder bei
+                // einem Lesefehler SIGBUS (V30-P3).
+                _noFrame |= noFrame;
+                busError = !noFrame;
                 return 0;
             }
 
@@ -151,6 +161,15 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
 
             _frames[page] = f.Frame;
             _shared[page] = f;
+            if (f.Owner.Budgeted)
+            {
+                _budgetedShared++;
+            }
+            else
+            {
+                SyncBudget();
+            }
+
             return f.Frame;
         }
 
@@ -164,12 +183,19 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
         _frames.Remove(page);
         if (_shared.Remove(page, out LinuxSharedFrame? f))
         {
+            if (f.Owner.Budgeted)
+            {
+                _budgetedShared--;
+            }
+
             f.Owner.Release(f);
         }
         else
         {
             _pages.FreeFrame(frame);
         }
+
+        SyncBudget();
     }
 
     /// <summary>

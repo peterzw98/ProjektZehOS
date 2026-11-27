@@ -74,6 +74,47 @@ internal sealed class LinuxSharedFrame
 }
 
 /// <summary>
+/// V43b (laser risk3 P2-3): Speichergrenze eines Prozesses über private Seiten und die Frames seiner memfds. Ohne sie legte write oder
+/// ftruncate+Zugriff auf eine memfd Frames ohne Grenze an (nur die Kernel-Reserve hielt). Der Prozess meldet seine privaten Seiten unter
+/// seiner Speichersperre (<see cref="SetPrivate"/>), die Datei bucht ihre Frames unter ihrer eigenen Sperre (<see cref="TryCharge"/>); beide
+/// lesen die andere Zahl ohne deren Sperre. Laufen beide gleichzeitig, kann die Summe die Grenze um je einen Frame überschreiten; die
+/// Kernel-Reserve fängt das ab. Ein memfd-Frame zählt beim Erzeuger, auch wenn ein anderer Prozess ihn abbildet (wie die memcg von Linux,
+/// die den Erzeuger der Seite belastet), und bleibt gebucht, bis der letzte Verweis ihn freigibt.
+/// </summary>
+internal sealed class LinuxFrameBudget
+{
+    private readonly long _max;
+    private long _private;
+    private long _files;
+
+    public LinuxFrameBudget(ulong maxFrames) => _max = (long)Math.Min(maxFrames, long.MaxValue);
+
+    /// <summary>Frames der memfds dieses Prozesses (für Tests und Messung).</summary>
+    public long FileFrames => System.Threading.Volatile.Read(ref _files);
+
+    /// <summary>Private Seiten des Prozesses; nur der Prozess schreibt, unter seiner Speichersperre.</summary>
+    public void SetPrivate(long frames) => System.Threading.Volatile.Write(ref _private, frames);
+
+    /// <summary>Ob der Prozess bei <paramref name="privateFrames"/> privaten Seiten noch eine anlegen darf.</summary>
+    public bool AllowsPrivate(long privateFrames) => privateFrames + System.Threading.Volatile.Read(ref _files) < _max;
+
+    /// <summary>Bucht einen memfd-Frame; false, wenn die Grenze erreicht ist.</summary>
+    public bool TryCharge()
+    {
+        if (System.Threading.Volatile.Read(ref _private) + System.Threading.Volatile.Read(ref _files) >= _max)
+        {
+            return false;
+        }
+
+        System.Threading.Interlocked.Increment(ref _files);
+        return true;
+    }
+
+    /// <summary>Gibt einen gebuchten Frame zurück.</summary>
+    public void Uncharge() => System.Threading.Interlocked.Decrement(ref _files);
+}
+
+/// <summary>
 /// memfd_create (V17, Ladybirds AnonymousBuffer für Bitmaps): eine namenlose, im Arbeitsspeicher liegende reguläre Datei aus Frames.
 /// read/write/lseek/ftruncate/fstat wirken wie bei tmpfs; MAP_SHARED bildet dieselben Frames in jeden abbildenden Prozess ab
 /// (<see cref="ILinuxSharedMemory"/>). MAP_PRIVATE bleibt eine Kopie wie bei anderen Dateien.
@@ -108,6 +149,7 @@ internal sealed class LinuxMemFile : ILinuxFile
     private readonly object _gate = new();
     private readonly IUserPages _pages;
     private readonly long _maxBytes;
+    private readonly LinuxFrameBudget? _budget; // V43b: Grenze des Erzeugers; null bei Seitenablagen regulärer Dateien
     private readonly Dictionary<long, LinuxSharedFrame> _table = new();
     private readonly ulong _ino;
     private long _size;
@@ -127,10 +169,12 @@ internal sealed class LinuxMemFile : ILinuxFile
     /// <param name="pages">Frames kommen von hier; im Kernel gemeinsam für alle Prozesse (PageAllocator), daher nicht an den Erzeuger gebunden.</param>
     /// <param name="maxBytes">Obergrenze der Länge (Speicher des Erzeugers); darüber -EFBIG wie RLIMIT_FSIZE.</param>
     /// <param name="ino">Inodenummer für fstat; vergibt der Erzeuger (ohne statischen Zähler, der auf mehreren CPUs geteilt wäre).</param>
-    public LinuxMemFile(IUserPages pages, string name, bool sealing, long maxBytes, ulong ino)
+    /// <param name="budget">V43b: Speichergrenze des Erzeugers, gegen die jeder Frame der Datei zählt; null ohne Grenze.</param>
+    public LinuxMemFile(IUserPages pages, string name, bool sealing, long maxBytes, ulong ino, LinuxFrameBudget? budget = null)
     {
         _pages = pages ?? throw new ArgumentNullException(nameof(pages));
         _maxBytes = maxBytes;
+        _budget = budget;
         _seals = sealing ? 0 : SealSeal;
         _ino = ino;
         Path = "/memfd:" + name + " (deleted)"; // so zeigt Linux sie in /proc/self/fd
@@ -208,6 +252,9 @@ internal sealed class LinuxMemFile : ILinuxFile
             }
         }
     }
+
+    /// <summary>V43b: ob die Frames der Datei gegen die Grenze eines Prozesses zählen (memfd, MAP_SHARED|MAP_ANONYMOUS).</summary>
+    public bool Budgeted => _budget != null;
 
     /// <summary>Frames in der Seitentabelle der Datei (für Tests und Messung).</summary>
     public int FrameCount
@@ -648,8 +695,15 @@ internal sealed class LinuxMemFile : ILinuxFile
     /// SIGBUS) oder ohne Speicher. Fehlt der Frame, kommt ein genullter neu in die Datei. <paramref name="writable"/> (V32-P2): Die
     /// Prozessseite wird beschreibbar abgebildet; der Frame gilt dann als geschrieben.
     /// </summary>
-    internal LinuxSharedFrame? Acquire(long index, bool writable = false)
+    internal LinuxSharedFrame? Acquire(long index, bool writable = false) => Acquire(index, writable, out _);
+
+    /// <summary>
+    /// Wie <see cref="Acquire(long, bool)"/>; <paramref name="noFrame"/> (V43-Review P2) meldet bei null, dass kein Frame mehr kam (Grenze
+    /// des Erzeugers oder Kernel-Reserve) und nicht das Dateiende oder ein Lesefehler: Linux beendet dann mit SIGKILL statt SIGBUS.
+    /// </summary>
+    internal LinuxSharedFrame? Acquire(long index, bool writable, out bool noFrame)
     {
+        noFrame = false;
         lock (_gate)
         {
             long size = SizeLocked();
@@ -658,7 +712,7 @@ internal sealed class LinuxMemFile : ILinuxFile
                 return null;
             }
 
-            LinuxSharedFrame? f = FrameLocked(index);
+            LinuxSharedFrame? f = FrameLocked(index, out noFrame);
             if (f != null)
             {
                 f.Refs++;
@@ -687,16 +741,28 @@ internal sealed class LinuxMemFile : ILinuxFile
         }
     }
 
-    private LinuxSharedFrame? FrameLocked(long index)
+    private LinuxSharedFrame? FrameLocked(long index) => FrameLocked(index, out _);
+
+    private LinuxSharedFrame? FrameLocked(long index, out bool noFrame)
     {
+        noFrame = false;
         if (_table.TryGetValue(index, out LinuxSharedFrame? f))
         {
             return f;
         }
 
+        // V43b: erst buchen, dann holen; ohne Frame die Buchung zurück.
+        if (_budget != null && !_budget.TryCharge())
+        {
+            noFrame = true;
+            return null;
+        }
+
         ulong frame = _pages.AllocateFrame(); // genullt
         if (frame == 0)
         {
+            _budget?.Uncharge();
+            noFrame = true;
             return null;
         }
 
@@ -708,6 +774,7 @@ internal sealed class LinuxMemFile : ILinuxFile
             if (got < 0)
             {
                 _pages.FreeFrame(frame);
+                _budget?.Uncharge();
                 return null;
             }
         }
@@ -722,6 +789,7 @@ internal sealed class LinuxMemFile : ILinuxFile
         if (--f.Refs == 0)
         {
             _pages.FreeFrame(f.Frame);
+            _budget?.Uncharge();
         }
     }
 

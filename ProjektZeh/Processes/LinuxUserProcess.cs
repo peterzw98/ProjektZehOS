@@ -94,6 +94,16 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     private readonly LinuxOpenFiles _openFiles;
     private readonly ulong _maxFrames;
 
+    /// <summary>
+    /// V43b: Grenze über private Seiten und die Frames der memfds dieses Prozesses (<see cref="LinuxFrameBudget"/>). Privat heißt hier:
+    /// alle Seiten in <c>_frames</c> außer geteilten aus einer gebuchten Datei (<c>_budgetedShared</c>), die schon beim Erzeuger zählen.
+    /// </summary>
+    private readonly LinuxFrameBudget _budget;
+    private int _budgetedShared;
+
+    /// <summary>V43: Ein <see cref="NewFrame"/> unter <see cref="_memGate"/> bekam keinen Frame; nur für den laufenden Seitenfehler.</summary>
+    private bool _noFrame;
+
     // V10: Threads teilen den Adressraum. Diese Sperre schützt Karte, Frames und brk; sie wird in Aufrufen und Seitenfehlern
     // genommen (Threadkontext, Interrupts an), nie im Interrupt. Platz in der Reihenfolge: nach der Sperre der futex-Tabelle
     // (LinuxFutexTable liest den Wert unter ihrer Sperre), vor der Sperre der UserPageTable (in IUserPages) und des PageAllocator.
@@ -131,6 +141,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         _pgid = pid; // V35: allein in Gruppe und Sitzung, bis fork, vfork oder execve sie vom Elternprozess übernehmen
         _sid = pid;
         _maxFrames = maxBytes / Page;
+        _budget = new LinuxFrameBudget(_maxFrames);
 
         // Der Hauptthread trägt die PID als TID (Linux: Thread-Gruppenführer); weitere TIDs vergibt _ids (NextTid über alle Prozesse).
         MainThread = new LinuxThread(pid);
@@ -894,6 +905,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
                 }
 
                 _frames[page] = frame;
+                SyncBudget();
             }
         }
 
@@ -912,16 +924,25 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// Wie <see cref="HandlePageFault(ulong, ulong)"/>; <paramref name="busError"/> (V30-P3) meldet bei false, dass eine Dateiseite sich nicht
     /// lesen ließ (Lesefehler oder Seite ganz hinter dem Dateiende): Linux schickt dann SIGBUS statt SIGSEGV.
     /// </summary>
-    public bool HandlePageFault(ulong address, ulong error, out bool busError)
+    public bool HandlePageFault(ulong address, ulong error, out bool busError) => HandlePageFault(address, error, out busError, out _);
+
+    /// <summary>
+    /// Wie <see cref="HandlePageFault(ulong, ulong, out bool)"/>; <paramref name="outOfMemory"/> (V43) meldet bei false, dass für eine
+    /// erlaubte Seite kein Frame mehr kam (Prozessgrenze oder Kernel-Reserve). Linux beendet den Prozess dann mit SIGKILL (OOM-Killer).
+    /// </summary>
+    public bool HandlePageFault(ulong address, ulong error, out bool busError, out bool outOfMemory)
     {
         if (_vforkOf != null)
         {
-            return _vforkOf.HandlePageFault(address, error, out busError);
+            return _vforkOf.HandlePageFault(address, error, out busError, out outOfMemory);
         }
 
         lock (_memGate)
         {
-            return HandlePageFaultLocked(address, error, out busError);
+            _noFrame = false;
+            bool handled = HandlePageFaultLocked(address, error, out busError);
+            outOfMemory = !handled && _noFrame;
+            return handled;
         }
     }
 
@@ -1404,10 +1425,22 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         }
 
         _frames[page] = frame;
+        SyncBudget();
         return frame;
     }
 
-    private ulong NewFrame() => (ulong)_frames.Count >= _maxFrames ? 0 : _pages.AllocateFrame();
+    /// <summary>V43b: Seiten, die gegen diesen Prozess zählen, ohne die Frames seiner memfds; unter <c>_memGate</c>.</summary>
+    private long PrivateFrames => _frames.Count - _budgetedShared;
+
+    /// <summary>V43b: meldet <see cref="PrivateFrames"/> an die Grenze, nach jeder Änderung von <c>_frames</c>; unter <c>_memGate</c>.</summary>
+    private void SyncBudget() => _budget.SetPrivate(PrivateFrames);
+
+    private ulong NewFrame()
+    {
+        ulong frame = !_budget.AllowsPrivate(PrivateFrames) ? 0 : _pages.AllocateFrame();
+        _noFrame |= frame == 0;
+        return frame;
+    }
 
     /// <summary>Gibt [start, end) frei; start und end ausgerichtet und im Adressraum der Karte.</summary>
     private bool Release(ulong start, ulong end)
