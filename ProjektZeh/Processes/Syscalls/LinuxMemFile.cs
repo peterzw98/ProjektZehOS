@@ -64,6 +64,13 @@ internal sealed class LinuxSharedFrame
 
     /// <summary>Anzahl der Verweise; nur unter der Sperre von <see cref="Owner"/>.</summary>
     public int Refs { get; set; } = 1;
+
+    /// <summary>
+    /// V32-P2: Seite einer Seitenablage, die eine Prozessseite seit dem letzten Zurückschreiben beschreibbar abgebildet hat (ohne
+    /// Dirty-Bit der Seitentabelle: beschreibbar abgebildet zählt als geschrieben). Nur solche Seiten gehen in die Datei zurück; unter der
+    /// Sperre von <see cref="Owner"/>.
+    /// </summary>
+    public bool Dirty { get; set; }
 }
 
 /// <summary>
@@ -452,8 +459,8 @@ internal sealed class LinuxMemFile : ILinuxFile
     }
 
     /// <summary>
-    /// V32: schreibt die Frames der Dateiseiten [<paramref name="firstIndex"/>, + <paramref name="count"/>) in die Datei zurück, nur bis zum
-    /// Dateiende. 0 oder der erste Fehler (-errno). Ohne Rückhaltdatei oder nach dem Tod: 0.
+    /// V32: schreibt die geschriebenen Frames (V32-P2, <see cref="LinuxSharedFrame.Dirty"/>) der Dateiseiten [<paramref name="firstIndex"/>,
+    /// + <paramref name="count"/>) in die Datei zurück, nur bis zum Dateiende. 0 oder der erste Fehler (-errno). Ohne Rückhaltdatei oder nach dem Tod: 0.
     /// </summary>
     internal long Flush(long firstIndex, long count)
     {
@@ -475,17 +482,31 @@ internal sealed class LinuxMemFile : ILinuxFile
         long result = 0;
         foreach (KeyValuePair<long, LinuxSharedFrame> e in _table)
         {
+            // V32-P2: nur geschriebene Seiten (V32-Review P2: Zurückschreiben aller Seiten überschrieb Daten, die an der Ablage vorbei in
+            // die Datei kamen). Ungeschriebene Frames gleichen der Datei, weil jedes write eines Deskriptors sie mitändert (WriteThrough).
             long pos = e.Key * Page;
-            if (e.Key < firstIndex || e.Key >= end || pos >= size)
+            if (!e.Value.Dirty || e.Key < firstIndex || e.Key >= end || pos >= size)
             {
                 continue;
             }
 
             int n = (int)Math.Min(Page, size - pos);
             long w = _backing.WriteAt(pos, _pages.Frame(e.Value.Frame).Slice(0, n));
-            if (result == 0 && (w < 0 || w < n))
+            if (w < 0 || w < n)
             {
-                result = w < 0 ? w : -EIO;
+                if (result == 0)
+                {
+                    result = w < 0 ? w : -EIO;
+                }
+
+                continue; // bleibt geschrieben, ein späteres msync versucht es erneut
+            }
+
+            // Hält nur noch die Tabelle den Frame, kann ihn niemand ohne neuen Seitenfehler beschreiben (Acquire setzt Dirty dann neu).
+            // Bildet ihn eine Prozessseite ab, bleibt er geschrieben: Ohne Dirty-Bit der Seitentabelle sieht hier niemand spätere Schreibzugriffe.
+            if (e.Value.Refs == 1)
+            {
+                e.Value.Dirty = false;
             }
         }
 
@@ -624,9 +645,10 @@ internal sealed class LinuxMemFile : ILinuxFile
 
     /// <summary>
     /// Frame der Seite <paramref name="index"/> mit einem neuen Verweis für die abbildende Prozessseite; null hinter dem Dateiende (Linux:
-    /// SIGBUS) oder ohne Speicher. Fehlt der Frame, kommt ein genullter neu in die Datei.
+    /// SIGBUS) oder ohne Speicher. Fehlt der Frame, kommt ein genullter neu in die Datei. <paramref name="writable"/> (V32-P2): Die
+    /// Prozessseite wird beschreibbar abgebildet; der Frame gilt dann als geschrieben.
     /// </summary>
-    internal LinuxSharedFrame? Acquire(long index)
+    internal LinuxSharedFrame? Acquire(long index, bool writable = false)
     {
         lock (_gate)
         {
@@ -640,9 +662,19 @@ internal sealed class LinuxMemFile : ILinuxFile
             if (f != null)
             {
                 f.Refs++;
+                f.Dirty |= writable;
             }
 
             return f;
+        }
+    }
+
+    /// <summary>V32-P2: Eine schon abgebildete Prozessseite wird beschreibbar (mprotect); der Frame gilt als geschrieben.</summary>
+    internal void MarkDirty(LinuxSharedFrame frame)
+    {
+        lock (_gate)
+        {
+            frame.Dirty = true;
         }
     }
 

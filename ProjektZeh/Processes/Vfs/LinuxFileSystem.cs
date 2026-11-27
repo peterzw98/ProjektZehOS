@@ -59,11 +59,14 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
     private readonly List<string> _pending = new();
     private readonly List<(string Path, LinuxStoreNode Node)> _parents = new();
 
-    // V32: Seitenablagen regulärer Dateien mit MAP_SHARED, je Inode (Speicherpfad), für alle Prozesse des Laufs (sie teilen dieses Objekt).
-    // Tote Ablagen bleiben stehen, bis die nächste Abbildung derselben Datei sie ersetzt oder unlink/rename sie entfernt. Die Sperre steht
-    // unter FileGate und über der Sperre einer Ablage; sie wird nie unter der Speichersperre eines Prozesses genommen.
+    // V32-P2: offene Dateien je Name (Speicherpfad, Schreibweise wie der Speicher vergleicht) für alle Prozesse des Laufs. Jeder Deskriptor
+    // hängt beim Öffnen an seinem Knoten und behält ihn über rename und unlink hinweg; die Seitenablage (MAP_SHARED) hängt am Knoten. So
+    // findet ein alter Deskriptor nach rename/unlink weiter seine Ablage, und eine neue Datei gleichen Namens bekommt einen neuen Knoten
+    // (V32-Review P2: vorher Suche per Pfad-Hash). Die Sperre steht unter FileGate und über der Sperre einer Ablage; sie wird nie unter der
+    // Speichersperre eines Prozesses genommen.
     private readonly object _sharedGate = new();
-    private readonly Dictionary<ulong, LinuxMemFile> _sharedPages = new();
+    private readonly Dictionary<string, LinuxFileNode> _nodes;
+    private int _nodeSweepAt = 64;
 
     /// <param name="store">Speicher der Prozesswurzel.</param>
     /// <param name="terminal">Ziel von <c>/dev/tty</c>; sinnvoll derselbe <see cref="TerminalDescriptor"/> wie für fd 0 bis 2,
@@ -76,6 +79,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         _maxOpenFiles = maxOpenFiles;
         Uid = uid;
         Gid = gid;
+        _nodes = new Dictionary<string, LinuxFileNode>(StringComparer.Ordinal); // Schlüssel schon gefaltet (NodeKey)
     }
 
     public uint Uid { get; }
@@ -257,7 +261,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         if (write && (flags & OTrunc) != 0)
         {
             // V32: Eine lebende Seitenablage verliert ihre Frames mit (sonst schriebe sie alten Inhalt zurück).
-            LinuxMemFile? pages = FindSharedPages(InodeOf(loc.Path));
+            LinuxMemFile? pages = LivePages(PeekNode(loc.Path));
             r = pages != null ? pages.TruncateThrough(opened!, 0) : opened!.SetLength(0);
             if (r < 0)
             {
@@ -388,7 +392,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         r = r < 0 ? r : _store.DeleteFile(loc.Path);
         if (r >= 0)
         {
-            ForgetSharedPages(loc.Path);
+            ForgetNode(loc.Path);
         }
 
         return r;
@@ -542,8 +546,7 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         r = r < 0 ? r : _store.Rename(from.Path, to.Path);
         if (r >= 0)
         {
-            ForgetSharedPages(from.Path);
-            ForgetSharedPages(to.Path);
+            MoveNodes(from.Path, to.Path);
         }
 
         return r;
@@ -600,25 +603,81 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
 
     internal void Closed() => OpenFiles--;
 
-    /// <summary>V32: lebende Seitenablage der Datei <paramref name="ino"/> oder null.</summary>
-    internal LinuxMemFile? FindSharedPages(ulong ino)
+    /// <summary>
+    /// V32-P2: Knoten der Datei unter <paramref name="storePath"/> für einen neuen Deskriptor (zählt ihn mit); der Deskriptor gibt ihn mit
+    /// <see cref="DetachNode"/> zurück.
+    /// </summary>
+    internal LinuxFileNode AttachNode(string storePath)
+    {
+        string key = NodeKey(storePath);
+        lock (_sharedGate)
+        {
+            if (!_nodes.TryGetValue(key, out LinuxFileNode? node))
+            {
+                if (_nodes.Count >= _nodeSweepAt)
+                {
+                    SweepNodesLocked();
+                }
+
+                node = new LinuxFileNode { Key = key };
+                _nodes[key] = node;
+            }
+
+            node.Descriptors++;
+            return node;
+        }
+    }
+
+    /// <summary>V32-P2: Ein Deskriptor schließt; ohne Deskriptor und lebende Ablage verlässt der Knoten das Register.</summary>
+    internal void DetachNode(LinuxFileNode node)
     {
         lock (_sharedGate)
         {
-            return _sharedPages.Count != 0 && _sharedPages.TryGetValue(ino, out LinuxMemFile? pages) && !pages.IsDead ? pages : null;
+            node.Descriptors--;
+            if (node.Descriptors == 0 && node.Key != null && LivePagesLocked(node) == null)
+            {
+                _ = _nodes.Remove(node.Key);
+                node.Key = null;
+            }
+        }
+    }
+
+    /// <summary>V32-P2: lebende Seitenablage des Knotens oder null.</summary>
+    internal LinuxMemFile? LivePages(LinuxFileNode? node)
+    {
+        if (node == null)
+        {
+            return null;
+        }
+
+        lock (_sharedGate)
+        {
+            return LivePagesLocked(node);
+        }
+    }
+
+    private static LinuxMemFile? LivePagesLocked(LinuxFileNode node) => node.Pages != null && !node.Pages.IsDead ? node.Pages : null;
+
+    /// <summary>V32-P2: Knoten unter dem Namen oder null, ohne ihn anzulegen.</summary>
+    private LinuxFileNode? PeekNode(string storePath)
+    {
+        lock (_sharedGate)
+        {
+            return _nodes.TryGetValue(NodeKey(storePath), out LinuxFileNode? node) ? node : null;
         }
     }
 
     /// <summary>
-    /// V32: Seitenablage der Datei <paramref name="ino"/>, gehalten (<see cref="LinuxMemFile.TryHold"/>; der Aufrufer gibt den Halt mit
-    /// ReleaseHold zurück). Fehlt eine lebende und ist <paramref name="backing"/> gesetzt, entsteht eine neue über
-    /// <paramref name="shared"/> (sie übernimmt den Verweis auf <paramref name="backing"/>); sonst null und der Verweis bleibt beim Aufrufer.
+    /// V32: Seitenablage des Knotens, gehalten (<see cref="LinuxMemFile.TryHold"/>; der Aufrufer gibt den Halt mit ReleaseHold zurück).
+    /// Fehlt eine lebende und ist <paramref name="backing"/> gesetzt, entsteht eine neue über <paramref name="shared"/> (sie übernimmt den
+    /// Verweis auf <paramref name="backing"/>); sonst null und der Verweis bleibt beim Aufrufer.
     /// </summary>
-    internal LinuxMemFile? HoldSharedPages(ulong ino, ILinuxSharedMemory shared, LinuxSharedStoreFile? backing, bool backingWritable, string path)
+    internal LinuxMemFile? HoldSharedPages(LinuxFileNode node, ulong ino, ILinuxSharedMemory shared, LinuxSharedStoreFile? backing, bool backingWritable, string path)
     {
         lock (_sharedGate)
         {
-            if (_sharedPages.TryGetValue(ino, out LinuxMemFile? pages) && pages.TryHold())
+            LinuxMemFile? pages = node.Pages;
+            if (pages != null && pages.TryHold())
             {
                 backing?.Release(); // nicht gebraucht: Die lebende Ablage hält ihre eigene Datei
                 return pages;
@@ -631,18 +690,104 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
 
             pages = shared.CreateFilePages(backing, backingWritable, path, ino);
             _ = pages.TryHold(); // neu, lebt sicher
-            _sharedPages[ino] = pages;
+            node.Pages = pages;
             return pages;
         }
     }
 
-    /// <summary>V32: Nach unlink oder rename gehört der Name einer anderen Datei; die alte Ablage lebt für ihre Abbildungen weiter.</summary>
-    private void ForgetSharedPages(string storePath)
+    /// <summary>V32-P2: Nach unlink gehört der Name keiner Datei mehr; offene Deskriptoren behalten Knoten und Ablage.</summary>
+    private void ForgetNode(string storePath)
     {
         lock (_sharedGate)
         {
-            _ = _sharedPages.Remove(InodeOf(storePath));
+            DropKeyLocked(NodeKey(storePath));
         }
+    }
+
+    private void DropKeyLocked(string key)
+    {
+        if (_nodes.Remove(key, out LinuxFileNode? node))
+        {
+            node.Key = null;
+        }
+    }
+
+    /// <summary>
+    /// V32-P2: rename trägt die Knoten unter <paramref name="from"/> (bei einem Verzeichnis auch die darunter) zum neuen Namen; ein ersetztes
+    /// Ziel verliert seinen Namen wie bei unlink. So teilen neue Deskriptoren unter dem neuen Namen die Ablage der alten.
+    /// </summary>
+    private void MoveNodes(string from, string to)
+    {
+        string fromKey = NodeKey(from), toKey = NodeKey(to);
+        lock (_sharedGate)
+        {
+            DropKeyLocked(toKey);
+            if (_nodes.Count == 0)
+            {
+                return;
+            }
+
+            var moved = new List<KeyValuePair<string, LinuxFileNode>>();
+            foreach (KeyValuePair<string, LinuxFileNode> e in _nodes)
+            {
+                if (e.Key == fromKey || e.Key.StartsWith(fromKey + "/", StringComparison.Ordinal))
+                {
+                    moved.Add(e);
+                }
+            }
+
+            foreach (KeyValuePair<string, LinuxFileNode> e in moved)
+            {
+                _ = _nodes.Remove(e.Key);
+            }
+
+            foreach (KeyValuePair<string, LinuxFileNode> e in moved)
+            {
+                string key = string.Concat(toKey, e.Key.AsSpan(fromKey.Length));
+                e.Value.Key = key;
+                _nodes[key] = e.Value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Entfernt Knoten ohne Deskriptor, deren Ablage inzwischen tot ist (die Ablage stirbt unter der Speichersperre eines Prozesses, wo das
+    /// Register nicht gesperrt werden darf). Die Schwelle wächst mit, damit nicht jedes open das ganze Register durchgeht.
+    /// </summary>
+    private void SweepNodesLocked()
+    {
+        var dead = new List<string>();
+        foreach (KeyValuePair<string, LinuxFileNode> e in _nodes)
+        {
+            if (e.Value.Descriptors == 0 && LivePagesLocked(e.Value) == null)
+            {
+                dead.Add(e.Key);
+            }
+        }
+
+        foreach (string key in dead)
+        {
+            DropKeyLocked(key);
+        }
+
+        _nodeSweepAt = Math.Max(64, _nodes.Count * 2);
+    }
+
+    /// <summary>Schlüssel des Registers: bei einem Speicher ohne Groß-/Kleinschreibung in Großbuchstaben wie <see cref="InodeOf"/>.</summary>
+    private string NodeKey(string storePath)
+    {
+        if (_store.NameComparison is not (StringComparison.OrdinalIgnoreCase or StringComparison.InvariantCultureIgnoreCase))
+        {
+            return storePath;
+        }
+
+        char[] folded = new char[storePath.Length];
+        for (int i = 0; i < folded.Length; i++)
+        {
+            folded[i] = char.ToUpperInvariant(storePath[i]);
+        }
+
+        return new string(folded);
     }
 
     internal LinuxStat StatOf(in Loc loc) => loc.Area switch
@@ -1041,4 +1186,19 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
 
         return 0;
     }
+}
+
+/// <summary>
+/// V32-P2: eine offene Datei des Laufs, geteilt von allen Deskriptoren, die sie unter demselben Namen geöffnet haben (Hartlinks unter anderem
+/// Namen bekommen einen eigenen Knoten, siehe LINUX_ABI.md). Trägt die Seitenablage für MAP_SHARED. Felder nur unter der Registersperre von
+/// <see cref="LinuxFileSystem"/>.
+/// </summary>
+internal sealed class LinuxFileNode
+{
+    /// <summary>Aktueller Schlüssel im Register; null, wenn der Name gelöscht oder ersetzt wurde.</summary>
+    public string? Key { get; set; }
+
+    public int Descriptors { get; set; }
+
+    public LinuxMemFile? Pages { get; set; }
 }

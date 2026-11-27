@@ -18,7 +18,7 @@ public sealed class LinuxSharedFileTests
 {
     private const ulong Page = 4096;
     private const long Read = 0, Write = 1, Close = 3, Lseek = 8, Mmap = 9, Mprotect = 10, Munmap = 11, Pread = 17, Pwrite = 18, Msync = 26,
-        Fsync = 74, Ftruncate = 77, Openat = 257, Unlinkat = 263;
+        Fsync = 74, Ftruncate = 77, Openat = 257, Unlinkat = 263, Renameat = 264;
     private const int ProtR = 1, ProtRw = 3, MapShared = 1, MapFixed = 0x10;
     private const int ORdOnly = 0, ORdWr = 2, OCreat = 0x40, OTrunc = 0x200;
     private const long EACCES = 13, EINVAL = 22, ENOMEM = 12, ENODEV = 19;
@@ -300,5 +300,120 @@ public sealed class LinuxSharedFileTests
         Assert.AreEqual("\0\0\0\0\0\0", OnDisk("t-shm", 0, 6), "kein alter Inhalt zurückgeschrieben");
         p.Destroy();
         Assert.AreEqual(0, _frames.Live.Count);
+    }
+    private static void Rename(LinuxUserProcess p, ulong mem, string from, string to)
+    {
+        Assert.IsTrue(p.TryWrite(mem + 0x800, Encoding.ASCII.GetBytes(from + "\0")));
+        Assert.IsTrue(p.TryWrite(mem + 0xa00, Encoding.ASCII.GetBytes(to + "\0")));
+        Assert.AreEqual(0, Call(p, Renameat, unchecked((ulong)-100L), mem + 0x800, unchecked((ulong)-100L), mem + 0xa00));
+    }
+
+    [TestMethod]
+    public void RenameAlterDeskriptorSchreibtDurchDieAblage()
+    {
+        // V32-Review P2 (a): map, rename, write über den alten fd, munmap, read. Vorher fand der alte fd die Ablage nicht mehr, und munmap
+        // schrieb den alten Frame über das write.
+        var (p, _, mem) = NewProcess(1);
+        int fd = ShmFile(p, mem, "a-shm", 1);
+        ulong at = Map(p, fd, Page);
+        Put(p, at, "abbild");
+        Rename(p, mem, "a-shm", "b-shm");
+        Put(p, mem + 0x300, "WRITE!");
+        Assert.AreEqual(6, Call(p, Pwrite, (ulong)fd, mem + 0x300, 6, 0));
+        CollectionAssert.AreEqual(Encoding.ASCII.GetBytes("WRITE!"), Get(p, at, 6), "die Abbildung sieht das write");
+
+        // Ein neuer Deskriptor unter dem neuen Namen teilt dieselbe Ablage.
+        int fresh = Open(p, mem, "b-shm", ORdWr);
+        ulong other = Map(p, fresh, Page);
+        CollectionAssert.AreEqual(Encoding.ASCII.GetBytes("WRITE!"), Get(p, other, 6));
+        Assert.AreEqual(0, Call(p, Munmap, at, Page));
+        Assert.AreEqual(0, Call(p, Munmap, other, Page));
+        Assert.AreEqual(0, Call(p, Close, (ulong)fd));
+        Assert.AreEqual(6, Call(p, Pread, (ulong)fresh, mem + 0x200, 6, 0));
+        CollectionAssert.AreEqual(Encoding.ASCII.GetBytes("WRITE!"), Get(p, mem + 0x200, 6));
+        Assert.AreEqual("WRITE!", OnDisk("b-shm", 0, 6), "munmap überschreibt das write nicht");
+        p.Destroy();
+        Assert.AreEqual(0, _frames.Live.Count);
+    }
+
+    [TestMethod]
+    public void UnlinkUndNeuAlterDeskriptorTrifftNurDieAlteDatei()
+    {
+        // V32-Review P2 (b): Gleicher Name, gleicher Pfad-Hash; der alte fd darf die Frames der neuen Datei nicht verändern.
+        var (p, _, mem) = NewProcess(1);
+        int fd = ShmFile(p, mem, "u-shm", 1);
+        ulong old = Map(p, fd, Page);
+        Put(p, old, "alt");
+        Assert.IsTrue(p.TryWrite(mem + 0x800, Encoding.ASCII.GetBytes("u-shm\0")));
+        Assert.AreEqual(0, Call(p, Unlinkat, unchecked((ulong)-100L), mem + 0x800, 0));
+        int fresh = Open(p, mem, "u-shm", ORdWr | OCreat);
+        Assert.AreEqual(0, Call(p, Ftruncate, (ulong)fresh, Page));
+        ulong now = Map(p, fresh, Page);
+        Put(p, now + 100, "neu");
+
+        Put(p, mem + 0x300, "XYZ");
+        Assert.AreEqual(3, Call(p, Pwrite, (ulong)fd, mem + 0x300, 3, 100));
+        CollectionAssert.AreEqual(Encoding.ASCII.GetBytes("XYZ"), Get(p, old + 100, 3), "alte Abbildung sieht das write des alten fd");
+        CollectionAssert.AreEqual(Encoding.ASCII.GetBytes("neu"), Get(p, now + 100, 3), "neue Datei unberührt");
+        Assert.AreEqual(0, Call(p, Ftruncate, (ulong)fd, 0));
+        CollectionAssert.AreEqual(Encoding.ASCII.GetBytes("neu"), Get(p, now + 100, 3), "ftruncate des alten fd kürzt die neue Ablage nicht");
+        Assert.AreEqual(0, Call(p, Munmap, old, Page));
+        Assert.AreEqual(0, Call(p, Close, (ulong)fd));
+        Assert.AreEqual(0, Call(p, Munmap, now, Page));
+        Assert.AreEqual("neu", OnDisk("u-shm", 100, 3));
+        Assert.AreEqual(0, Call(p, Close, (ulong)fresh));
+        p.Destroy();
+        Assert.AreEqual(0, _frames.Live.Count);
+    }
+
+    [TestMethod]
+    public void NurGeschriebeneSeitenGehenZurueck()
+    {
+        // V32-P2: Eine nur lesend abgebildete Seite gleicht der Datei; munmap schreibt sie nicht zurück und überschreibt so nichts, was an
+        // der Ablage vorbei in die Datei kam (hier direkt in den Speicher, wie über einen Hartlink).
+        var (p, _, mem) = NewProcess(1);
+        int fd = ShmFile(p, mem, "d-shm", 2);
+        ulong writer = Map(p, fd, Page, ProtRw, 0);
+        ulong reader = Map(p, fd, Page, ProtR, Page);
+        Assert.IsTrue(p.HandlePageFault(reader, 0));
+        Put(p, writer + 8, "map");
+        Assert.AreEqual(0, _disk.OpenFile("d-shm", true, out ILinuxStoreFile? direct));
+        Assert.AreEqual(5, direct!.WriteAt((long)Page + 8, Encoding.ASCII.GetBytes("extra")));
+        _ = direct.Close();
+
+        Assert.AreEqual(0, Call(p, Munmap, writer, Page));
+        Assert.AreEqual(0, Call(p, Munmap, reader, Page));
+        Assert.AreEqual(0, Call(p, Close, (ulong)fd));
+        Assert.AreEqual("map", OnDisk("d-shm", 8, 3));
+        Assert.AreEqual("extra", OnDisk("d-shm", Page + 8, 5), "lesende Seite nicht zurückgeschrieben");
+
+        // mprotect auf PROT_WRITE macht eine schon abgebildete Seite zur geschriebenen.
+        fd = Open(p, mem, "d-shm", ORdWr);
+        ulong at = Map(p, fd, Page, ProtR, Page);
+        Assert.IsTrue(p.HandlePageFault(at, 0));
+        Assert.AreEqual(0, Call(p, Mprotect, at, Page, ProtRw));
+        Put(p, at + 8, "PROTW");
+        Assert.AreEqual(0, Call(p, Msync, at, Page, 4));
+        Assert.AreEqual("PROTW", OnDisk("d-shm", Page + 8, 5));
+        p.Destroy();
+        Assert.AreEqual(0, _frames.Live.Count);
+    }
+
+    [TestMethod]
+    public void RenameEinesVerzeichnissesNimmtDieAblageMit()
+    {
+        var (p, _, mem) = NewProcess(1);
+        Assert.IsTrue(p.TryWrite(mem + 0x800, Encoding.ASCII.GetBytes("dir\0")));
+        Assert.AreEqual(0, Call(p, 258, unchecked((ulong)-100L), mem + 0x800, 0x1ed)); // mkdirat
+        int fd = ShmFile(p, mem, "dir/w-shm", 1);
+        ulong at = Map(p, fd, Page);
+        Put(p, at, "frame");
+        Rename(p, mem, "dir", "neu");
+        int fresh = Open(p, mem, "neu/w-shm", ORdWr);
+        Assert.AreEqual(5, Call(p, Pread, (ulong)fresh, mem + 0x200, 5, 0));
+        CollectionAssert.AreEqual(Encoding.ASCII.GetBytes("frame"), Get(p, mem + 0x200, 5), "neuer Name, dieselbe Ablage");
+        p.Destroy();
+        Assert.AreEqual(0, _frames.Live.Count);
+        Assert.AreEqual("frame", OnDisk("neu/w-shm", 0, 5));
     }
 }

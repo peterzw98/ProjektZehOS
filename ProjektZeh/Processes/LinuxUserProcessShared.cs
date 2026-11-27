@@ -135,7 +135,8 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
                 return 0;
             }
 
-            LinuxSharedFrame? f = r.Mem.Acquire(r.FirstIndex + (long)((page - r.Start) / Page));
+            // V32-P2: beschreibbar abgebildet zählt als geschrieben (nur solche Seiten gehen in die Datei zurück).
+            LinuxSharedFrame? f = r.Mem.Acquire(r.FirstIndex + (long)((page - r.Start) / Page), access == MapAccess.ReadWrite);
             if (f == null)
             {
                 busError = true; // hinter dem Dateiende: Linux gibt SIGBUS (V30-P3)

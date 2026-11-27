@@ -159,6 +159,9 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
     private readonly LinuxSharedStoreFile _shared;
     private readonly LinuxStoreNode _node;
     private readonly ulong _ino;
+
+    // V32-P2: offene Datei des Laufs (Seitenablage für MAP_SHARED), beim Öffnen festgehalten und über rename/unlink hinweg dieselbe.
+    private readonly LinuxFileNode _fileNode;
     private readonly bool _append;
     private long _position;
 
@@ -171,6 +174,7 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
         _append = append;
         // Am Deskriptor festhalten: fstat nach unlink oder rename meldet weiter dieselbe Datei.
         _ino = fs.InodeOf(storePath);
+        _fileNode = fs.AttachNode(storePath);
     }
 
     /// <summary>V32: Zugriffsrechte des Deskriptors für mmap mit MAP_SHARED.</summary>
@@ -179,7 +183,7 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
     internal bool Writable => CanWrite;
 
     /// <summary>V32: lebende Seitenablage dieser Datei (MAP_SHARED in irgendeinem Prozess des Laufs) oder null.</summary>
-    private LinuxMemFile? SharedPages => FileSystem.FindSharedPages(_ino);
+    private LinuxMemFile? SharedPages => FileSystem.LivePages(_fileNode);
 
     /// <summary>
     /// V32: Seitenablage für MAP_SHARED, gehalten (der Aufrufer gibt den Halt mit ReleaseHold zurück); entsteht, wenn keine lebt. Sie hält
@@ -193,11 +197,11 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
             return null;
         }
 
-        LinuxMemFile? pages = FileSystem.HoldSharedPages(_ino, shared, null, false, Path);
+        LinuxMemFile? pages = FileSystem.HoldSharedPages(_fileNode, _ino, shared, null, false, Path);
         if (pages == null)
         {
             _shared.AddRef();
-            return FileSystem.HoldSharedPages(_ino, shared, _shared, CanWrite, Path);
+            return FileSystem.HoldSharedPages(_fileNode, _ino, shared, _shared, CanWrite, Path);
         }
 
         if (CanWrite)
@@ -285,6 +289,7 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
     protected override long Release()
     {
         _ = SharedPages?.Flush(0, long.MaxValue);
+        FileSystem.DetachNode(_fileNode);
         return _shared.ReleaseChecked();
     }
 
