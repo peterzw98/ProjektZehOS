@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas-Demo · ZehOS</title>
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; background: #091522; color: #f0f8fc; font: 16px/1.55 system-ui, sans-serif }
+  main { max-width: 840px; padding: 2.5rem clamp(1rem, 5vw, 3rem); margin: auto }
+  header { border-bottom: 1px solid #355064; padding-bottom: 1rem; margin-bottom: 1.25rem }
+  header p { color: #9bb5c8; margin: 0.5rem 0 0 }
+  h1 { margin: 0; line-height: 1.1; font-size: clamp(2rem, 6vw, 3rem); letter-spacing: -0.04em }
+  canvas { display: block; width: 100%; height: auto; border: 1px solid #38556b; border-radius: 0.7rem }
+  .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem }
+  button { font: inherit; font-weight: 650; color: #09252c; background: #76e7c2; border: 0; border-radius: 0.4rem; padding: 0.4rem 0.8rem; cursor: pointer }
+  output { color: #a8c0d2; font-variant-numeric: tabular-nums }
+</style>
+<main>
+  <header>
+    <h1>Signale im Umlauf</h1>
+    <p>Drei simulierte Signale bewegen sich auf festen Bahnen. JavaScript zeichnet jeden Frame in Canvas.</p>
+  </header>
+  <canvas id="scope" width="704" height="350" aria-label="Drei Punkte auf konzentrischen Kreisbahnen"></canvas>
+  <div class="controls">
+    <button id="play" type="button">Animation starten</button>
+    <output id="frame" for="play"></output>
+  </div>
+</main>
+<script>
+const canvas = document.querySelector("#scope");
+const context = canvas.getContext("2d");
+const status = document.querySelector("#frame");
+const button = document.querySelector("#play");
+const initialFrame = new URLSearchParams(location.search).get("frame");
+const trails = [
+  { radius: 57, color: "#78ebc4", speed: 1, offset: 0 },
+  { radius: 99, color: "#80c5ff", speed: -0.65, offset: 2 },
+  { radius: 140, color: "#ffc18f", speed: 0.47, offset: 3.5 }
+];
+let frame = Number(initialFrame) || 0;
+let animation = 0;
+let startTime;
+
+function draw() {
+  context.fillStyle = "#102235";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "#203951";
+  context.lineWidth = 1;
+  context.beginPath();
+  for (let x = 16; x < canvas.width; x += 24) {
+    context.moveTo(x, 0);
+    context.lineTo(x, canvas.height);
+  }
+  for (let y = 7; y < canvas.height; y += 24) {
+    context.moveTo(0, y);
+    context.lineTo(canvas.width, y);
+  }
+  context.stroke();
+
+  const centerX = 234;
+  const centerY = 175;
+  for (const [index, trail] of trails.entries()) {
+    context.strokeStyle = "#41617a";
+    context.beginPath();
+    context.arc(centerX, centerY, trail.radius, 0, Math.PI * 2);
+    context.stroke();
+
+    const angle = frame * 0.026 * trail.speed + trail.offset;
+    context.strokeStyle = trail.color;
+    context.lineWidth = 3;
+    context.beginPath();
+    const arcEnd = angle - Math.sign(trail.speed) * 0.85;
+    context.arc(centerX, centerY, trail.radius, arcEnd, angle, trail.speed < 0);
+    context.stroke();
+    context.lineWidth = 1;
+    context.fillStyle = trail.color;
+    context.beginPath();
+    context.arc(centerX + Math.cos(angle) * trail.radius, centerY + Math.sin(angle) * trail.radius, 6, 0, Math.PI * 2);
+    context.fill();
+    context.fillRect(442, 115 + index * 55, 9, 9);
+    context.font = "18px sans-serif";
+    context.fillText("Signal " + (index + 1), 465, 124 + index * 55);
+  }
+  context.fillStyle = "#cce7f5";
+  context.beginPath();
+  context.arc(centerX, centerY, 4, 0, Math.PI * 2);
+  context.fill();
+  status.textContent = "Frame " + frame;
+}
+
+function update(now) {
+  if (startTime === undefined) startTime = now - frame * 1000 / 60;
+  frame = Math.round((now - startTime) * 60 / 1000);
+  draw();
+  animation = requestAnimationFrame(update);
+}
+
+button.addEventListener("click", () => {
+  if (animation) {
+    cancelAnimationFrame(animation);
+    animation = 0;
+    button.textContent = "Animation fortsetzen";
+  } else {
+    startTime = undefined;
+    animation = requestAnimationFrame(update);
+    button.textContent = "Animation anhalten";
+  }
+});
+
+draw();
+if (initialFrame === null && !matchMedia("(prefers-reduced-motion: reduce)").matches) button.click();
+</script>
+</html>

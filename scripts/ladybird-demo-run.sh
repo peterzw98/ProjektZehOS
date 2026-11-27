@@ -4,13 +4,13 @@
 #
 # Nutzung: scripts/ladybird-demo-run.sh [-b <buendel.tar.gz>] [-o <ausgabeordner>] [-u <url>] [-s <sekunden-verzoegerung>]
 #                                       [--smp N] [--timeout S] [--skip-cosmos] [--skip-build] [--iso <iso>] [--disk <qcow2>]
-#                                       [--page static|css|js|img] [--accel kvm|tcg] [--wait-scale F] [--memory 1G]
+#                                       [--page <name>] [--accel kvm|tcg] [--wait-scale F] [--memory 1G]
 # Ausgabe: <ausgabeordner>/shot.png (Standard ~/ladybird-demo-out/<zeitstempel>), run.log (alles, mit Zeitstempeln), times.txt,
 #          dazu die Dateien des Gastskripts (serial.log, program-out.txt). Exit 0 nur mit PNG und Hub-Status "exit 0".
 # Voraussetzungen: dotnet (DOTNET_ROOT, Standard ~/.dotnet), KVM, qemu-img, mtools, Netz nur fuer den Cosmos-Quellbau.
 # Ein Gast gleichzeitig: bei laufendem qemu bricht das Skript ab (QEMU_OK=1 erzwingt den Start).
 # --skip-cosmos: vorhandene Werkzeuge unter .tools/cosmos-tools/<VERSION> nutzen; --skip-build: --iso verwenden; --disk: fertige Platte.
-# --page: L1-Testseite aus experiments/Ladybird.Probe/pages (beim Plattenbau samt fonts/ und probe.png nach /share/zehos-probe gelegt).
+# --page: Demoseite aus experiments/Ladybird.Probe/pages (beim Plattenbau samt PNG-Bildern und fonts/ nach /share/zehos-probe gelegt).
 # --memory: Gastspeicher statt 512M (QEMU -m).
 # --accel tcg: ohne KVM (feste Wartezeiten x10, --wait-scale aendert den Faktor); --timeout dann entsprechend hoeher setzen.
 set -u
@@ -22,7 +22,14 @@ while [ $# -gt 0 ]; do case $1 in
   -b) BUNDLE=$2; shift 2;; -o) OUT=$2; shift 2;; -u) URL=$2; shift 2;; -s) DELAY=$2; shift 2;;
   --smp) SMP=$2; shift 2;; --timeout) TIMEOUT=$2; shift 2;; --skip-cosmos) SKIPC=1; shift;; --skip-build) SKIPB=1; shift;;
   --iso) ISO=$2; shift 2;; --disk) DISK=$2; shift 2;; -h|--help) sed -n 2,14p "$0"; exit 0;;
-  --page) case $2 in ""|*[!a-z]*) echo "--page nur [a-z]+" >&2; exit 2;; esac; URL=file:///share/zehos-probe/$2.html; shift 2;; --accel) ACCEL=$2; shift 2;; --wait-scale) WSCALE=$2; shift 2;; --memory) MEM=$2; shift 2;;
+  --page)
+    case ${2-} in
+      ""|[!a-z0-9]*|*[!a-z0-9-]*)
+        echo "--page nur [a-z0-9][a-z0-9-]*" >&2
+        exit 2;;
+    esac
+    URL=file:///share/zehos-probe/$2.html; shift 2;;
+  --accel) ACCEL=$2; shift 2;; --wait-scale) WSCALE=$2; shift 2;; --memory) MEM=$2; shift 2;;
   *) echo "unbekannte Option $1" >&2; exit 2;; esac; done
 [ -n "$ISO" ] && SKIPB=1
 mkdir -p "$OUT" || exit 2; LOG=$OUT/run.log; : > "$LOG"; : > "$OUT/times.txt"
@@ -66,9 +73,9 @@ if [ -z "$DISK" ]; then
   CONFD_ADD=()
   for f in "$OUT"/confd/*.conf; do [ -f "$f" ] && [ ! -L "$f" ] && CONFD_ADD+=(--add "/etc/fonts/conf.d/$(basename "$f")=$f"); done
   [ ${#CONFD_ADD[@]} -gt 0 ] || die "conf.d leer"
-  # L1-Testseiten (css: Webfonts aus fonts/, img: probe.png fuer ImageDecoder, js): das Buendel enthaelt nur static.html.
+  # Demoseiten mit Webfonts und PNG-Bildern: Das Buendel enthaelt nur static.html.
   PAGES_ADD=(); P=$R/experiments/Ladybird.Probe/pages
-  for f in "$P"/*.html "$P"/probe.png "$P"/fonts/*; do [ -f "$f" ] && PAGES_ADD+=(--add "/share/zehos-probe/${f#"$P"/}=$f"); done
+  for f in "$P"/*.html "$P"/*.png "$P"/fonts/*; do [ -f "$f" ] && PAGES_ADD+=(--add "/share/zehos-probe/${f#"$P"/}=$f"); done
   timed platte python3 scripts/linux-root-disk.py "$BUNDLE" "$DISK" --dest lb --skip-dangling \
     --add /etc/fonts/fonts.conf="$OUT/fonts.conf" --add /tmp/keep="$OUT/keep" "${CONFD_ADD[@]}" "${PAGES_ADD[@]}" || die "linux-root-disk.py"
 fi
