@@ -1,0 +1,27 @@
+spawn neue Gruppe rc=0
+getpgid(a)==a 1
+getsid(a)==eigene Sitzung 1
+eigene Gruppe unveraendert 1
+setpgid(a) nach execve: ret=-1 errno=13
+setpgid(a, a) nach execve: ret=-1 errno=13
+spawn in Gruppe a rc=0
+getpgid(b)==a 1
+spawn unbekannte Gruppe rc=1
+setpgid unbekannte PID: ret=-1 errno=3
+setpgid negative Gruppe: ret=-1 errno=22
+getpgid unbekannte PID: ret=-1 errno=3
+getsid unbekannte PID: ret=-1 errno=3
+kind setsid neu=j erneut EPERM=j setpgid Fuehrer EPERM=j
+getsid(d)==d 1
+setpgid(d) andere Sitzung: ret=-1 errno=1
+setpgid in Gruppe einer anderen Sitzung: ret=-1 errno=1
+wait d: kind anderes signal=9 exit=-1
+waitpid(-a, WNOHANG) laufend: ret=0 errno=0
+kill(-a, 0): ret=0 errno=0
+kill(-a, SIGTERM): ret=0 errno=0
+waitpid(-a) zweimal: a=1 b=1 SIGTERM=2
+waitpid(-a) leer: ret=-1 errno=10
+kill(-a) nach dem Ernten: ret=-1 errno=3
+kill(0, 0) eigene Gruppe: ret=0 errno=0
+waitpid(0, WNOHANG) ohne Kinder: ret=-1 errno=10
+ende

@@ -207,10 +207,23 @@ internal static partial class LinuxSyscalls
     /// (Gruppe und Sitzung tragen seine PID), wie ein Programm, das Linux direkt in einem neuen Pseudoterminal startet. Andere
     /// Prozesse gibt es nicht (-ESRCH). Wie bei Linux scheitert <c>setsid</c> für einen Gruppenführer und <c>setpgid</c> für einen
     /// Sitzungsführer mit -EPERM, auch wenn sich nichts ändern würde (Linux prüft den Sitzungsführer vor allem anderen).
+    /// V35: Ein Prozess mit <see cref="ILinuxProcessGroups"/> (Kinder per fork, vfork) hat echte Gruppen und Sitzungen.
     /// </summary>
     private static long DoProcessGroup(ILinuxProcess p, ref SyscallArgs a)
     {
         int pid = (int)a.A0;
+        if (p is ILinuxProcessGroups groups)
+        {
+            return a.Number switch
+            {
+                Getpgrp => groups.ProcessGroup,
+                Getpgid => groups.GetProcessGroup(pid),
+                Getsid => groups.GetSession(pid),
+                Setpgid => groups.SetProcessGroup(pid, (int)a.A1),
+                _ => groups.CreateSession(), // Setsid
+            };
+        }
+
         switch (a.Number)
         {
             case Getpgrp:

@@ -21,6 +21,9 @@ internal sealed class LinuxProcSnapshot
 
     public int GroupPid { get; init; }
 
+    /// <summary>V35: Sitzung (getsid); seit setsid nicht mehr immer gleich der Gruppe.</summary>
+    public int SessionId { get; init; }
+
     /// <summary>comm wie Linux: Dateiname des Programms ohne Verzeichnis, höchstens 15 Bytes.</summary>
     public string Name { get; init; } = "linux";
 
@@ -440,6 +443,7 @@ internal static class LinuxProcFiles
         {
             Pid = p.Pid,
             GroupPid = p.Pid,
+            SessionId = p.Pid,
             Name = CommOf((p as ILinuxExe)?.ExePath),
             Uid = p.Uid,
             Gid = p.Gid,
@@ -517,7 +521,7 @@ internal static class LinuxProcFiles
         b.Append("NStgid:\t").Append(I(s.Pid)).Append('\n');
         b.Append("NSpid:\t").Append(I(s.Pid)).Append('\n');
         b.Append("NSpgid:\t").Append(I(s.GroupPid)).Append('\n');
-        b.Append("NSsid:\t").Append(I(s.GroupPid)).Append('\n');
+        b.Append("NSsid:\t").Append(I(s.SessionId)).Append('\n');
         if (s.State != 'Z')
         {
             // Linux lässt die Speicherzeilen bei Zombies (kein mm) weg.
@@ -568,7 +572,7 @@ internal static class LinuxProcFiles
             s.State.ToString(),
             s.ParentPid.ToString(CultureInfo.InvariantCulture),
             s.GroupPid.ToString(CultureInfo.InvariantCulture), // pgrp
-            s.GroupPid.ToString(CultureInfo.InvariantCulture), // session
+            s.SessionId.ToString(CultureInfo.InvariantCulture), // session
             "0", "-1", // tty_nr, tpgid
             "4194304", // flags (PF_RANDOMIZE wie ein gewöhnlicher Prozess)
             "0", "0", "0", "0", // minflt, cminflt, majflt, cmajflt

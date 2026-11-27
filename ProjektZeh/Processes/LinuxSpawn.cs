@@ -23,6 +23,11 @@ internal sealed class LinuxIds
     /// <summary>V16: Namen der Unix-Sockets; wie die PIDs ein Namensraum je Lauf (eigene Blattsperre).</summary>
     public LinuxUnixNames UnixNames { get; } = new();
 
+    /// <summary>
+    /// V35: Sperre für Prozessgruppen und Sitzungen des Laufs (LinuxProcessGroups.cs); vor ChildGate, nie unter einer anderen Sperre genommen.
+    /// </summary>
+    public object GroupGate { get; } = new();
+
     public void Add(int id)
     {
         lock (_gate)
@@ -269,9 +274,14 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
         var child = new LinuxUserProcess(this);
         var entry = new LinuxChild(child.Pid, child);
-        lock (_children)
+        lock (_ids.GroupGate)
         {
-            _children.Add(entry);
+            // V35: Gruppe erben und sichtbar werden in einem Schritt, damit ein gleichzeitiges setpgid des Elternprozesses nicht verloren geht.
+            child.InheritGroup(this);
+            lock (_children)
+            {
+                _children.Add(entry);
+            }
         }
 
         if (!StartVfork(child, stack))
@@ -518,6 +528,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
         // Linux: Handler fallen auf SIG_DFL, SIG_IGN und die Signalmaske bleiben, der Alternativstack nicht.
         CopySignals(from.Signals, Signals, resetHandlers: true);
+        TakeOverGroup(from); // V35: Gruppe und Sitzung bleiben, setpgid des Elternprozesses ist ab hier -EACCES
         CloseOnExec();
     }
 

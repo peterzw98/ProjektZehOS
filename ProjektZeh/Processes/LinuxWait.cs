@@ -29,7 +29,7 @@ internal interface ILinuxWait
     /// <summary>PID des Elternprozesses; 0 für den ersten Prozess eines Laufs (Elternteil ist der Kernel).</summary>
     int ParentPid { get; }
 
-    /// <summary>PID des ersten Prozesses des Laufs; alle Prozesse stehen in seiner Prozessgruppe (setpgid gibt es nicht).</summary>
+    /// <summary>Aktuelle Prozessgruppe (V35, setpgid); ohne setpgid die des ersten Prozesses des Laufs.</summary>
     int GroupPid { get; }
 
     /// <summary>
@@ -40,7 +40,7 @@ internal interface ILinuxWait
     long WaitChild(int idType, int id, int options, bool consume, Func<bool>? aborted, out int status, out ulong uid);
 
     /// <summary>
-    /// kill(pid, sig) im Lauf: <paramref name="pid"/> &gt; 0 ein Prozess, 0 oder -Gruppe alle des Laufs, -1 alle außer dem Aufrufer und dem
+    /// kill(pid, sig) im Lauf: <paramref name="pid"/> &gt; 0 ein Prozess, 0 die eigene Gruppe, -Gruppe deren Mitglieder (V35), -1 alle außer dem Aufrufer und dem
     /// ersten Prozess. Liefert 0, -EINVAL (Signalnummer) oder -ESRCH (kein Ziel); ein Handler läuft beim nächsten Rücksprung des Ziels (V18).
     /// </summary>
     long KillProcess(int pid, int signal);
@@ -69,25 +69,12 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
 
     public int ParentPid => Parent?.Pid ?? 0;
 
-    public int GroupPid
-    {
-        get
-        {
-            LinuxUserProcess root = this;
-            while (root.Parent != null)
-            {
-                root = root.Parent;
-            }
-
-            return root.Pid;
-        }
-    }
+    public int GroupPid => ProcessGroup; // V35 (LinuxProcessGroups.cs)
 
     public long WaitChild(int idType, int id, int options, bool consume, Func<bool>? aborted, out int status, out ulong uid)
     {
         status = 0;
         uid = 0;
-        int group = GroupPid;
         lock (_children)
         {
             while (true)
@@ -96,7 +83,7 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
                 for (int i = 0; i < _children.Count; i++)
                 {
                     LinuxChild c = _children[i];
-                    if (c.AutoReaped || (idType == 1 && c.Pid != id) || (idType == 2 && id != group))
+                    if (c.AutoReaped || (idType == 1 && c.Pid != id) || (idType == 2 && c.Process.ProcessGroup != id))
                     {
                         continue;
                     }
@@ -181,15 +168,38 @@ internal sealed partial class LinuxUserProcess : ILinuxWait
                 : -LinuxSyscalls.ESRCH;
         }
 
-        // Prozessgruppen gibt es nicht (setpgid -EPERM): Gruppe 0 und -GroupPid sind der ganze Lauf, eine andere Gruppe ist leer.
-        if (pid < -1 && -pid != root.Pid)
+        var all = new List<LinuxUserProcess>();
+        long result = -LinuxSyscalls.ESRCH;
+        if (pid == -1)
         {
-            return -LinuxSyscalls.ESRCH;
+            Collect(root, all);
+        }
+        else
+        {
+            // V35: 0 ist die eigene Gruppe, -pgid eine bestimmte. Linux zählt Zombies der Gruppe als erreicht (Senden gelingt ohne Wirkung).
+            int group = pid == 0 ? ProcessGroup : -pid;
+            var members = new List<LinuxUserProcess>();
+            CollectWithZombies(root, members);
+            var live = new List<LinuxUserProcess>();
+            Collect(root, live);
+            foreach (LinuxUserProcess m in members)
+            {
+                if (m.ProcessGroup != group)
+                {
+                    continue;
+                }
+
+                if (live.Contains(m))
+                {
+                    all.Add(m);
+                }
+                else
+                {
+                    result = 0;
+                }
+            }
         }
 
-        var all = new List<LinuxUserProcess>();
-        Collect(root, all);
-        long result = -LinuxSyscalls.ESRCH;
         bool self = false;
         foreach (LinuxUserProcess target in all)
         {
