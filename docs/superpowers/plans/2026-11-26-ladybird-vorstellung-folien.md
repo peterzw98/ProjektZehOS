@@ -1,6 +1,6 @@
 # Ladybird auf ZehOS: Stichpunkte für die Vorstellung (4.12.2026)
 
-> Arbeitsstand 26.11. abends, Story `story/ladybird` @ `b91bbe5c`. Zahlen nur aus den genannten Belegen; was bis Donnerstag dazukommt, wird nachgetragen, was fehlt, bleibt weg.
+> Arbeitsstand 27.11. vormittags, Story `story/ladybird` @ `a549bd61` (Tor N1-Z: **GO** von Peter am 27.11.). Zahlen nur aus den genannten Belegen; was bis Donnerstag dazukommt, wird nachgetragen, was fehlt, bleibt weg.
 
 ## 1. Frage
 
@@ -17,15 +17,18 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 | --- | --- |
 | Cosmos-Patches | GDT/TSS je CPU, FPU-Zustand je Thread, Ring-3-Einstieg, CR3 je Thread, APIC über HHDM, sofortiges Yield |
 | ELF-Lader | statisch und statisch-PIE, Startstack mit auxv, W^X, gehärtet gegen 10 000 verfälschte Dateien |
-| Linux-Systemaufrufe | rund 90: Speicher (mmap, brk, mremap), Dateien, Pipes, poll, Zeit, Zufall, rlimit, Threads (clone, futex) |
+| Linux-Systemaufrufe | Speicher, Dateien, Pipes, poll/ppoll/epoll, timerfd, eventfd, Threads (clone, futex), Prozesse (fork, vfork, execve, wait), Signale inkl. Fehlersignale aus Ring 3, Unix-Sockets (Stream, Datagramm, Dateien übergeben), TCP/UDP über Loopback, memfd, Dateisperren (fcntl, flock), CPU-Zeit |
+| Dynamisches Laden | `PT_INTERP`: dynamisch gelinkte musl-Programme (ld-musl, libstdc++, libgcc_s) starten, auch per `execve` aus laufenden Prozessen |
+| /proc | status, stat, maps, meminfo, cpuinfo je Prozess des Laufs |
 | Dateisystem | eigene Wurzel auf der Datenplatte, Rechteprüfung des angemeldeten Nutzers, kein Ausbruch über `..`/Links/8.3-Kurznamen, Wachstumskontingent |
 | Terminal | Ausgabe, Eingabe, termios, Rohmodus für Zeileneditoren, Abbruch mit Strg+C und Strg+Umschalt+Esc |
 
 ## 4. Demo (im Gast, QEMU/KVM, 1 und 4 CPUs)
 
 1. `run hello` im Desktop-Terminal → „Hallo aus dem Ring 3!“, Ende 0.
-2. Linux-Testprogramme: **23 von 24** wie unter Linux (KVM, 1 und 4 CPUs, senior2 18:24); einzige Abweichung `badptr`, weil FAT keine symbolischen Links kennt.
+2. Linux-Testsätze (`scripts/test-linux-all.py`): **12 von 13** Sätzen wie unter Linux (KVM, 1 und 4 CPUs, engineer 27.11. 09:10); einzige Abweichung `badptr` in s1, weil FAT keine symbolischen Links kennt.
 3. **Ladybirds JavaScript-Engine `js`** (statisch mit musl, 33 MB, unverändert) im ZehOS-Terminal: `1+1` → `2`, REPL mit `(7*6).toString(2)` → `"101010"`, Strg+C bricht Endlosschleife ab. Gastskript 11/11 bei 1 und 4 CPUs. Foto: `zehos-v3-out/js14-1/03-repl-antwort.png` (MSI).
+4. **Ladybird selbst startet im Gast** (27.11., senior2): der Hub aus dem musl-Bau ohne Qt läuft durch ld-musl, ICU und fontconfig mit 2 Threads; Stand der nächsten Hürde wird bis Donnerstag nachgetragen.
 
 ## 5. Zahlen zur Machbarkeit
 
@@ -33,7 +36,7 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 
 - Ladybird-Bau (glibc, ohne JIT) auf normalem PC: ~60 min, Spitzen-RAM ~4 GiB (der angenommene 32-GiB-Rechner war unnötig).
 - Laufzeitbedarf (L1-C): 334–438 MiB PSS für drei Testseiten, 7 Prozesse, 69 Threads.
-- Ganzes Ladybird mit musl: baut mit **87 Patchzeilen** (Grenze 1000); Start ohne Oberfläche noch offen.
+- Ganzes Ladybird mit musl: baut mit **87 Patchzeilen** (Grenze 1000); **unter Linux headless ohne Qt: Hub + 9 Dienste, `static.html` als PNG 798×4087** (senior25, 27.11., #636).
 - Systemaufrufe von Ladybird (C2): 94 verschiedene, keiner aus den Ausschlussgruppen → **trägt**.
 
 ## 6. Qualität
@@ -43,8 +46,8 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 
 ## 7. Grenzen (ehrlich)
 
-- Alle Threads eines Programms auf einer CPU; keine Signalzustellung; kein epoll; kein fork/exec.
-- Kein Netz und keine Fenster für Linux-Programme → Ladybird zeigt noch keine Seite.
+- Alle Threads eines Programms auf einer CPU; fork kopiert den Adressraum sofort (kein Copy-on-Write).
+- Netz nur über Loopback, keine Fenster für Linux-Programme; FAT ohne symbolische Links und ohne echte Rechte.
 - Nicht geprüft: VMware, echte Hardware.
 
 ## 8. Ausblick und Aufwand
