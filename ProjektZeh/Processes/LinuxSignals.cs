@@ -399,8 +399,10 @@ internal static class LinuxSignalFrame
     private const int McRsp = 120, McRip = 128, McFlags = 136, McCs = 144, McSs = 150, McErr = 152, McTrapno = 160, McOldmask = 168, McCr2 = 176,
         McFpstate = 184;
 
-    // Flags, die ein Handler über den Rahmen ändern darf (Linux FIX_EFLAGS ohne TF und RF): CF, PF, AF, ZF, SF, DF, OF, AC.
-    private const ulong FixFlags = 0x1 | 0x4 | 0x10 | 0x40 | 0x80 | 0x400 | 0x800 | 0x40000;
+    // Flags, die ein Handler über den Rahmen ändern darf (Linux FIX_EFLAGS): CF, PF, AF, ZF, SF, TF, DF, OF, RF, AC. TF und RF gehen seit dem
+    // Cosmos-Patch sigreturn-iretq über iretq zurück (sysretq löschte RF und fing TF vor dem ersten Befehl); mit TF fängt der Befehl nach
+    // der Rückkehr ein #DB, also SIGTRAP TRAP_TRACE wie Linux. Im Kernel bleibt TF aus: SFMASK löscht es beim syscall, Ausnahmen beim Eintritt.
+    private const ulong FixFlags = 0x1 | 0x4 | 0x10 | 0x40 | 0x80 | 0x100 | 0x400 | 0x800 | 0x10000 | 0x40000;
     private const ulong FlagsClearedForHandler = 0x400 | 0x100 | 0x10000; // DF, TF, RF wie Linux setup_rt_frame
 
     private const int SsOnstack = 1, SsDisable = 2;
