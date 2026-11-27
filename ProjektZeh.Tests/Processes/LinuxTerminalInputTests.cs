@@ -233,6 +233,37 @@ public sealed class LinuxTerminalInputTests
         Assert.AreEqual(6, Call(p, LinuxSyscalls.Readv, 0, Base, 1));
     }
 
+    private sealed class RecordingInput : ILinuxInput
+    {
+        public int LastBuffer = -1;
+        public long Write(ReadOnlySpan<byte> data) => data.Length;
+        public bool InputReady => true;
+        public bool WaitInput(long timeoutMs) => true;
+        public long ReadInput(Span<byte> dst)
+        {
+            LastBuffer = dst.Length;
+            dst.Fill((byte)'x');
+            return dst.Length;
+        }
+    }
+
+    [TestMethod]
+    public void ReadvLiestNurBisZumErstenErfuelltenEintragUndAllokiertNichtFuerSpaetere()
+    {
+        var input = new RecordingInput();
+        var p = new Proc(input);
+        void Iov(int i, ulong b, ulong l)
+        {
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16, 8), b);
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16 + 8, 8), l);
+        }
+        // iov[0] gueltig (4 KiB), iov[1] 1 GiB auf ungueltiger Adresse: hoechstens 4 KiB, kein -EFAULT, keine Grossallokation.
+        Iov(0, Base + 0x1000, 4096);
+        Iov(1, 0x10, 0x40000000UL);
+        Assert.AreEqual(4096, Call(p, LinuxSyscalls.Readv, 0, Base, 2));
+        Assert.AreEqual(4096, input.LastBuffer, "Puffer nur so gross wie die gepruefte Summe");
+    }
+
     [TestMethod]
     public void PollMeldetEingabeUndWartetOhneFristAufEnter()
     {
