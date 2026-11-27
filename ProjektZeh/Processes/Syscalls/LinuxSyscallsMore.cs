@@ -49,7 +49,7 @@ internal sealed class LinuxSignalState
 internal static partial class LinuxSyscalls
 {
     public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Msync = 26, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
-        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99, RtSigpending = 127, Getrusage = 98;
+        Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99, RtSigpending = 127, Getrusage = 98, RtSigsuspend = 130;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
 
@@ -93,6 +93,10 @@ internal static partial class LinuxSyscalls
             case Getegid: return (long)p.Gid;
             case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
             case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // bis ein Signal mit Handler kommt (-EINTR, V18) oder der Prozess endet
+            // rt_sigsuspend(mask, 8): Wartemaske setzen und schlafen, bis ein Signal mit Handler kommt (immer -EINTR). busybox ash wartet in wait
+            // so auf SIGCHLD (wait_block_or_sig); ohne den Aufruf kehrte sigsuspend sofort mit -ENOSYS zurück, und wait drehte endlos.
+            // Die Brücke stellt die alte Maske über den Signalrahmen wieder her (wie bei ppoll mit -EINTR, LinuxSyscallsStart.cs).
+            case RtSigsuspend: return DoSigsuspend(p, a.A0, a.A1);
             case Wait4:
             case Waitid:
             case Getppid:

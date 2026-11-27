@@ -100,6 +100,29 @@ internal static partial class LinuxSyscalls
         return r;
     }
 
+    private static long DoSigsuspend(ILinuxProcess p, ulong maskPtr, ulong maskSize)
+    {
+        if (maskSize != 8)
+        {
+            return -EINVAL;
+        }
+
+        Span<byte> m = stackalloc byte[8];
+        if (!p.Memory.TryRead(maskPtr, m))
+        {
+            return -EFAULT;
+        }
+
+        if (p is not LinuxUserProcess up || p is not ILinuxThreads threads)
+        {
+            return -ENOSYS;
+        }
+
+        // Bleibt die Wartemaske nach -EINTR stehen, stellt der Signalrahmen die alte Maske her (rt_sigreturn); endet der Prozess, ist es egal.
+        up.BeginWaitMask(up.CurrentThread, BitConverter.ToUInt64(m));
+        return threads.Futexes.Sleep(-1);
+    }
+
     /// <summary>
     /// close_range(first, last, flags): schließt alle offenen Nummern im Bereich (last bis ~0 erlaubt) oder setzt mit CLOSE_RANGE_CLOEXEC
     /// nur FD_CLOEXEC. CLOSE_RANGE_UNSHARE ist ohne geteilte Tabellen (CLONE_FILES gibt es nicht) wirkungslos. Unter der Dateisperre.
