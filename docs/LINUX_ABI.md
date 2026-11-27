@@ -369,13 +369,13 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
-| 41 | `socket` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`, kein Netz), `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` über `socket` weiter `-ESOCKTNOSUPPORT`: nur als `socketpair`, V23), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
+| 41 | `socket` | `AF_UNIX` und seit V27 `AF_INET` nur auf Loopback (Abschnitt unten; `AF_INET6` und andere `-EAFNOSUPPORT`); bei `AF_UNIX` `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` über `socket` weiter `-ESOCKTNOSUPPORT`: nur als `socketpair`, V23), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
 | 49 | `bind` | abstrakte Namen (führendes Nullbyte, binär) und Pfade relativ zum Arbeitsverzeichnis; ein Pfad legt eine leere Datei an (vorhanden: `-EADDRINUSE`), die nach `close` stehen bleibt; Länge 2 bindet automatisch (`\0` und fünf Hexziffern); schon gebunden oder angenommenes Ende `-EINVAL`; Namen gelten je Lauf |
 | 50 | `listen` | unbenannt oder verbunden `-EINVAL`; Rückstand bis 4096, wie Linux wartet eine Verbindung mehr als angegeben |
 | 42 | `connect` | legt das Gegenende sofort an (Senden vor `accept` geht); volle Warteschlange: blockierend warten, sonst `-EAGAIN`; kein Lauschender, gewöhnliche Datei oder anderer Typ unter abstraktem Namen `-ECONNREFUSED`, anderer Typ unter Pfad `-EPROTOTYPE`, fehlender Pfad `-ENOENT` (auch nach `unlink`), verbunden `-EISCONN`, Länge bis 2 `-EINVAL` |
 | 43, 288 | `accept`, `accept4` | älteste Verbindung; nicht lauschend `-EINVAL`, leer mit `O_NONBLOCK` `-EAGAIN`; Name des Verbindenden (unbenannt: Länge 2); `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `close` des Lauschenden beendet nicht angenommene Verbindungen (EOF beim Verbindenden) |
 | 51, 52 | `getsockname`, `getpeername` | Länge wie Linux (Pfad mit Nullbyte, abstrakt genau, unbenannt 2), gekürzt auf den Puffer; das angenommene Ende trägt den Namen des Lauschenden; `getpeername` unverbunden `-ENOTCONN` |
-| 53 | `socketpair` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` seit V23, verbundenes Paar; Typ außerhalb 1..10 `-EINVAL`, andere `-ESOCKTNOSUPPORT`; Dgram: Nachrichtengrenzen, leere Datagramme, SCM_RIGHTS, kein EOF beim close der Gegenseite, dann Senden `-ECONNREFUSED` (eigenes SHUT_WR zuerst `-EPIPE`), Warteschlange höchstens 10 Nachrichten (max_dgram_qlen, auch leere): voll `-EAGAIN` beziehungsweise blockierend, poll ohne POLLOUT), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
+| 53 | `socketpair` | nur `AF_UNIX` (`AF_INET` `-EOPNOTSUPP` wie Linux, andere `-EAFNOSUPPORT`), `SOCK_STREAM` und `SOCK_SEQPACKET` (`SOCK_DGRAM` seit V23, verbundenes Paar; Typ außerhalb 1..10 `-EINVAL`, andere `-ESOCKTNOSUPPORT`; Dgram: Nachrichtengrenzen, leere Datagramme, SCM_RIGHTS, kein EOF beim close der Gegenseite, dann Senden `-ECONNREFUSED` (eigenes SHUT_WR zuerst `-EPIPE`), Warteschlange höchstens 10 Nachrichten (max_dgram_qlen, auch leere): voll `-EAGAIN` beziehungsweise blockierend, poll ohne POLLOUT), Protokoll 0; `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `-EFAULT` vor dem Anlegen |
 | 46, 44 | `sendmsg`, `sendto` | Puffer je Richtung 212992 Bytes (`wmem_default`); Stream blockierend ganz, mit `O_NONBLOCK`/`MSG_DONTWAIT` so viel wie passt; Seqpacket ganz oder `-EAGAIN`, über 212992 Bytes `-EMSGSIZE`; Stream mit Zieladresse `-EISCONN`; `MSG_OOB` `-EOPNOTSUPP`; nach Ende oder `shutdown` `-EPIPE` mit `SIGPIPE`, außer mit `MSG_NOSIGNAL` (V18) |
 | 47, 45 | `recvmsg`, `recvfrom` | Stream fasst Nachrichten zusammen und endet nach der ersten mit Dateien; Seqpacket eine Nachricht, Rest verworfen mit `MSG_TRUNC` (`MSG_TRUNC` im Aufruf liefert die volle Länge); `MSG_PEEK`, `MSG_WAITALL`, `MSG_DONTWAIT`, `MSG_CMSG_CLOEXEC`; `msg_name` ist der Name des Senders, `msg_namelen` 0 bei unbenanntem Sender |
 | 46/47 | `SCM_RIGHTS` | bis 253 Dateien je Nachricht; die Nachricht hält jede Datei wie eine Nummer (`LinuxOpenFiles` des Laufs), also überlebt sie das `close` des Senders und das Ende eines Kindprozesses; zu kleiner Hilfsdatenpuffer oder volle Tabelle: Rest geschlossen, `MSG_CTRUNC`; `MSG_PEEK` gibt zusätzliche Nummern; `read`/`recvfrom` verwerfen mitgeschickte Dateien; `SCM_CREDENTIALS` angenommen, nicht weitergereicht; andere Typen `-EINVAL` |
@@ -392,6 +392,29 @@ Schreibrecht darauf (Linux verlangt `w`); da alle Prozesse eines Laufs eine UID 
 werden als UTF-8 gelesen: ungültige Bytefolgen werden zu U+FFFD, zwei solche Namen können zusammenfallen. Die Socket-Sperre ist eine Blattsperre (Dateisperre vor Socket-Sperre); Senden und Empfangen warten ohne Dateisperre. Pipes und Sockets warten seit V16 mit dem
 Abbruch des aufrufenden Prozesses (`ILinuxPollable.ReadAs`/`WriteAs`/`WaitPoll`): Vorher lieferte eine Pipe, die ein beendetes vfork-Kind angelegt hatte, den
 Eltern nur noch `-EINTR`.
+
+### AF_INET nur auf Loopback (V27)
+
+Plattformunabhängig in `LinuxUnixSocket.Inet.cs`, `LinuxSyscallsInet.cs` und `LinuxInetPorts.cs` (Hosttests `LinuxInetSocketTests`, Gastprogramm
+`experiments/LinuxAbi/src/s3/tcp_echo.c`, Erwartung Linux 6.12 in `expected/s3/tcp_echo.txt`). Es gibt keine Netzwerkkarte und keinen TCP/IP-Stapel: Ein
+TCP-Socket ist ein Unix-Stream-Socket mit Familie `AF_INET` und Adresse statt Namen (dieselben Kanäle, Puffer, `shutdown`-, `close`- und `poll`/`epoll`-Regeln
+wie oben, ohne `SCM_RIGHTS`); UDP hat einen eigenen Eingang je Socket. Ports gelten je Lauf (alle Prozesse eines Laufs teilen das Loopback-Netz).
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 41 | `socket` | `SOCK_STREAM` (Protokoll 0 oder 6) und `SOCK_DGRAM` (0 oder 17); anderes Protokoll `-EPROTONOSUPPORT`, andere Typen `-ESOCKTNOSUPPORT` |
+| 49 | `bind` | `sockaddr_in` ab 16 Bytes (kürzer `-EINVAL`), Familie `AF_INET` (`AF_UNSPEC` nur mit 0.0.0.0, sonst `-EAFNOSUPPORT`); Adresse 0.0.0.0 oder 127.0.0.0/8, sonst `-EADDRNOTAVAIL`; Port 0 vergibt einen aus 32768..60999; belegt `-EADDRINUSE`, schon gebunden `-EINVAL`; TCP und UDP haben getrennte Ports |
+| 50 | `listen` | ungebunden: automatisch 0.0.0.0 mit kurzlebigem Port; UDP `-EOPNOTSUPP` |
+| 42 | `connect` | TCP: Ziel 0.0.0.0 gilt als 127.0.0.1, nicht lokal `-ENETUNREACH`; ohne Lauschenden blockierend `-ECONNREFUSED`, mit `O_NONBLOCK` `-EINPROGRESS` und danach `SO_ERROR` 111 einmal, `poll` `POLLOUT|POLLERR|POLLHUP`; Erfolg sofort (auch nichtblockierend 0), ungebunden vorher automatischer Port; UDP: setzt die Gegenstelle für `send`/`write`/`getpeername` |
+| 43, 288 | `accept`, `accept4` | wie oben; Name ist die `sockaddr_in` des Verbindenden (Länge 16); das angenommene Ende trägt den Port des Lauschenden, bei 0.0.0.0 die Adresse 127.0.0.1 |
+| 51, 52 | `getsockname`, `getpeername` | `sockaddr_in`, Länge 16, gekürzt auf den Puffer; ungebunden 0.0.0.0:0; unverbunden `getpeername` `-ENOTCONN` |
+| 44, 46 | `sendto`, `sendmsg` | TCP übergeht Zieladresse und Hilfsdaten; UDP: Datagramm bis 65507 Bytes (sonst `-EMSGSIZE`), Zielport 0 `-EINVAL`, ungebunden vorher automatischer Port; ohne Empfänger oder bei vollem Eingang (212992 Bytes) verfällt es still, die Länge zählt; ohne Ziel und Gegenstelle `-EDESTADDRREQ` |
+| 45, 47 | `recvfrom`, `recvmsg` | TCP wie Unix-Stream, `msg_namelen` 0; UDP ein Datagramm, Absender als `sockaddr_in`, Rest verworfen mit `MSG_TRUNC`; `MSG_PEEK`, `MSG_DONTWAIT`; `poll` `POLLIN` mit wartendem Datagramm |
+| 55, 54 | `getsockopt`, `setsockopt` | `SO_REUSEADDR`, `SO_REUSEPORT`, `SO_KEEPALIVE` und `TCP_NODELAY` werden gemerkt und gemeldet (ohne Wirkung), Puffergrößen still angenommen, `SO_TYPE`/`SO_ERROR`/`SO_ACCEPTCONN`/`SO_DOMAIN` (2)/`SO_PROTOCOL` (6, 17) wie oben; `optlen` unter 4 `-EINVAL`; alles andere, auch `IPPROTO_IP`, `-ENOPROTOOPT` |
+
+Grenzen: `SO_REUSEADDR` erlaubt kein zweites `bind` auf einen belegten Port, und es gibt kein `TIME_WAIT` (ein Port ist nach dem `close` sofort frei). Die
+Adresse gehört nicht zum Portschlüssel: 127.0.0.1:P und 127.0.0.2:P schließen sich aus. Ein verbundenes UDP-Socket erfährt nichts von einem fehlenden
+Empfänger (Linux: `ECONNREFUSED` nach ICMP). Kein `SO_LINGER`, `SO_RCVTIMEO`, `TCP_KEEPIDLE`, kein Urgent-Datum; kein `AF_INET6`.
 
 ## Geteilter Speicher (V17)
 

@@ -224,7 +224,8 @@ public sealed class LinuxUnixSocketTests
     public void SocketpairPrueftDomaeneTypUndFlags()
     {
         var f = new Fixture();
-        Assert.AreEqual(-EAFNOSUPPORT, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 2, Stream, 0, f.Pair));
+        Assert.AreEqual(-EAFNOSUPPORT, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 10 /* AF_INET6 */, Stream, 0, f.Pair));
+        Assert.AreEqual(-95 /* EOPNOTSUPP */, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 2 /* AF_INET */, Stream, 0, f.Pair));
         Assert.AreEqual(-ESOCKTNOSUPPORT, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 1, 3 /* SOCK_RAW */, 0, f.Pair));
         Assert.AreEqual(-EFAULT, Fixture.Call(f.Parent, LinuxSyscalls.Socketpair, 1, Stream, 0, 8));
         var (a, b) = f.SocketPair(Stream | SockNonblock | SockCloexec);

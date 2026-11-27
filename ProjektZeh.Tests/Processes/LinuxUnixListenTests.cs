@@ -137,7 +137,7 @@ public sealed class LinuxUnixListenTests
     [TestMethod]
     public void SocketPrueftFamilieTypUndFlags()
     {
-        Assert.AreEqual(-EAFNOSUPPORT, Call(LinuxSyscalls.Socket, 2, Stream, 0));
+        Assert.AreEqual(-EAFNOSUPPORT, Call(LinuxSyscalls.Socket, 10 /* AF_INET6 */, Stream, 0)); // AF_INET seit V27 (LinuxInetSocketTests)
         Assert.AreEqual(-ESOCKTNOSUPPORT, Call(LinuxSyscalls.Socket, 1, Dgram, 0));
         Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Socket, 1, Stream | 0x40, 0), "unbekanntes Flag");
         int s = Sock(Stream | SockCloexec | SockNonblock);

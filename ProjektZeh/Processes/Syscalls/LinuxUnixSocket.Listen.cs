@@ -106,7 +106,8 @@ internal sealed partial class LinuxUnixSocket
         {
             // _connecting unter _nameGate lesen: ConnectTo reserviert unter derselben Sperre, sonst könnte ein paralleles connect
             // zwischen Prüfung und _listening = true durchrutschen (Socket wäre dann lauschend und verbunden).
-            if (_connecting != 0 || _name.IsUnnamed || Volatile.Read(ref _closed) != 0)
+            // V27: AF_INET braucht einen Port statt eines Namens (der Verteiler bindet vorher automatisch wie inet_listen).
+            if (_connecting != 0 || (IsInet ? _inetPort == 0 : _name.IsUnnamed) || Volatile.Read(ref _closed) != 0)
             {
                 return -EINVAL;
             }
@@ -194,6 +195,11 @@ internal sealed partial class LinuxUnixSocket
 
             var server = new LinuxUnixSocket(Type, false, CreatorPid);
             server._name = _name; // das angenommene Ende meldet den Namen des Lauschenden (getsockname, getpeername der Gegenseite)
+            if (IsInet)
+            {
+                server.CopyInetFrom(this); // V27: gleicher Port, Adresse 127.0.0.1 bei einem Lauschenden auf 0.0.0.0
+            }
+
             server._bound = true; // Linux: bind auf ein angenommenes Ende -EINVAL (unix_bind: schon ein Name), wie auf ein gebundenes
             server._connecting = 1; // verbunden: listen -EINVAL, connect -EISCONN
             Connect(client, server);

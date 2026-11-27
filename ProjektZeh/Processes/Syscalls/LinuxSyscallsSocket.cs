@@ -39,11 +39,11 @@ internal static partial class LinuxSyscalls
             case Socketpair: return DoSocketpair(p, f, (int)a.A0, (int)a.A1, (int)a.A2, a.A3);
             case Sendmsg: return DoSendmsg(p, f, (int)a.A0, a.A1, (int)a.A2);
             case Recvmsg: return DoRecvmsg(p, f, (int)a.A0, a.A1, (int)a.A2);
-            case Sendto: return DoSendto(p, (int)a.A0, a.A1, a.A2, (int)a.A3, a.A4);
+            case Sendto: return DoSendto(p, (int)a.A0, a.A1, a.A2, (int)a.A3, a.A4, a.A5);
             case Recvfrom: return DoRecvfrom(p, (int)a.A0, a.A1, a.A2, (int)a.A3, a.A4, a.A5);
             case Shutdown: return DoShutdown(p, (int)a.A0, (int)a.A1);
             case Getsockopt: return DoGetsockopt(p, (int)a.A0, (int)a.A1, (int)a.A2, a.A3, a.A4);
-            case Setsockopt: return DoSetsockopt(p, (int)a.A0, (int)a.A1, (int)a.A2);
+            case Setsockopt: return DoSetsockopt(p, (int)a.A0, (int)a.A1, (int)a.A2, a.A3, a.A4);
             case Socket: return DoSocket(p, f, (int)a.A0, (int)a.A1, (int)a.A2);
             case Bind: return DoBind(p, f, (int)a.A0, a.A1, (uint)a.A2);
             case Listen: return DoListen(p, (int)a.A0, (int)a.A1);
@@ -67,6 +67,11 @@ internal static partial class LinuxSyscalls
     private static long DoSocketpair(ILinuxProcess p, ILinuxFiles f, int domain, int type, int protocol, ulong svPtr)
     {
         int kind = type & ~(SockNonblock | SockCloexec);
+        if (domain == AfInet)
+        {
+            return -SockErr.EOPNOTSUPP; // V27: inet_create kennt kein socketpair (sock_no_socketpair)
+        }
+
         if (domain != AfUnix)
         {
             return -SockErr.EAFNOSUPPORT;
@@ -323,8 +328,8 @@ internal static partial class LinuxSyscalls
             return -SockErr.EOPNOTSUPP;
         }
 
-        // Stream mit Zieladresse: verbunden -EISCONN, sonst -EOPNOTSUPP (wie unix_stream_sendmsg); Seqpacket übergeht sie.
-        if (s.Type == LinuxUnixSocket.SockStream && BitConverter.ToUInt32(h, MsgNamelenAt) != 0)
+        // Stream mit Zieladresse: verbunden -EISCONN, sonst -EOPNOTSUPP (wie unix_stream_sendmsg); Seqpacket übergeht sie, TCP auch (V27).
+        if (!s.IsInet && s.Type == LinuxUnixSocket.SockStream && BitConverter.ToUInt32(h, MsgNamelenAt) != 0)
         {
             return s.IsConnected ? -SockErr.EISCONN : -SockErr.EOPNOTSUPP;
         }
@@ -335,7 +340,21 @@ internal static partial class LinuxSyscalls
             return r;
         }
 
-        r = ReadRights(p, f, BitConverter.ToUInt64(h, MsgControlAt), BitConverter.ToUInt64(h, MsgControllenAt), out LinuxSocketFds? fds);
+        if (s.IsInetDgram)
+        {
+            if (total > LinuxUnixSocket.MaxDatagram)
+            {
+                return -SockErr.EMSGSIZE;
+            }
+
+            byte[] dgram = new byte[(int)total];
+            return !GatherIov(p, bases, lens, 0, dgram) ? -SockErr.EFAULT
+                : SendDatagramInet(p, s, dgram, BitConverter.ToUInt64(h, 0), BitConverter.ToUInt32(h, MsgNamelenAt));
+        }
+
+        // V27: AF_INET trägt keine Dateien; Hilfsdaten auf SOL_SOCKET übergeht TCP wie Linux (tcp_sendmsg wertet sie nicht aus).
+        LinuxSocketFds? fds = null;
+        r = s.IsInet ? 0 : ReadRights(p, f, BitConverter.ToUInt64(h, MsgControlAt), BitConverter.ToUInt64(h, MsgControllenAt), out fds);
         if (r < 0)
         {
             return r;
@@ -434,6 +453,11 @@ internal static partial class LinuxSyscalls
             }
         }
 
+        if (s.IsInetDgram)
+        {
+            return RecvmsgInetDgram(p, s, msgPtr, h, flags, bases, lens, total);
+        }
+
         ulong control = BitConverter.ToUInt64(h, MsgControlAt);
         ulong controlLen = control == 0 ? 0 : BitConverter.ToUInt64(h, MsgControllenAt);
         bool peek = (flags & MsgPeek) != 0;
@@ -470,9 +494,13 @@ internal static partial class LinuxSyscalls
             }
         }
 
-        // msg_namelen: Name des Senders (unix_copy_addr), 0 bei unbenanntem Sender wie nach socketpair.
+        // msg_namelen: Name des Senders (unix_copy_addr), 0 bei unbenanntem Sender wie nach socketpair; TCP meldet keinen (V27).
         ulong namePtr = BitConverter.ToUInt64(h, 0);
-        if (namePtr != 0)
+        if (namePtr != 0 && s.IsInet)
+        {
+            BitConverter.TryWriteBytes(h.AsSpan(MsgNamelenAt, 4), 0);
+        }
+        else if (namePtr != 0)
         {
             long nl = WriteSenderName(p, s, namePtr, BitConverter.ToInt32(h, MsgNamelenAt));
             if (nl < 0)
@@ -563,7 +591,7 @@ internal static partial class LinuxSyscalls
         return 0;
     }
 
-    private static long DoSendto(ILinuxProcess p, int fd, ulong buf, ulong len, int flags, ulong addr)
+    private static long DoSendto(ILinuxProcess p, int fd, ulong buf, ulong len, int flags, ulong addr, ulong addrLen)
     {
         LinuxUnixSocket? s = SocketOf(p, fd, out long error);
         if (s is null)
@@ -576,7 +604,13 @@ internal static partial class LinuxSyscalls
             return -SockErr.EOPNOTSUPP;
         }
 
-        if (addr != 0 && s.Type == LinuxUnixSocket.SockStream)
+        if (s.IsInetDgram)
+        {
+            return DoSendtoInetDgram(p, s, buf, len, addr, addrLen);
+        }
+
+        // TCP übergeht die Zieladresse (V27); Unix-Stream lehnt sie ab.
+        if (addr != 0 && s.Type == LinuxUnixSocket.SockStream && !s.IsInet)
         {
             return s.IsConnected ? -SockErr.EISCONN : -SockErr.EOPNOTSUPP;
         }
@@ -596,6 +630,11 @@ internal static partial class LinuxSyscalls
         if ((flags & MsgOob) != 0)
         {
             return -SockErr.EOPNOTSUPP;
+        }
+
+        if (s.IsInetDgram)
+        {
+            return DoRecvfromInetDgram(p, s, buf, len, flags, addr, addrLenPtr);
         }
 
         int n = (int)Math.Min(len, (ulong)LinuxUnixSocket.Capacity);
@@ -671,13 +710,43 @@ internal static partial class LinuxSyscalls
             return -SockErr.EINVAL;
         }
 
-        if (level != SolSocket)
+        Span<byte> v = stackalloc byte[12];
+        int size = 4;
+        if (s.IsInet)
+        {
+            long o = InetOption(s, level, name, v);
+            if (o < 0)
+            {
+                return o;
+            }
+
+            size = (int)o;
+        }
+        else if (level != SolSocket)
         {
             return -SockErr.EOPNOTSUPP; // Unix-Sockets haben keine Optionen eigener Ebene
         }
+        else
+        {
+            long o = UnixOption(p, s, name, v, ref size);
+            if (o < 0)
+            {
+                return o;
+            }
+        }
 
-        Span<byte> v = stackalloc byte[12];
-        int size = 4;
+        int n = Math.Min(len, size);
+        if ((n > 0 && !p.Memory.TryWrite(val, v.Slice(0, n))) || !p.Memory.TryWrite(lenPtr, BitConverter.GetBytes(n)))
+        {
+            return -SockErr.EFAULT;
+        }
+
+        return 0;
+    }
+
+    /// <summary>getsockopt SOL_SOCKET eines Unix-Sockets nach <paramref name="v"/>; <paramref name="size"/> wird bei SO_PEERCRED 12.</summary>
+    private static long UnixOption(ILinuxProcess p, LinuxUnixSocket s, int name, Span<byte> v, ref int size)
+    {
         switch (name)
         {
             case SoType: BitConverter.TryWriteBytes(v, s.Type); break;
@@ -704,22 +773,21 @@ internal static partial class LinuxSyscalls
                 return -SockErr.ENOPROTOOPT;
         }
 
-        int n = Math.Min(len, size);
-        if ((n > 0 && !p.Memory.TryWrite(val, v.Slice(0, n))) || !p.Memory.TryWrite(lenPtr, BitConverter.GetBytes(n)))
-        {
-            return -SockErr.EFAULT;
-        }
-
         return 0;
     }
 
     /// <summary>Puffergrößen und SO_PASSCRED/SO_PASSSEC still annehmen (Puffer sind fest); alles andere -ENOPROTOOPT statt einer stillen Abweichung.</summary>
-    private static long DoSetsockopt(ILinuxProcess p, int fd, int level, int name)
+    private static long DoSetsockopt(ILinuxProcess p, int fd, int level, int name, ulong val, ulong len)
     {
         LinuxUnixSocket? s = SocketOf(p, fd, out long error);
         if (s is null)
         {
             return error;
+        }
+
+        if (s.IsInet)
+        {
+            return DoSetsockoptInet(p, s, level, name, val, len);
         }
 
         if (level != SolSocket)
