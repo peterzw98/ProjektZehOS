@@ -178,6 +178,9 @@ internal static unsafe class CosmosLinuxRun
         public bool Fault;
         public ulong FaultVector;
         public int FaultSignal; // V30-P3: wie Running.FaultSignal
+
+        /// <summary>V38: Fehlercode, Adresse (CR2) und RIP der Ausnahme; im Handler nur gespeichert, gemeldet nach dem Verlassen des Ring 3.</summary>
+        public ulong FaultError, FaultAddress, FaultRip;
     }
 
     /// <summary>Ergebnis eines Laufs: Status wie bei run-linux.py (<c>exit n</c>, <c>signal n</c>) oder ein Fehlertext.</summary>
@@ -891,6 +894,7 @@ internal static unsafe class CosmosLinuxRun
             UserMode.Enter(b.EntryRip, b.Start.Rsp);
             if (b.Fault && !ReferenceEquals(process, run.Process))
             {
+                ReportFault(process, b);
                 process.RecordFault(b.FaultSignal);
             }
 
@@ -1359,6 +1363,7 @@ internal static unsafe class CosmosLinuxRun
                 UserMode.Enter(entry, stack);
                 if (b.Fault)
                 {
+                    ReportFault(b.Process, b);
                     b.Process.RecordFault(b.FaultSignal);
                 }
             }
@@ -1455,6 +1460,9 @@ internal static unsafe class CosmosLinuxRun
         me.Fault = true;
         me.FaultVector = vector;
         me.FaultSignal = signal;
+        me.FaultError = error;
+        me.FaultAddress = address;
+        me.FaultRip = frame->Rip;
         if (!ReferenceEquals(me.Process, run.Process) && !me.Process.InVfork)
         {
             return 0;
@@ -1488,6 +1496,26 @@ internal static unsafe class CosmosLinuxRun
 
         FromRegs(frame, regs);
         return true;
+    }
+
+    /// <summary>
+    /// V38: Eine Ausnahme ohne Handler beendet einen Kindprozess sonst still (nur der Wartestatus des Elternprozesses trägt das Signal).
+    /// Eine Zeile ins serielle Protokoll mit Prozess, Thread, Vektor, Fehlercode, Adresse und RIP samt Ort (Bibliothek+Versatz). Läuft im
+    /// Threadkontext nach dem Verlassen des Ring 3 (OnFault darf weder allokieren noch protokollieren); der Adressraum lebt noch, denn er
+    /// wird erst nach dem letzten Thread des Prozesses freigegeben. Der Hauptprozess des Laufs meldet seine Ausnahme schon über Describe.
+    /// </summary>
+    private static void ReportFault(LinuxUserProcess process, Bridge b)
+    {
+        try
+        {
+            Serial("LINUXRUN FAULT pid " + process.Pid + " tid " + b.Linux.Tid + " " + process.ExePath + " signal " + b.FaultSignal
+                + " Ausnahme " + b.FaultVector + " Fehlercode 0x" + b.FaultError.ToString("x") + " Adresse 0x" + b.FaultAddress.ToString("x")
+                + " (" + process.DescribeAddress(b.FaultAddress) + ") RIP 0x" + b.FaultRip.ToString("x") + " (" + process.DescribeAddress(b.FaultRip) + ")");
+        }
+        catch (Exception)
+        {
+            // Nur Diagnose: Ein Fehler beim Beschreiben darf das Prozessende nicht verhindern.
+        }
     }
 
     private static readonly CosmosLinuxHost Host = new();

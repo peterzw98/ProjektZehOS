@@ -1022,6 +1022,29 @@ public sealed class LinuxUserProcessTests
         Assert.AreEqual(0L, shared.ReleaseChecked());
     }
 
+    [TestMethod]
+    public void AdresseBeschreibenNenntDateiVersatzOderBereich()
+    {
+        // V38: Für die Serial-Zeile einer Ausnahme ohne Handler: Datei mit Dateioffset und Versatz ab der Abbildung mit Offset 0, ein Ausschnitt
+        // ab Offset 0x1000 an anderer Stelle nennt nur den Dateioffset, anonymer Speicher seinen Bereich, Unbelegtes "ungemappt".
+        var (process, _) = StartWithFile(3 * (int)Page);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        long at = Sys(process, LinuxSyscalls.Mmap, 0, 3 * Page, ProtR, MapPrivateFlag, (ulong)fd, 0);
+        Assert.IsTrue(at > 0, "mmap " + at);
+        ulong b = (ulong)at;
+        Assert.AreEqual("/icu.dat Dateioffset 0x1010 Basis 0x" + b.ToString("x", System.Globalization.CultureInfo.InvariantCulture) + "+0x1010", process.DescribeAddress(b + Page + 0x10));
+
+        ulong anon = (ulong)Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtRW, MapAnon, ulong.MaxValue, 0);
+        string anonText = process.DescribeAddress(anon + 8);
+        StringAssert.StartsWith(anonText, "anon 0x"); // Nachbarn gleicher Rechte verschmelzen, die Grenzen hängen vom Aufbau ab
+        StringAssert.EndsWith(anonText, " rw-");
+        Assert.AreEqual("ungemappt", process.DescribeAddress(0x7000_0000_0000));
+
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Munmap, b, Page), "Abbildung mit Offset 0 weg");
+        Assert.AreEqual("/icu.dat Dateioffset 0x2004", process.DescribeAddress(b + (2 * Page) + 4));
+        process.Destroy();
+    }
+
     private sealed class FailingSource : ILinuxPageSource
     {
         public int Refs { get; private set; } = 1;

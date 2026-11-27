@@ -52,10 +52,14 @@ internal sealed class LinuxSharedStoreFile : ILinuxPageSource
     private readonly ILinuxStoreFile _file;
     private int _refs = 1;
 
-    public LinuxSharedStoreFile(ILinuxStoreFile file)
+    public LinuxSharedStoreFile(ILinuxStoreFile file, string? path = null)
     {
         _file = file ?? throw new ArgumentNullException(nameof(file));
+        Path = path;
     }
+
+    /// <summary>V38: Pfad beim Öffnen (nur Diagnose: Ausnahme im Ring 3 als Bibliothek+Versatz), null, wenn unbekannt.</summary>
+    public string? Path { get; }
 
     /// <summary>Anzahl der Verweise (für Tests).</summary>
     public int References => Volatile.Read(ref _refs);
@@ -184,6 +188,42 @@ internal sealed class LinuxFileExtents
     {
         Span<byte> one = stackalloc byte[1];
         return source.ReadAt(Math.Max(0, pageOffset), one) <= 0;
+    }
+
+    /// <summary>
+    /// V38: Quelle und Dateioffset für <paramref name="address"/> (Diagnose einer Ausnahme im Ring 3). <paramref name="loadBase"/> ist der
+    /// Beginn des Ausschnitts derselben Quelle mit Dateioffset 0 (Ladeadresse einer Bibliothek, die ld-musl ab Offset 0 abbildet), sonst 0.
+    /// Liest nur die Buchführung; Sperren hält der Aufrufer (<c>_memGate</c>).
+    /// </summary>
+    public bool TryLocate(ulong address, out ILinuxPageSource? source, out long fileOffset, out ulong loadBase)
+    {
+        source = null;
+        fileOffset = 0;
+        loadBase = 0;
+        foreach (Extent e in _extents)
+        {
+            if (e.Start <= address && address < e.End)
+            {
+                source = e.Source;
+                fileOffset = e.Offset + (long)(address - e.Start);
+                break;
+            }
+        }
+
+        if (source == null)
+        {
+            return false;
+        }
+
+        foreach (Extent e in _extents)
+        {
+            if (ReferenceEquals(e.Source, source) && e.Offset == 0 && (loadBase == 0 || e.Start < loadBase))
+            {
+                loadBase = e.Start;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Entfernt [start, end) aus allen Ausschnitten; Randstücke bleiben mit eigenem Verweis.</summary>
