@@ -82,7 +82,7 @@ internal sealed partial class LinuxUnixSocket : ILinuxPollable, ILinuxInput, ILi
     /// Verwaltungsaufschlag je Nachricht gegen <see cref="Capacity"/> (P2-2). Linux belastet den Sendepuffer mit der truesize des sk_buff
     /// (Nutzbytes plus Kopf und Struktur, mindestens rund 768 Byte, SKB_TRUESIZE); wir rechnen 512 Byte: etwa so viel wie der Kopf eines
     /// kleinen sk_buff ohne Daten und mehr als unser Record samt Array (rund 100 Byte). Damit nehmen 1-Byte-Nachrichten nur noch
-    /// 416 statt 212992 an (Heap höchstens rund 40 KiB je Richtung statt 19 MiB). Gilt für Stream, Seqpacket und Datagramme.
+    /// 415 statt 212992 an (513 Byte je Nachricht; Heap höchstens rund 40 KiB je Richtung statt 19 MiB). Gilt für Stream, Seqpacket und Datagramme.
     /// </summary>
     public const int MessageOverhead = 512;
 
