@@ -18,6 +18,11 @@ internal sealed class AddressSpaceMap
 {
     public const ulong PageSize = 4096;
 
+    /// <summary>V48: Obergrenze der Bereiche wie Linux vm.max_map_count; darüber scheitert mmap mit ENOMEM statt den Kernelspeicher zu füllen.</summary>
+    public const int MaxRegions = 65530;
+
+    private const string TooMany = "Zu viele Abbildungen (vm.max_map_count).";
+
     private readonly record struct Region(ulong Start, ulong End, MapAccess Access);
 
     private readonly ulong _start;
@@ -65,8 +70,9 @@ internal sealed class AddressSpaceMap
             ulong from = Math.Clamp(hint, _start, _end);
             if (TryFindFree(from, _end, length, out ulong found) || TryFindFree(_start, _end, length, out found))
             {
-                Insert(found, found + length, access);
-                return ResultObjectFactory.CreateSuccess(found);
+                return ApplyWithinLimit(Change.Insert, found, found + length, access)
+                    ? ResultObjectFactory.CreateSuccess(found)
+                    : ResultObjectFactory.CreateFailure<ulong>(ResultCode.Failure, TooMany);
             }
 
             return ResultObjectFactory.CreateFailure<ulong>(ResultCode.Failure, "Kein freier Platz im Adressraum.");
@@ -78,9 +84,9 @@ internal sealed class AddressSpaceMap
             return ResultObjectFactory.CreateFailure<ulong>(ResultCode.Failure, "Der Bereich ist bereits belegt.");
         }
 
-        Cut(hint, endAddress);
-        Insert(hint, endAddress, access);
-        return ResultObjectFactory.CreateSuccess(hint);
+        return ApplyWithinLimit(Change.Replace, hint, endAddress, access)
+            ? ResultObjectFactory.CreateSuccess(hint)
+            : ResultObjectFactory.CreateFailure<ulong>(ResultCode.Failure, TooMany);
     }
 
     /// <summary>Gibt den Bereich frei; belegte Bereiche werden geteilt, Lücken sind erlaubt.</summary>
@@ -92,12 +98,18 @@ internal sealed class AddressSpaceMap
             return check;
         }
 
-        Cut(address, address + length);
-        return ResultErr.CreateSuccess();
+        // V48-Review: Teilt die Freigabe einen Bereich in der Mitte, wächst die Liste (+1) und darf die Grenze nicht umgehen (Linux: ENOMEM).
+        return ApplyWithinLimit(Change.Cut, address, address + length, MapAccess.None) ? ResultErr.CreateSuccess() : ResultErr.CreateFailure(ResultCode.Failure, TooMany);
     }
 
     /// <summary>Ändert den Zugriff; eine Lücke im Bereich ist ein Fehler, dann bleibt alles unverändert.</summary>
-    public ResultErr Protect(ulong address, ulong length, MapAccess access)
+    public ResultErr Protect(ulong address, ulong length, MapAccess access) => Protect(address, length, access, enforceLimit: true);
+
+    /// <summary>
+    /// Mit <paramref name="enforceLimit"/> false ohne Grenzprüfung: nur für das Zurücksetzen einer Seite auf ihren früheren Zugriff, das nicht scheitern darf
+    /// (die Liste kann dabei kurz über <see cref="MaxRegions"/> liegen, jede weitere wachsende Abbildung scheitert dann).
+    /// </summary>
+    public ResultErr Protect(ulong address, ulong length, MapAccess access, bool enforceLimit)
     {
         ResultErr check = ValidateRange(address, length, true);
         if (!check.IsOK())
@@ -111,9 +123,13 @@ internal sealed class AddressSpaceMap
             return ResultErr.CreateFailure(ResultCode.NotFound, "Der Bereich enthält unbelegte Adressen.");
         }
 
-        Cut(address, endAddress);
-        Insert(address, endAddress, access);
-        return ResultErr.CreateSuccess();
+        if (!enforceLimit)
+        {
+            Apply(Change.Replace, address, endAddress, access);
+            return ResultErr.CreateSuccess();
+        }
+
+        return ApplyWithinLimit(Change.Replace, address, endAddress, access) ? ResultErr.CreateSuccess() : ResultErr.CreateFailure(ResultCode.Failure, TooMany);
     }
 
     /// <summary>true, wenn [address, address+length) lückenlos belegt ist (gleich mit welchem Zugriff); ungültige Bereiche sind false.</summary>
@@ -251,6 +267,45 @@ internal sealed class AddressSpaceMap
 
             candidate = Math.Max(candidate, _regions[i].End);
         }
+    }
+
+    private enum Change { Insert, Replace, Cut }
+
+    // Keine Closures: mmap/munmap sind heiße Wege, ein Delegat je Aufruf belastet den GC.
+    private void Apply(Change change, ulong from, ulong to, MapAccess access)
+    {
+        if (change != Change.Insert)
+        {
+            Cut(from, to);
+        }
+
+        if (change != Change.Cut)
+        {
+            Insert(from, to, access);
+        }
+    }
+
+    // Führt eine Änderung nur aus, wenn die Liste danach höchstens MaxRegions Bereiche hat oder nicht gewachsen ist. Eine Änderung
+    // wächst um höchstens 2 (Teilung je Rand +1, Verschmelzung und Ersatz verkleinern); darunter genügt die Vorabprüfung, nahe der
+    // Grenze rechnet ein Probelauf den Zuwachs genau aus und stellt bei Überschreitung den alten Stand wieder her.
+    private bool ApplyWithinLimit(Change change, ulong from, ulong to, MapAccess access)
+    {
+        if (_regions.Count + 2 <= MaxRegions)
+        {
+            Apply(change, from, to, access);
+            return true;
+        }
+
+        Region[] backup = _regions.ToArray();
+        Apply(change, from, to, access);
+        if (_regions.Count <= Math.Max(MaxRegions, backup.Length))
+        {
+            return true;
+        }
+
+        _regions.Clear();
+        _regions.AddRange(backup);
+        return false;
     }
 
     // Entfernt [from, to) aus allen Regionen; Randstücke bleiben erhalten.
