@@ -344,7 +344,8 @@ public sealed class Kernel : Sys.Kernel
             if (placement == ThreadPlacement.Workers) ThreadAffinity.Current = CosmosBootOptions.WorkerCpus;
         };
 #endif
-        scheduler = new CosmosClassScheduler(topology);
+        // #727: VMware stellt Timer-Ticks rechnender CPUs verspaetet zu; nur dort stossen CPUs einander an.
+        scheduler = new CosmosClassScheduler(topology, nudgeStalledTicks: CosmosVmwareClock.TryRead(out _, out _));
 #if ZEHOS_SMP_PROBE
         CosmosSmpProbe.Topology = topology;
 #endif
@@ -687,7 +688,8 @@ public sealed class Kernel : Sys.Kernel
         Cosmos.Kernel.Core.Scheduler.SchedulerManager.SetScheduler(scheduler);
         // Etappe 5: die Hauptschleife ist ein normaler Thread und hat Vorrang vor Normal und Hintergrund.
         ThreadStarter.ApplyClass(ThreadClass.Interactive);
-        systemLog.Information("Scheduler", $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns");
+        systemLog.Information("Scheduler", $"{scheduler.Name}; Tick={CosmosClassScheduler.TickNs}ns" +
+            (scheduler.NudgesStalledTicks ? "; Anstoss ohne Tick (VMware)" : ""));
     }
 #pragma warning restore COSMOS0001
 
