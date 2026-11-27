@@ -110,7 +110,8 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         _host = host;
         _pages = pages ?? throw new ArgumentNullException(nameof(pages));
         _terminal = terminal ?? throw new ArgumentNullException(nameof(terminal));
-        FileSystem = fileSystem ?? new LinuxFileSystem(new MemoryFileStore(), terminal);
+        // V34: Eigentümer wie die Standard-Benutzernummer des Laders (ElfLoader.Options.Uid/Gid), damit stat und getuid übereinstimmen.
+        FileSystem = fileSystem ?? new LinuxFileSystem(new MemoryFileStore(), terminal, uid: 1000, gid: 1000);
 
         // 0 bis 2 zeigen auf das Terminal wie bisher; das Terminal gehört dem Prozess, nicht der Tabelle (close schließt es nicht).
         _descriptors[0] = terminal;

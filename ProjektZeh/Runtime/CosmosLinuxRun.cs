@@ -625,7 +625,8 @@ internal static unsafe class CosmosLinuxRun
                 return;
             }
 
-            fileSystem = new LinuxFileSystem(store.Value!, run.Terminal);
+            // V34: Eigentümer der Dateien = Benutzer des Prozesses (AT_UID/getuid); sonst meldet stat 0, und Ladybird lehnt sein Crash-Verzeichnis ab.
+            fileSystem = new LinuxFileSystem(store.Value!, run.Terminal, uid: (uint)image.Uid, gid: (uint)image.Gid);
         }
 
         UserPageTable? table = UserPageTable.TryCreate();
