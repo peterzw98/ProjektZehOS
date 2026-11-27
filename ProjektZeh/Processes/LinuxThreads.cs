@@ -109,8 +109,14 @@ internal sealed class LinuxFutexTable
     /// FUTEX_WAIT(_BITSET): schläft, solange der Wert an <paramref name="address"/> <paramref name="expected"/> ist und niemand weckt.
     /// 0 nach Wecken, -EAGAIN bei anderem Wert, -EFAULT, -ETIMEDOUT nach <paramref name="deadlineNanos"/> (monoton, negativ = keine
     /// Frist), -EINTR nach <see cref="Abort"/>.
+    /// <para>
+    /// V21, <paramref name="shared"/> (futex ohne FUTEX_PRIVATE_FLAG): Die Tabelle gehört einem Prozess; ein Wecken aus einem anderen Prozess
+    /// über MAP_SHARED (nach fork) erreicht sie nicht. Abkürzung (shortcut) statt einer laufweiten Tabelle nach Datei und Versatz: Der
+    /// Wartende liest den Wert nach jeder Scheibe neu und kehrt mit 0 zurück, sobald er sich geändert hat (ein frühes Aufwachen erlaubt futex,
+    /// Aufrufer prüfen in einer Schleife). Ein Wecken ohne Wertänderung über Prozesse geht verloren; die Verzögerung ist höchstens eine Scheibe.
+    /// </para>
     /// </summary>
-    public long Wait(IUserMemory memory, ulong address, int expected, uint bitset, long deadlineNanos)
+    public long Wait(IUserMemory memory, ulong address, int expected, uint bitset, long deadlineNanos, bool shared = false)
     {
         Span<byte> w = stackalloc byte[4];
         var me = new Waiter { Address = address, Bitset = bitset };
@@ -154,6 +160,10 @@ internal sealed class LinuxFutexTable
                     }
 
                     Monitor.Wait(_gate, slice);
+                    if (shared && !me.Woken && (!memory.TryRead(address, w) || BitConverter.ToInt32(w) != expected))
+                    {
+                        return 0;
+                    }
                 }
 
                 return 0;

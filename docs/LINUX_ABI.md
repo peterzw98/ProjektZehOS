@@ -268,7 +268,7 @@ Plattformunabhängig in `ProjektZeh/Processes/LinuxThreads.cs` und `LinuxUserPro
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
-| 56 | `clone` | nur Threads: `CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM` müssen alle gesetzt sein, dazu erlaubt `SETTLS`, `PARENT_SETTID`, `CHILD_SETTID`, `CHILD_CLEARTID`, `DETACHED`, Signalbyte (ignoriert wie bei Linux); `THREAD` ohne `SIGHAND` oder `SIGHAND` ohne `VM` `-EINVAL`; `CLONE_VM|CLONE_VFORK` mit Austrittssignal ist ein vfork-Kind (V15, unten), fork und andere Kombinationen und unbekannte Bits `-ENOSYS`; über 64 Threads oder nach `exit_group` `-EAGAIN`. Stack 0 heißt Stack des Elternthreads. TIDs ab PID+1, frei werdende TIDs beendeter Threads nach dem Umlauf bei 2^22 wieder ab 1 (PID und laufende übersprungen) |
+| 56 | `clone` | nur Threads: `CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM` müssen alle gesetzt sein, dazu erlaubt `SETTLS`, `PARENT_SETTID`, `CHILD_SETTID`, `CHILD_CLEARTID`, `DETACHED`, Signalbyte (ignoriert wie bei Linux); `THREAD` ohne `SIGHAND` oder `SIGHAND` ohne `VM` `-EINVAL`; `CLONE_VM|CLONE_VFORK` mit Austrittssignal ist ein vfork-Kind (V15, unten), ohne `CLONE_VM` ein fork-Kind (V21, unten), andere Kombinationen und unbekannte Bits `-ENOSYS`; über 64 Threads oder nach `exit_group` `-EAGAIN`. Stack 0 heißt Stack des Elternthreads. TIDs ab PID+1, frei werdende TIDs beendeter Threads nach dem Umlauf bei 2^22 wieder ab 1 (PID und laufende übersprungen) |
 | 435 | `clone3` | `-ENOSYS` (glibc fällt auf `clone` zurück) |
 | 60 | `exit` | beendet nur den Thread: `clear_child_tid` wird 0 und ein Wartender geweckt (pthread_join); der letzte Thread beendet den Prozess mit seinem Code |
 | 231 | `exit_group` | beendet alle Threads; futex-Wartende und Schlafende kehren mit `-EINTR` zurück, ein Lesen auf fd 0 bekommt Dateiende, dann verlassen alle den Ring 3. `clear_child_tid` der übrigen Threads bleibt ungeschrieben: Linux schreibt es nur, solange ein anderer den Adressraum nutzt, und das kann ohne zweiten Prozess, gemeinsamen Speicher oder ptrace niemand sehen |
@@ -341,7 +341,7 @@ Benutzerspeicher noch eine andere Sperre. `read` auf dem Leseende prüft den Puf
 Plattformunabhängig in `ProjektZeh/Processes/LinuxSpawn.cs`, `LinuxWait.cs`, `LinuxOpenFiles.cs`, `Syscalls/LinuxSyscallsSpawn.cs` und `LinuxSyscallsWait.cs`
 (Hosttests `LinuxSpawnTests`, `LinuxProcessWaitTests`; Gastprogramme `experiments/LinuxAbi/src/v15/spawn.c` und `wait.c`, Erwartung Linux 6.12 in
 `expected/v15`). Anlass: Ladybird startet WebContent und die Helfer mit `posix_spawn`; musl ruft dafür `clone(CLONE_VM|CLONE_VFORK|SIGCHLD)` und im Kind
-`execve`. Es gibt kein `fork` mit eigenem Speicher.
+`execve`. `fork` mit eigenem Speicher kam mit V21 (unten).
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
@@ -413,7 +413,7 @@ oder Prozessende. Sperren: Speichersperre des Prozesses vor der Sperre der memfd
 
 Grenzen: Schrumpft `ftruncate` eine abgebildete Datei, behalten schon abgebildete Seiten ihren alten Frame (Linux entfernt sie, der nächste Zugriff gibt
 `SIGBUS`). `mremap` vergrößert
-geteilte Abbildungen nicht (wie alle, V9). Geteilte Frames zählen bei jedem abbildenden Prozess gegen seine Speichergrenze. Kein `fork` (Kopie beim Schreiben).
+geteilte Abbildungen nicht (wie alle, V9). Geteilte Frames zählen bei jedem abbildenden Prozess gegen seine Speichergrenze. `fork` (V21) erbt geteilte Bereiche als geteilt.
 
 ## V18 Signalzustellung (Ladybird: LibCore setzt Handler für SIGCHLD, SIGINT, SIGPIPE)
 
@@ -464,7 +464,7 @@ ppoll, setzt im Helferkind `PR_SET_PDEATHSIG` und schließt vor `execve` mit `cl
 Grenzen: Die Wartemaske gilt wie jede Maske je Prozess, nicht je Thread. Warten mehrere Threads gleichzeitig in ppoll, gilt die zuletzt gesetzte Wartemaske,
 bis der letzte von ihnen zurückkehrt; erst dann gilt wieder die Maske von vor dem ersten (der Prozess zählt die wartenden Threads). `execve` mit weiteren
 Threads fehlt (kein `de_thread`); anhängige Signale gehen beim Ersetzen ohne vfork verloren (Linux behält sie). Ein fehlendes Ausführrecht prüft `execve`
-nicht (Linux `-EACCES`): FAT kennt keine Modi, jede reguläre Datei gilt als ausführbar. Es gibt weiter kein `fork` mit eigenem Speicher, `/proc/self/fd/<n>` als Link
+nicht (Linux `-EACCES`): FAT kennt keine Modi, jede reguläre Datei gilt als ausführbar. `/proc/self/fd/<n>` als Link
 (`readlink`) fehlt.
 
 ## Weiche Lücken: eventfd, statfs, inotify (V20)
@@ -489,3 +489,23 @@ Grenzen: ZehOS meldet **keine Dateiänderungen**; inotify erzeugt außer `IN_IGN
 Zeitzone also erst beim Neustart). `IN_ONESHOT` und `IN_EXCL_UNLINK` werden angenommen und ohne Wirkung gespeichert; `ioctl(FIONREAD)` fehlt. statfs meldet
 für den ganzen Baum dieselben Werte, auch für das virtuelle `/dev`; der freie Platz der Platte selbst fließt nicht ein. `select`, `epoll` und `signalfd` fehlen
 weiter. Die Sperren von eventfd und inotify sind Blattsperren wie die Pipe-Sperre (Dateisperre davor möglich); Lesen und Warten laufen ohne Dateisperre.
+
+## fork (V21)
+
+Plattformunabhängig in `ProjektZeh/Processes/LinuxFork.cs` (Hosttests `LinuxForkTests`), Brücke `StartFork` in `ProjektZeh/Runtime/CosmosLinuxRun.cs`;
+Gastprogramme `experiments/LinuxAbi/src/s3/fork_cow.c` und `futex.c` (Erwartung Linux in `expected/s3`). Anlass: s3-Programme und Bibliotheken, die
+`fork` ohne `exec` brauchen.
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 57 | `fork` | wie `clone(SIGCHLD)` |
+| 56 | `clone` ohne `CLONE_VM` | neuer Prozess (PID aus dem gemeinsamen Namensraum) mit **Kopie** des Adressraums: Karte, brk und Stackgröße gleich, jede private Seite mit Frame als neuer Frame mit demselben Inhalt; geteilte Bereiche (memfd, `MAP_SHARED|MAP_ANONYMOUS`) bleiben geteilt. Deskriptoren mit `FD_CLOEXEC` und Arbeitsverzeichnis wie vfork (Zählung, gemeinsamer Dateizeiger), Handler, Maske und Alternativstack bleiben, anhängige Signale und `PR_SET_PDEATHSIG` nicht. Nur der aufrufende Thread läuft im Kind weiter, als Hauptthread (TID = PID), mit dessen Registern und FPU-Zustand, rax 0, Stack aus `clone` (0: derselbe). Erlaubt: `CLONE_SETTLS`, `CLONE_PARENT_SETTID` (Speicher der Eltern), `CLONE_CHILD_SETTID` (Speicher des Kinds), `CLONE_CHILD_CLEARTID`; Austrittssignal nur `SIGCHLD`. `CLONE_FILES`, `CLONE_FS`, `CLONE_PARENT`, `CLONE_VFORK` ohne `CLONE_VM`, andere Signale und Bits `-ENOSYS`; kein Speicher für die Kopie `-ENOMEM`; kein Kernelthread frei `-EAGAIN` |
+| 435 | `clone3` | `clone_args` ab 64 Bytes (darunter `-EINVAL`, über 4096 `-E2BIG`, gesetzte Bytes hinter VER0 `-E2BIG`); `exit_signal` über 64 oder Signal in den Flagbits `-EINVAL`, `stack` und `stack_size` nur zusammen (Stackzeiger `stack + stack_size` wie Linux); sonst wie `clone` |
+| 9 | `mmap` `MAP_SHARED|MAP_ANONYMOUS` | jetzt eine namenlose memfd ohne Deskriptor (vorher privat): über fork geteilt. Mit `MAP_FIXED` weiter privat |
+| 202 | `futex` ohne `FUTEX_PRIVATE_FLAG` | `FUTEX_WAIT` liest den Wert nach jeder Scheibe (50 ms) neu und kehrt mit 0 zurück, sobald er sich geändert hat |
+
+Grenzen: **Kein Copy-on-Write** (Abkürzung): fork kopiert sofort alle belegten privaten Seiten; Zeit und Speicher wachsen mit dem belegten Speicher des
+Elternprozesses, und fork scheitert mit `-ENOMEM`, wenn der Rechner nicht genug freie Frames für die ganze Kopie hat (Linux forkt dann noch). Die
+futex-Tabelle gehört weiter einem Prozess: Ein `FUTEX_WAKE` aus einem anderen Prozess (geteilter Speicher nach fork) weckt nicht sofort, der Wartende
+merkt nur eine Wertänderung nach höchstens einer Scheibe; ein Wecken ohne Wertänderung über Prozesse geht verloren, `FUTEX_REQUEUE` über Prozesse fehlt.
+Threads beginnen weiter mit frischem FPU-Zustand (nur das fork-Kind übernimmt ihn). Signale während fork an die Eltern erreicht das Kind nicht.

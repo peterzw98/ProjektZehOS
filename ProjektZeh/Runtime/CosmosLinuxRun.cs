@@ -130,6 +130,12 @@ internal static unsafe class CosmosLinuxRun
         public bool Pending;
         public ulong EntryRip;
 
+        /// <summary>
+        /// V21 fork: fxsave-Abbild des Elternthreads beim clone; der erste Aufruf (<see cref="Pending"/>) legt es unter den Frame, fxrstor64
+        /// lädt es beim Rücksprung. null bei Threads (die beginnen mit frischem FPU-Zustand).
+        /// </summary>
+        public byte[]? StartFpu;
+
         /// <summary>V15 vfork: Elternprozess, Elternthread und dessen Register beim clone; gesetzt, solange das Kind auf diesem Thread läuft.</summary>
         public LinuxUserProcess? VforkParent;
         public LinuxThread? VforkThread;
@@ -856,6 +862,12 @@ internal static unsafe class CosmosLinuxRun
         {
             me.Pending = false;
             *frame = me.Start;
+            if (me.StartFpu != null)
+            {
+                me.StartFpu.CopyTo(new Span<byte>((byte*)frame - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize));
+                me.StartFpu = null;
+            }
+
             return;
         }
 
@@ -1002,6 +1014,58 @@ internal static unsafe class CosmosLinuxRun
         };
         process.StartExec = (next, image) => StartExec(run, next, image);
         process.ReplaceImage = (next, image) => ReplaceImage(run, next, image);
+        process.StartFork = (child, stack) => StartFork(run, child, stack);
+    }
+
+    /// <summary>
+    /// V21 fork: <paramref name="child"/> (Adressraum schon kopiert) auf eigenem Kernelthread mit eigener Seitentabelle. Er betritt den Ring 3
+    /// wie ein Thread aus clone am <c>syscall</c> des Elternthreads und übernimmt beim ersten Aufruf dessen Register (rax 0, Stack aus clone)
+    /// und FPU-Zustand (<see cref="Bridge.Pending"/>); der Befehl liegt im Kind an derselben Adresse, weil der Code mitkopiert ist.
+    /// </summary>
+    private static bool StartFork(Running run, LinuxUserProcess child, ulong stack)
+    {
+        Bridge? me = CurrentBridge(run);
+        if (me == null || me.Frame == null || me.VforkParent != null || me.Frame->Rip < 2)
+        {
+            return false;
+        }
+
+        var table = ((CosmosUserPages)child.Pages).Table;
+        Wire(run, table, child);
+        child.OnExit = code =>
+        {
+            UserMode.LeaveCurrent((ulong)code);
+            LeaveProcess(run, child, CurrentBridge(run), (ulong)code);
+        };
+        child.OnKilled = code => LeaveProcess(run, child, CurrentBridge(run), (ulong)code);
+        var b = new Bridge
+        {
+            Linux = child.MainThread, Process = child, Start = *me.Frame, Pending = true, EntryRip = me.Frame->Rip - 2,
+            StartFpu = new byte[LinuxSignalFrame.FpuSize],
+        };
+        b.Start.Rax = 0;
+        if (stack != 0)
+        {
+            b.Start.Rsp = stack;
+        }
+
+        new ReadOnlySpan<byte>((byte*)me.Frame - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize).CopyTo(b.StartFpu);
+        if (!TakeSlot(run, b))
+        {
+            return false;
+        }
+
+        child.MainThread.Host = b;
+        try
+        {
+            new Thread(() => ProcessBody(run, table, child, b, b.EntryRip, b.Start.Rsp, child.MainThread.FsBase)).Start();
+            return true;
+        }
+        catch (Exception)
+        {
+            ReleaseSlot(run, b);
+            return false;
+        }
     }
 
     /// <summary>
@@ -1130,7 +1194,7 @@ internal static unsafe class CosmosLinuxRun
 
         try
         {
-            new Thread(() => ProcessBody(run, table, next, b, image)).Start();
+            new Thread(() => ProcessBody(run, table, next, b, image.Entry, image.StackPointer, 0)).Start();
             return true;
         }
         catch (Exception)
@@ -1140,8 +1204,11 @@ internal static unsafe class CosmosLinuxRun
         }
     }
 
-    /// <summary>Kernelthread eines Prozesses nach execve: Ring 3 am Einsprung, dann auf die eigenen Threads warten, Ende melden, aufräumen.</summary>
-    private static void ProcessBody(Running run, UserPageTable table, LinuxUserProcess process, Bridge b, UserImage image)
+    /// <summary>
+    /// Kernelthread eines Prozesses nach execve (am Einsprung des Abbilds) oder fork (V21: am <c>syscall</c> des Elternthreads, siehe
+    /// <see cref="StartFork"/>): Ring 3, dann auf die eigenen Threads warten, Ende melden, aufräumen.
+    /// </summary>
+    private static void ProcessBody(Running run, UserPageTable table, LinuxUserProcess process, Bridge b, ulong entry, ulong stack, ulong fsBase)
     {
         bool bound = false;
         try
@@ -1149,13 +1216,13 @@ internal static unsafe class CosmosLinuxRun
             Volatile.Write(ref b.Sched, FaultIsolation.CurrentSchedulerThread());
             table.BindToCurrentThread();
             bound = true;
-            UserMode.SetFsBase(0);
+            UserMode.SetFsBase(fsBase);
             Interlocked.MemoryBarrier();
 
             // kill vor dem Start (etwa während vfork angekommen): ExitCode steht schon, der Ring 3 bleibt zu.
             if (!run.Cancelled && process.ExitCode == null)
             {
-                UserMode.Enter(image.Entry, image.StackPointer);
+                UserMode.Enter(entry, stack);
                 if (b.Fault)
                 {
                     b.Process.RecordFault(SignalOf(b.FaultVector));
