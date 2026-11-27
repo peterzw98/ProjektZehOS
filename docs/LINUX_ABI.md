@@ -649,7 +649,9 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxFileLocks.cs` (Tabel
   erneut, bis es gelingt; ein Signal mit Handler gibt `-EINTR`, der Abbruch des Programms beendet das Warten.
 - **Abweichungen:** keine Erkennung von Verklemmungen (Linux `-EDEADLK`; hier wartet `F_SETLKW` bis Signal oder Abbruch); die Öffnungsart wird nicht geprüft (Linux
   `-EBADF` für `F_WRLCK` auf eine nur lesend offene Datei); Pipes, Sockets und Terminal `-EINVAL` statt einer Sperre; ohne Sperrtabelle (Ersatzprozesse der Hosttests)
-  `-ENOLCK`.
+  `-ENOLCK`. Die Dateikennung ist `st_ino` = FNV-1a des Pfads beim `open` (FAT hat keine Inodes): Nummern, die vor einem `rename` geöffnet wurden, sperren weiter
+  unter der alten Kennung, ein `open` unter dem neuen Namen sieht ihre Sperren nicht, und eine neue Datei unter dem alten Namen teilt sie (Linux: die Sperre hängt am
+  Inode). Freigabe und Prozessende bleiben richtig, weil jede Nummer ihre Kennung festhält. Für sqlite unkritisch (es benennt die gesperrte Datenbank nicht um).
 - **`flock(2)` (73):** `LOCK_SH`, `LOCK_EX`, `LOCK_UN`, mit `LOCK_NB` ohne Warten (`-EAGAIN` = `EWOULDBLOCK`), ohne `LOCK_NB` wartend wie `F_SETLKW` (1 ms, `-EINTR`).
   Ganze Datei, Besitzer ist die offene Datei (`dup` und `fork` teilen sie, ein zweites `open` ist ein anderer Besitzer); flock- und fcntl-Sperren sehen einander nicht.
   Umstufen löst wie Linux erst die alte Sperre (nicht atomar). Freigabe mit `LOCK_UN` oder beim letzten `close` der offenen Datei. Sonstiger Befehl `-EINVAL`, ungültige

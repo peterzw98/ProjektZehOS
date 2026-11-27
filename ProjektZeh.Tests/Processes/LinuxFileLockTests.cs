@@ -14,10 +14,10 @@ namespace ProjektZeh.Tests.Processes;
 public sealed class LinuxFileLockTests
 {
     private const ulong Page = 4096;
-    private const long Open = 2, Close = 3, Lseek = 8, Dup = 32, Fcntl = 72, Flock = 73, CloseRange = 436, Link = 86, Chmod = 90, Fchmod = 91, Linkat = 265, Fchmodat2 = 452;
+    private const long Open = 2, Close = 3, Lseek = 8, Dup = 32, Dup2 = 33, Fcntl = 72, Flock = 73, CloseRange = 436, Link = 86, Chmod = 90, Fchmod = 91, Linkat = 265, Fchmodat2 = 452;
     private const int GetLk = 5, SetLk = 6, SetLkW = 7, OfdGetLk = 36, OfdSetLk = 37;
     private const short Rd = 0, Wr = 1, Un = 2;
-    private const long ENOENT = 2, EBADF = 9, EAGAIN = 11, EEXIST = 17, EINVAL = 22, EPERM = 1, EOVERFLOW = 75;
+    private const long ENOENT = 2, EINTR = 4, EBADF = 9, EAGAIN = 11, EEXIST = 17, EINVAL = 22, EPERM = 1, EOVERFLOW = 75;
     private const ulong ORdwrCreat = 0x42;
 
     private sealed class Frames
@@ -311,6 +311,89 @@ public sealed class LinuxFileLockTests
         Assert.AreEqual(-EAGAIN, Lock(b, mb, fb, SetLk, Wr, 0, 1));
         Assert.AreEqual(0, Call(a, CloseRange, (ulong)fa, (ulong)fa, 0));
         Assert.AreEqual(0, Lock(b, mb, fb, SetLk, Wr, 0, 1), "close_range gibt die POSIX-Sperre frei wie close");
+    }
+
+    [TestMethod]
+    public void SetLkWaitEndsWithEintrOnSignalWithHandler()
+    {
+        const int SigUsr1 = 10;
+        var (a, ma) = NewProcess(1);
+        int fa = OpenFile(a, ma);
+        Assert.AreEqual(0, Lock(a, ma, fa, SetLk, Wr, 0, 0));
+
+        Host? host = null;
+        LinuxUserProcess? b = null;
+        host = new Host(() =>
+        {
+            if (host!.Sleeps == 2)
+            {
+                b!.RaiseSignal(SigUsr1); // wie kill von außen während des Wartens
+            }
+        });
+        var term = new TerminalDescriptor(new Lines());
+        b = new LinuxUserProcess(new Pages(_frames), term, 2, 64 << 20, host, new LinuxFileSystem(_disk, term), _open, _ids);
+        ulong mb = b.MapAnonymous(4 * Page, 3);
+        int fb = OpenFile(b, mb);
+
+        // Handler eintragen (struct sigaction: Handler, Flags, Restorer, Maske); ohne Handler beendete das Signal den Prozess.
+        Assert.IsTrue(b.TryWrite(mb + 0x400, new byte[32]));
+        Assert.IsTrue(b.TryWrite(mb + 0x400, BitConverter.GetBytes(0x401000UL)));
+        Assert.AreEqual(0, Call(b, LinuxSyscalls.RtSigaction, SigUsr1, mb + 0x400, 0, 8));
+
+        Assert.AreEqual(-EINTR, Lock(b, mb, fb, SetLkW, Wr, 0, 1));
+        Assert.AreEqual(2, host.Sleeps);
+        Assert.AreEqual(-EAGAIN, Lock(b, mb, fb, SetLk, Wr, 0, 1), "nichts gesetzt, a hält weiter");
+    }
+
+    [TestMethod]
+    public void ForkChildNeitherInheritsNorReleasesPosixLocksButSharesFlock()
+    {
+        var (a, ma) = NewProcess(1);
+        var (other, mo) = NewProcess(3);
+        LinuxUserProcess? child = null;
+        a.CreatePages = () => new Pages(_frames);
+        a.StartFork = (c, stack) =>
+        {
+            child = c;
+            return true;
+        };
+        int fa = OpenFile(a, ma), fo = OpenFile(other, mo);
+        Assert.AreEqual(0, Lock(a, ma, fa, SetLk, Wr, 0, 10));
+        Assert.AreEqual(0, Call(a, Flock, (ulong)fa, 2 | 4));
+
+        Assert.IsTrue(Call(a, LinuxSyscalls.Fork) > 0);
+        Assert.IsNotNull(child);
+
+        // Das Kind erbt die POSIX-Sperre nicht (anderer Besitzer): es stößt an der des Elternteils an.
+        Assert.AreEqual(-EAGAIN, Lock(child, ma, fa, SetLk, Rd, 0, 1));
+        Assert.AreEqual(0, Lock(child, ma, fa, SetLk, Wr, 20, 1), "freier Bereich gehört dann dem Kind");
+        Assert.AreEqual(0, Lock(other, mo, fo, GetLk, Wr, 20, 1));
+        Assert.AreEqual(((short)Wr, 20L, 1L, child.Pid), ReadFlock(other, mo));
+
+        // close im Kind gibt nur dessen POSIX-Sperren frei; die flock-Sperre teilt es mit dem Elternteil (gleiche offene Datei).
+        Assert.AreEqual(0, Call(child, Close, (ulong)fa));
+        Assert.AreEqual(-EAGAIN, Lock(other, mo, fo, SetLk, Rd, 0, 1), "Sperre des Elternteils bleibt");
+        Assert.AreEqual(0, Lock(other, mo, fo, SetLk, Rd, 20, 1), "Sperre des Kindes ist frei");
+        Assert.AreEqual(-EAGAIN, Call(other, Flock, (ulong)fo, 1 | 4), "flock hält, solange der Elternteil die Datei offen hat");
+        Assert.AreEqual(0, Call(a, Close, (ulong)fa));
+        Assert.AreEqual(0, Call(other, Flock, (ulong)fo, 1 | 4), "letztes close gibt flock frei");
+    }
+
+    [TestMethod]
+    public void Dup2OntoLockedNumberReleasesPosixLocks()
+    {
+        var (a, ma) = NewProcess(1);
+        var (b, mb) = NewProcess(2);
+        int fa = OpenFile(a, ma), fb = OpenFile(b, mb);
+        int other = OpenFile(a, ma, "/anders");
+
+        Assert.AreEqual(0, Lock(a, ma, fa, SetLk, Wr, 0, 100));
+        Assert.AreEqual(0, Lock(a, ma, fa, OfdSetLk, Rd, 100, 1), "OFD ist ein anderer Besitzer: nicht überlappend");
+        Assert.AreEqual(-EAGAIN, Lock(b, mb, fb, SetLk, Rd, 0, 1));
+
+        Assert.AreEqual((long)fa, Call(a, Dup2, (ulong)other, (ulong)fa));
+        Assert.AreEqual(0, Lock(b, mb, fb, SetLk, Rd, 0, 1), "dup2 schließt die alte Nummer und gibt die POSIX-Sperre frei");
+        Assert.AreEqual(0, Lock(b, mb, fb, SetLk, Wr, 100, 1), "letzte Nummer der offenen Datei weg: OFD-Sperre frei");
     }
 
     [TestMethod]
