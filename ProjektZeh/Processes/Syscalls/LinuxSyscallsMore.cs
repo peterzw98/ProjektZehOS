@@ -47,7 +47,7 @@ internal sealed class LinuxSignalState
 
 internal static partial class LinuxSyscalls
 {
-    public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
+    public const long Poll = 7, RtSigaction = 13, RtSigprocmask = 14, SchedYield = 24, Msync = 26, Madvise = 28, Nanosleep = 35, Getuid = 102, Getgid = 104, Geteuid = 107, Getegid = 108, ClockNanosleep = 230, Uname = 63,
         Sigaltstack = 131, Futex = 202, ClockGettime = 228, Getrandom = 318, Pause = 34, Sysinfo = 99, RtSigpending = 127, Getrusage = 98;
 
     public const long EAGAIN = 11, EDEADLK = 35, ETIMEDOUT = 110;
@@ -82,6 +82,7 @@ internal static partial class LinuxSyscalls
             case EpollPwait2: return DoEpollPwait2(p, (int)a.A0, a.A1, (int)a.A2, a.A3, a.A4, a.A5);
             case CloseRange: return p is ILinuxFiles ranged ? DoCloseRange(p, ranged, (uint)a.A0, (uint)a.A1, (uint)a.A2) : -ENOSYS;
             case Madvise: return DoMadvise(p, a.A0, a.A1, (int)a.A2);
+            case Msync: return DoMsync(p, a.A0, a.A1, (int)a.A2); // V32
             case Nanosleep: return DoNanosleep(p, a.A0, a.A1);
             case ClockNanosleep: return DoClockNanosleep(p, (int)a.A0, (int)a.A1, a.A2, a.A3);
             // Ein Benutzer ohne Konten: der Wert kommt aus dem Prozess und ist derselbe wie AT_UID/AT_GID im Startstack.
@@ -576,6 +577,33 @@ internal static partial class LinuxSyscalls
         }
 
         return ready;
+    }
+
+    /// <summary>
+    /// msync (V32): Prüfungen wie Linux 6.12 (unbekannte Bits oder MS_ASYNC zusammen mit MS_SYNC -EINVAL, Adresse nicht seitenbündig
+    /// -EINVAL, Lücke im Bereich -ENOMEM). Geteilte Dateiseiten gehen sofort zurück in die Datei, auch bei MS_ASYNC; MS_INVALIDATE hat
+    /// nichts zu tun, weil alle Abbildungen dieselben Frames sehen.
+    /// </summary>
+    private static long DoMsync(ILinuxProcess p, ulong addr, ulong len, int flags)
+    {
+        const int MsAsync = 1, MsInvalidate = 2, MsSync = 4;
+        if ((flags & ~(MsAsync | MsInvalidate | MsSync)) != 0 || (flags & (MsAsync | MsSync)) == (MsAsync | MsSync) || (addr & 0xfff) != 0)
+        {
+            return -EINVAL;
+        }
+
+        if (len > ulong.MaxValue - 0xfff)
+        {
+            return -ENOMEM;
+        }
+
+        ulong flen = (len + 0xfff) & ~0xfffUL;
+        if (flen == 0)
+        {
+            return 0;
+        }
+
+        return p is ILinuxSharedMemory shared ? shared.SyncShared(addr, flen) : 0;
     }
 
     private static long DoMadvise(ILinuxProcess p, ulong addr, ulong len, int advice)

@@ -59,6 +59,12 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
     private readonly List<string> _pending = new();
     private readonly List<(string Path, LinuxStoreNode Node)> _parents = new();
 
+    // V32: Seitenablagen regulärer Dateien mit MAP_SHARED, je Inode (Speicherpfad), für alle Prozesse des Laufs (sie teilen dieses Objekt).
+    // Tote Ablagen bleiben stehen, bis die nächste Abbildung derselben Datei sie ersetzt oder unlink/rename sie entfernt. Die Sperre steht
+    // unter FileGate und über der Sperre einer Ablage; sie wird nie unter der Speichersperre eines Prozesses genommen.
+    private readonly object _sharedGate = new();
+    private readonly Dictionary<ulong, LinuxMemFile> _sharedPages = new();
+
     /// <param name="store">Speicher der Prozesswurzel.</param>
     /// <param name="terminal">Ziel von <c>/dev/tty</c>; sinnvoll derselbe <see cref="TerminalDescriptor"/> wie für fd 0 bis 2,
     /// damit Zeilen aus beiden Wegen in der richtigen Reihenfolge erscheinen.</param>
@@ -250,10 +256,12 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
 
         if (write && (flags & OTrunc) != 0)
         {
-            r = opened!.SetLength(0);
+            // V32: Eine lebende Seitenablage verliert ihre Frames mit (sonst schriebe sie alten Inhalt zurück).
+            LinuxMemFile? pages = FindSharedPages(InodeOf(loc.Path));
+            r = pages != null ? pages.TruncateThrough(opened!, 0) : opened!.SetLength(0);
             if (r < 0)
             {
-                _ = opened.Close(); // der Fehler von SetLength ist der maßgebliche
+                _ = opened!.Close(); // der Fehler von SetLength ist der maßgebliche
                 return r;
             }
         }
@@ -377,7 +385,13 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         }
 
         r = CheckParentWritable(in loc);
-        return r < 0 ? r : _store.DeleteFile(loc.Path);
+        r = r < 0 ? r : _store.DeleteFile(loc.Path);
+        if (r >= 0)
+        {
+            ForgetSharedPages(loc.Path);
+        }
+
+        return r;
     }
 
     public long Rmdir(string path)
@@ -525,7 +539,14 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         }
 
         r = CheckParentWritable(in to);
-        return r < 0 ? r : _store.Rename(from.Path, to.Path);
+        r = r < 0 ? r : _store.Rename(from.Path, to.Path);
+        if (r >= 0)
+        {
+            ForgetSharedPages(from.Path);
+            ForgetSharedPages(to.Path);
+        }
+
+        return r;
     }
 
     public long Symlink(string target, string linkPath)
@@ -578,6 +599,51 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
     }
 
     internal void Closed() => OpenFiles--;
+
+    /// <summary>V32: lebende Seitenablage der Datei <paramref name="ino"/> oder null.</summary>
+    internal LinuxMemFile? FindSharedPages(ulong ino)
+    {
+        lock (_sharedGate)
+        {
+            return _sharedPages.Count != 0 && _sharedPages.TryGetValue(ino, out LinuxMemFile? pages) && !pages.IsDead ? pages : null;
+        }
+    }
+
+    /// <summary>
+    /// V32: Seitenablage der Datei <paramref name="ino"/>, gehalten (<see cref="LinuxMemFile.TryHold"/>; der Aufrufer gibt den Halt mit
+    /// ReleaseHold zurück). Fehlt eine lebende und ist <paramref name="backing"/> gesetzt, entsteht eine neue über
+    /// <paramref name="shared"/> (sie übernimmt den Verweis auf <paramref name="backing"/>); sonst null und der Verweis bleibt beim Aufrufer.
+    /// </summary>
+    internal LinuxMemFile? HoldSharedPages(ulong ino, ILinuxSharedMemory shared, LinuxSharedStoreFile? backing, bool backingWritable, string path)
+    {
+        lock (_sharedGate)
+        {
+            if (_sharedPages.TryGetValue(ino, out LinuxMemFile? pages) && pages.TryHold())
+            {
+                backing?.Release(); // nicht gebraucht: Die lebende Ablage hält ihre eigene Datei
+                return pages;
+            }
+
+            if (backing == null)
+            {
+                return null;
+            }
+
+            pages = shared.CreateFilePages(backing, backingWritable, path, ino);
+            _ = pages.TryHold(); // neu, lebt sicher
+            _sharedPages[ino] = pages;
+            return pages;
+        }
+    }
+
+    /// <summary>V32: Nach unlink oder rename gehört der Name einer anderen Datei; die alte Ablage lebt für ihre Abbildungen weiter.</summary>
+    private void ForgetSharedPages(string storePath)
+    {
+        lock (_sharedGate)
+        {
+            _ = _sharedPages.Remove(InodeOf(storePath));
+        }
+    }
 
     internal LinuxStat StatOf(in Loc loc) => loc.Area switch
     {

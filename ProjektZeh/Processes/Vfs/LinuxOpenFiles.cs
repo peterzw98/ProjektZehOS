@@ -173,9 +173,46 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
         _ino = fs.InodeOf(storePath);
     }
 
+    /// <summary>V32: Zugriffsrechte des Deskriptors für mmap mit MAP_SHARED.</summary>
+    internal bool Readable => CanRead;
+
+    internal bool Writable => CanWrite;
+
+    /// <summary>V32: lebende Seitenablage dieser Datei (MAP_SHARED in irgendeinem Prozess des Laufs) oder null.</summary>
+    private LinuxMemFile? SharedPages => FileSystem.FindSharedPages(_ino);
+
+    /// <summary>
+    /// V32: Seitenablage für MAP_SHARED, gehalten (der Aufrufer gibt den Halt mit ReleaseHold zurück); entsteht, wenn keine lebt. Sie hält
+    /// die Speicherdatei dieses Deskriptors, damit Zurückschreiben auch nach close geht; ein schreibbarer Deskriptor ersetzt eine nur lesende.
+    /// Unter FileGate; null nach close.
+    /// </summary>
+    internal LinuxMemFile? HoldSharedPages(ILinuxSharedMemory shared)
+    {
+        if (IsClosed)
+        {
+            return null;
+        }
+
+        LinuxMemFile? pages = FileSystem.HoldSharedPages(_ino, shared, null, false, Path);
+        if (pages == null)
+        {
+            _shared.AddRef();
+            return FileSystem.HoldSharedPages(_ino, shared, _shared, CanWrite, Path);
+        }
+
+        if (CanWrite)
+        {
+            _shared.AddRef();
+            pages.OfferWritableBacking(_shared);
+        }
+
+        return pages;
+    }
+
     protected override long ReadCore(Span<byte> dst)
     {
-        long n = _file.ReadAt(_position, dst);
+        LinuxMemFile? pages = SharedPages;
+        long n = pages != null ? pages.ReadThrough(_file, _position, dst) : _file.ReadAt(_position, dst);
         if (n > 0)
         {
             _position += n;
@@ -197,7 +234,8 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
             _position = length;
         }
 
-        long n = _file.WriteAt(_position, data);
+        LinuxMemFile? pages = SharedPages;
+        long n = pages != null ? pages.WriteThrough(_file, _position, data) : _file.WriteAt(_position, data);
         if (n > 0)
         {
             _position += n;
@@ -242,7 +280,16 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
     }
 
     // Bleibt eine Abbildung, schließt erst sie die Datei; ein Fehler beim Zurückschreiben geht dann verloren (Linux: close schreibt auch nicht).
-    protected override long Release() => _shared.ReleaseChecked();
+    // V32: Eine lebende Seitenablage schreibt vorher zurück (Linux braucht das nicht, sein Seitencache bleibt; hier geht so auch ein späterer
+    // Neustart nicht am Inhalt vorbei).
+    protected override long Release()
+    {
+        _ = SharedPages?.Flush(0, long.MaxValue);
+        return _shared.ReleaseChecked();
+    }
+
+    // V32: fsync schreibt auch, was Abbildungen in die Frames geschrieben haben.
+    protected override long SyncCore() => SharedPages?.Flush(0, long.MaxValue) ?? 0;
 
     /// <summary>V30: Quelle für Seiten aus dieser Datei, unter FileGate geholt; null nach close.</summary>
     public ILinuxPageSource? OpenPageSource()
@@ -256,7 +303,16 @@ internal sealed class LinuxRegularFile : LinuxOpenFile, ILinuxPageSourceFile
         return _shared;
     }
 
-    protected override long TruncateCore(long length) => length < 0 ? -LinuxErrno.EINVAL : _file.SetLength(length);
+    protected override long TruncateCore(long length)
+    {
+        if (length < 0)
+        {
+            return -LinuxErrno.EINVAL;
+        }
+
+        LinuxMemFile? pages = SharedPages;
+        return pages != null ? pages.TruncateThrough(_file, length) : _file.SetLength(length);
+    }
 }
 
 /// <summary>

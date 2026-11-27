@@ -45,11 +45,15 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
     public LinuxMemFile CreateAnonymousSharedFile() => new(_vforkOf?._pages ?? _pages, "dev/zero", false, 1L << 47,
         0x6d65_6d00_0000_0000UL | ((ulong)(uint)Pid << 24) | (uint)System.Threading.Interlocked.Increment(ref _memFiles));
 
-    public long MapShared(LinuxMemFile file, ulong len, int prot, long pageOffset)
+    // V32: Seitenablage einer regulären Datei; Frames aus demselben Allokator wie memfd (im Kernel der gemeinsame PageAllocator).
+    public LinuxMemFile CreateFilePages(LinuxSharedStoreFile backing, bool backingWritable, string path, ulong ino) =>
+        new(_vforkOf?._pages ?? _pages, backing, backingWritable, path, ino);
+
+    public long MapShared(LinuxMemFile file, ulong len, int prot, long pageOffset, bool allowWrite = true)
     {
         if (_vforkOf != null)
         {
-            return _vforkOf.MapShared(file, len, prot, pageOffset);
+            return _vforkOf.MapShared(file, len, prot, pageOffset, allowWrite);
         }
 
         lock (_memGate)
@@ -59,7 +63,7 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
                 return -LinuxSyscalls.EINVAL;
             }
 
-            long r = file.AddMapping((prot & ProtWrite) != 0, out bool mayWrite);
+            long r = file.AddMapping((prot & ProtWrite) != 0, allowWrite, out bool mayWrite);
             if (r < 0)
             {
                 return r;
@@ -167,6 +171,56 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
         }
     }
 
+    /// <summary>
+    /// msync (V32): schreibt die Dateiseiten geteilter Bereiche in [addr, addr + len) zurück. Andere Bereiche (privat, anonym, memfd) haben
+    /// nichts zurückzuschreiben. 0, -ENOMEM, wenn der Bereich nicht ganz abgebildet ist (wie Linux), oder der erste Schreibfehler.
+    /// </summary>
+    public long SyncShared(ulong addr, ulong len)
+    {
+        if (_vforkOf != null)
+        {
+            return _vforkOf.SyncShared(addr, len);
+        }
+
+        lock (_memGate)
+        {
+            if (len == 0)
+            {
+                return 0;
+            }
+
+            if (addr > ulong.MaxValue - len || !_map.IsMapped(addr, len))
+            {
+                return -LinuxSyscalls.ENOMEM;
+            }
+
+            long result = 0;
+            foreach (SharedRegion r in _regions)
+            {
+                long w = FlushPart(r, addr, addr + len);
+                if (result == 0 && w < 0)
+                {
+                    result = w;
+                }
+            }
+
+            return result;
+        }
+    }
+
+    /// <summary>V32: schreibt den Teil [start, end) eines geteilten Dateibereichs zurück (memfd: nichts); 0 oder -errno.</summary>
+    private static long FlushPart(SharedRegion r, ulong start, ulong end)
+    {
+        if (!r.Mem.IsBacked || r.End <= start || r.Start >= end)
+        {
+            return 0;
+        }
+
+        ulong from = start > r.Start ? start : r.Start;
+        ulong to = end < r.End ? end : r.End;
+        return r.Mem.Flush(r.FirstIndex + (long)((from - r.Start) / Page), (long)((to - from + Page - 1) / Page));
+    }
+
     /// <summary>Kürzt geteilte Bereiche um [start, end); Reststücke links und rechts bleiben eigene Bereiche derselben Datei.</summary>
     private void TrimRegions(ulong start, ulong end)
     {
@@ -178,6 +232,8 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
                 continue;
             }
 
+            // V32: munmap schreibt den wegfallenden Teil einer Dateiabbildung zurück; der Fehler geht verloren wie bei Linux.
+            _ = FlushPart(r, start, end);
             _regions.RemoveAt(i);
             if (r.Start < start)
             {
@@ -200,6 +256,7 @@ internal sealed partial class LinuxUserProcess : ILinuxSharedMemory
     {
         foreach (SharedRegion r in _regions)
         {
+            _ = FlushPart(r, r.Start, r.End); // V32: Prozessende schreibt geteilte Dateiseiten zurück
             r.Mem.RemoveMapping(r.Writable);
         }
 

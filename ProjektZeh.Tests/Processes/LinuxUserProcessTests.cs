@@ -823,7 +823,8 @@ public sealed class LinuxUserProcessTests
         var (process, _) = StartWithFile(100);
         long ro = OpenIcu(process, LinuxFileSystem.ORdOnly);
         long wo = OpenIcu(process, LinuxFileSystem.OWrOnly);
-        Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtRW, MapSharedFlag, (ulong)ro, 0), "geteilt beschreibbar");
+        // V32: geteilt beschreibbar geht jetzt, braucht aber einen schreibbaren Deskriptor (Linux: -EACCES).
+        Assert.AreEqual(-LinuxSyscalls.EACCES, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtRW, MapSharedFlag, (ulong)ro, 0), "geteilt beschreibbar");
         Assert.AreEqual(-LinuxSyscalls.EACCES, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, (ulong)wo, 0), "nur zum Schreiben offen");
         Assert.AreEqual(-LinuxSyscalls.ENODEV, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, 1, 0), "Terminal");
         Assert.AreEqual(-LinuxSyscalls.EBADF, Sys(process, LinuxSyscalls.Mmap, 0, Page, ProtR, MapPrivateFlag, 40, 0));
