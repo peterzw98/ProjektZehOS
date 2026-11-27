@@ -123,7 +123,7 @@ Grenzen (Review V2, bewusst offen):
   UTF-16-Einheiten, nicht Zeichenbreiten; Zeichen außerhalb der BMP (Emoji) oder breite CJK-Zeichen verschieben Cursor und `ESC [ 6 n`-Spalte.
   Nicht umgesetzt: VMIN/VTIME (immer wie VMIN 1), mehrzeilige Bearbeitung, Echo im Rohmodus.
   Ohne Sitzung (Gastprobe über die serielle Schnittstelle) bleibt `-ENOTTY`: stdout voll gepuffert wie bei einer Umleitung, die erwarteten Ausgaben bleiben gleich.
-- Brücke im Kernel: `ProjektZeh/Runtime/CosmosLinuxRun.cs`, nur mit `-p:ZehOSLinuxRun=true`; dann gibt es `run <datei> [argumente...]` (ladbarer Teil des ELF bis 128 MiB,
+- Brücke im Kernel: `ProjektZeh/Runtime/CosmosLinuxRun.cs`, nur mit `-p:ZehOSLinuxRun=true`; dann gibt es `run [NAME=WERT...] <datei> [argumente...]` (ladbarer Teil des ELF bis 128 MiB,
   ein Programm zugleich, eigener Kernelthread mit eigener `UserPageTable`). Aus der Shell läuft es neben der Ereignisschleife (V3 stdin): der Befehl kehrt
   sofort zurück, die Shell holt die Ausgabe je Bild ab, Enter-Zeilen gehen an fd 0, Strg+C oder Esc bricht ab (`signal 2`), ein zweites Strg+C gibt das
   Fenster frei, falls das Programm nicht endet; ohne Zeitgrenze. Die Gastprobe läuft weiter synchron mit Zeitgrenze (120 s, danach `signal 9`). AT_RANDOM aus `HardwareRandom` (ohne Ersatz),
@@ -699,6 +699,11 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxFileLocks.cs` (Tabel
   Nummer `-EBADF`. Abweichung: Pipes, Sockets und Terminal `0` ohne Wirkung. `close_range` gibt POSIX-Sperren frei wie `close`.
 - **chmod, link:** siehe Tabelle der Dateiaufrufe (V2): `chmod` ohne Wirkung auf FAT, `link` `-EPERM` wie vfat (fontconfig fällt für seine Sperrdatei auf `mkdir` zurück).
 - **HOME:** `CosmosLinuxRun.Environment` setzt `HOME=/` (Prozesswurzel); `experiments/LinuxAbi/run-linux.py` und `expected/s1/args_env_auxv.txt` mit derselben Umgebung.
+- **Umgebung (V37):** Standardwerte in `ProjektZeh/Processes/LinuxRunEnvironment.cs`: `ZEHOS_ABI=1 LANG=C PATH=/usr/bin:/bin HOME=/ TMPDIR=/tmp
+  XDG_RUNTIME_DIR=/tmp/xdg-runtime XDG_CACHE_HOME=/.cache`. Vor dem Start legt `run` `/tmp` (0777, kein Sticky-Bit), `/tmp/xdg-runtime` (0700) und `/.cache`
+  (0755) in der Prozesswurzel an, aber nur für Variablen mit Standardwert. `run NAME=WERT ... <datei>` ersetzt oder ergänzt Einträge wie `env` (Name
+  `[A-Za-z_][A-Za-z0-9_]*`, sonst ist das Wort das Programm, etwa `./a=b`); kein Entfernen (`env -u`). Grenzen: 32 Zuweisungen, je 4096 Bytes, ganze Umgebung
+  32 KiB, kein NUL; sonst `run:` mit Fehler und ohne Start.
 
 ## Dateiseiten erst beim Zugriff (V30)
 
