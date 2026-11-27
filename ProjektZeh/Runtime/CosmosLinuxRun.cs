@@ -66,6 +66,15 @@ internal static unsafe class CosmosLinuxRun
     // Das laufende Programm; die Handler finden es über den Thread, auf dem sie laufen.
     private static Running? current;
 
+    /// <summary>
+    /// V36: Kernelthreads aller Prozesse eines Laufs zusammen (Linux-Threads, fork-, vfork- und spawn-Kinder). Vorher galt hier die
+    /// Grenze eines Prozesses (<see cref="LinuxUserProcess.MaxThreads"/>, 64); Ladybird headless braucht über alle Prozesse mehr
+    /// (Host-strace V31: Hub 16, Compositor 11, RequestServer 6+4, SystemProbe 1, je WebContent 19-21), und der 65. scheiterte mit
+    /// <c>-EAGAIN</c> in <c>pthread_create</c>. Je Platz läuft ein Kernelthread mit eigenem Kernelstack; 256 lässt Ladybird mit drei
+    /// WebContent Luft und begrenzt einen Lauf weiterhin.
+    /// </summary>
+    public const int MaxRunThreads = 256;
+
     private sealed class Running
     {
         public readonly TerminalDescriptor Terminal;
@@ -111,7 +120,13 @@ internal static unsafe class CosmosLinuxRun
         /// V10: die Kernelthreads der Linux-Threads, Platz 0 der Hauptthread. Geschrieben unter der Sperre auf dem Feld, gelesen
         /// ohne Sperre in den Handlern (Referenzen, volatil gelesen); ein Platz wird erst frei, wenn sein Thread den Ring 3 verlassen hat.
         /// </summary>
-        public readonly Bridge?[] Threads = new Bridge?[LinuxUserProcess.MaxThreads];
+        public readonly Bridge?[] Threads = new Bridge?[MaxRunThreads];
+
+        /// <summary>
+        /// V36: höchster je belegter Platz + 1 (wächst nur, unter der Sperre geschrieben, nach dem Platz). <see cref="CurrentBridge"/> läuft
+        /// bei jedem Aufruf und durchsucht nur bis hierhin, damit die größere Tabelle kleine Läufe nicht verlangsamt.
+        /// </summary>
+        public int ThreadsUsed;
 
         /// <summary>Kernelthreads des Programms, die noch laufen; der Hauptthread räumt erst auf, wenn er der letzte ist.</summary>
         public int KernelThreads;
@@ -667,6 +682,7 @@ internal static unsafe class CosmosLinuxRun
         var main = new Bridge { Linux = process.MainThread, Process = process, Sched = FaultIsolation.CurrentSchedulerThread() };
         BindCpuTime(main);
         run.Threads[0] = main;
+        run.ThreadsUsed = 1;
         run.KernelThreads = 1;
         run.Process = process;
 
@@ -815,6 +831,10 @@ internal static unsafe class CosmosLinuxRun
 
             b.Slot = slot;
             Volatile.Write(ref run.Threads[slot], b);
+            if (slot >= run.ThreadsUsed)
+            {
+                Volatile.Write(ref run.ThreadsUsed, slot + 1);
+            }
             Interlocked.Increment(ref run.KernelThreads);
             return true;
         }
@@ -942,7 +962,8 @@ internal static unsafe class CosmosLinuxRun
         }
 
         Bridge?[] threads = run.Threads;
-        for (int i = 0; i < threads.Length; i++)
+        int used = Math.Min(Volatile.Read(ref run.ThreadsUsed), threads.Length);
+        for (int i = 0; i < used; i++)
         {
             Bridge? b = Volatile.Read(ref threads[i]);
             if (b != null && ReferenceEquals(Volatile.Read(ref b.Sched), me))
