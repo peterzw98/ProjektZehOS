@@ -34,6 +34,17 @@ internal sealed class AhciState
     /// <summary>How long a command may take before the port gives up on it.</summary>
     internal const uint CommandTimeoutMilliseconds = 5000;
 
+    // ZehOS patch ahci-flush-timeout, see PATCHES.md
+    /// <summary>
+    /// How long FLUSH CACHE EXT may take before the port gives up on it. A
+    /// flush writes back the whole volatile cache: under QEMU with a
+    /// writeback image it is an fdatasync on the host and took more than
+    /// 5 s under host load, and real disks may need seconds as well. Linux
+    /// libata allows 15 to 30 s for it; reads and writes keep the shorter
+    /// limit.
+    /// </summary>
+    internal const uint FlushTimeoutMilliseconds = 30000;
+
     /// <summary>Pause between two register reads while polling, and between two busy claims.</summary>
     internal const uint PollMicroseconds = 10;
 

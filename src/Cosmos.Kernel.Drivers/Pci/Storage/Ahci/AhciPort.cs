@@ -403,9 +403,10 @@ internal sealed class AhciPort : IBlockDevice
     /// Claims the port's busy flag under the controller's lock, pausing
     /// <see cref="AhciState.PollMicroseconds"/> outside the lock while
     /// another caller holds it; no deadline, since the holder's command is
-    /// bounded by <see cref="AhciState.CommandTimeoutMilliseconds"/> and,
-    /// when it fails, by the budgets of the recovery on top (7 to 8 s at
-    /// worst).
+    /// bounded by <see cref="AhciState.CommandTimeoutMilliseconds"/> (a flush
+    /// by <see cref="AhciState.FlushTimeoutMilliseconds"/>, ZehOS patch
+    /// ahci-flush-timeout) and, when it fails, by the budgets of the
+    /// recovery on top (7 to 8 s at worst, 32 to 33 s for a flush).
     /// Thread context; any thread.
     /// </summary>
     /// <exception cref="IOException">A failed recovery left the port disabled.</exception>
@@ -538,7 +539,11 @@ internal sealed class AhciPort : IBlockDevice
         uint slotBit = 1u << slot;
         _controller.WritePort(port, AhciProtocol.PxCi, slotBit);
 
-        long deadline = AhciState.DeadlineAfter(AhciState.CommandTimeoutMilliseconds);
+        // ZehOS patch ahci-flush-timeout, see PATCHES.md
+        uint timeout = command == AhciProtocol.AtaCacheFlushExt
+            ? AhciState.FlushTimeoutMilliseconds
+            : AhciState.CommandTimeoutMilliseconds;
+        long deadline = AhciState.DeadlineAfter(timeout);
         long fastPause = Stopwatch.Frequency / MicrosecondsPerSecond * FastPollMicroseconds;
         int fastPolls = 0;
         while ((_controller.ReadPort(port, AhciProtocol.PxCi) & slotBit) != 0)
