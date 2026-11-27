@@ -647,7 +647,18 @@ internal static unsafe class PageAllocator
                     ulong largest = 0, run = 0;
                     for (ulong i = 0; i < TotalPageCount; i++)
                     {
-                        if (s_mRAT[i] == (byte)PageType.Empty) { if (++run > largest) largest = run; } else { run = 0; }
+                        if (s_mRAT[i] == (byte)PageType.Empty)
+                        {
+                            run++;
+                            if (run > largest)
+                            {
+                                largest = run;
+                            }
+                        }
+                        else
+                        {
+                            run = 0;
+                        }
                     }
                     Serial.WriteString("[V43DIAG] AllocPages null typ="); Serial.WriteNumber((ulong)aType);
                     Serial.WriteString(" seiten="); Serial.WriteNumber(aPageCount);
