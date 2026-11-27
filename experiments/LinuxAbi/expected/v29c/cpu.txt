@@ -1,0 +1,14 @@
+thread cpu >= 120ms=1
+thread cpu <= wall+20ms=1
+process cpu >= thread cpu=1
+process cpu <= wall+20ms=1
+rusage self utime in clock range=1
+rusage thread utime in clock range=1
+rusage stime 0=1
+rusage children 0=1
+getrusage EFAULT: ret=-1 errno=14
+getrusage who=5: ret=-1 errno=22
+stat utime in clock range=1
+stat stime 0=1
+beendeter Thread zaehlt im Prozess=1
+Hauptthread ohne Fremdzeit=1

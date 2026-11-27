@@ -892,4 +892,31 @@ public sealed class LinuxThreadsTests
         mainNs = 2_000_000_000;
         Assert.AreEqual(4_250_000_000L, f.P.ProcessCpuNanos);
     }
+
+    [TestMethod]
+    public void CpuZeitThreadGoneFriertEndwertEin()
+    {
+        var f = new Fixture();
+        long childNs = 1_000_000_000;
+        LinuxThread child = f.Clone(f.Mem, f.Mem + 4);
+        child.CpuNanosSource = () => childNs;
+        f.P.ThreadGone(child); // Brücke räumt einen abgebrochenen Kernelthread auf
+        childNs = 5_000_000_000;
+        Assert.AreEqual(1_000_000_000L, f.P.ProcessCpuNanos, "Endwert zählt einmal, spätere Quelle nicht");
+        f.P.ThreadGone(child); // zweiter Aufruf ändert nichts
+        Assert.AreEqual(1_000_000_000L, f.P.ProcessCpuNanos);
+    }
+
+    [TestMethod]
+    public void GetrusageFehlerfaelleEfaultUndChildren()
+    {
+        var f = new Fixture();
+        f.P.MainThread.CpuNanosSource = () => 2_000_000_000;
+        const ulong Ru = 0x200;
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, f.Call(LinuxSyscalls.Getrusage, 0, 0xFFFF_0000_0000UL), "RUSAGE_SELF, ungültiger Zeiger");
+        Assert.AreEqual(-LinuxSyscalls.EFAULT, f.Call(LinuxSyscalls.Getrusage, 1, 0xFFFF_0000_0000UL), "RUSAGE_THREAD, ungültiger Zeiger");
+        Assert.AreEqual(0L, f.Call(LinuxSyscalls.Getrusage, unchecked((ulong)-1L), f.Mem + Ru), "RUSAGE_CHILDREN");
+        Assert.AreEqual(0L, f.Read64(f.Mem + Ru), "ru_utime.tv_sec 0");
+        Assert.AreEqual(0L, f.Read64(f.Mem + Ru + 8), "ru_utime.tv_usec 0");
+    }
 }

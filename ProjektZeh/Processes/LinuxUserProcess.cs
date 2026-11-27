@@ -230,7 +230,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
 
     public LinuxFutexTable Futexes { get; }
 
-    /// <summary>Anzahl Threads, die noch nicht geendet haben.</summary>
+    /// <summary>V29c: CPU-Zeit des aufrufenden Threads in Nanosekunden (Quelle: Scheduler-Ticks, siehe LinuxThreads.cs).</summary>
     public long CurrentThreadCpuNanos => CurrentThread.CpuNanos;
 
     // V29c: Summe der CPU-Zeit beendeter Threads (die Threadliste verwirft sie beim nächsten clone), unter _threadGate.
@@ -256,6 +256,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         }
     }
 
+    /// <summary>Anzahl Threads, die noch nicht geendet haben.</summary>
     public int LiveThreads
     {
         get
