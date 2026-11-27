@@ -34,7 +34,8 @@ Datei den Rückfall vorbereiten.
    Erwartet werden `LINUXRUN END ... exit 0` im Gastprotokoll,
    `OK: .../shot.png` im Runner und in der Vorschau 50 Absätze plus Tabelle
    bei 798 × 4087 Pixeln. Der beobachtete KVM-smp1-Lauf dauerte 117 s
-   inklusive Boot (V42, `89d389776`, 2 GiB, `~/ladybird-demo-out/m28-*`).
+   mit Kernelbau (41 s) und Plattenbau (3 s), der Gastlauf selbst 67 s;
+   mit fertigem ISO (`--iso`) also etwa 70 s (V42, `89d389776`, 2 GiB, `~/ladybird-demo-out/m28-*`).
    Der vollständige Screenshot mit 30 s Wartezeit ist zusätzlich durch
    V38 belegt (`cbcdb6bb`, KVM smp1, `$static_ref`).
 
