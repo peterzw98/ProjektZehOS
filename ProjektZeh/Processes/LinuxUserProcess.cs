@@ -103,6 +103,8 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
 
     /// <summary>V43: Ein <see cref="NewFrame"/> unter <see cref="_memGate"/> bekam keinen Frame; nur für den laufenden Seitenfehler.</summary>
     private bool _noFrame;
+    /// <summary>V47: <see cref="_noFrame"/> kam vom Kernel (kein freier Frame), nicht von der Prozessgrenze; nur dann lohnt GC.Collect.</summary>
+    private bool _frameShort;
 
     // V10: Threads teilen den Adressraum. Diese Sperre schützt Karte, Frames und brk; sie wird in Aufrufen und Seitenfehlern
     // genommen (Threadkontext, Interrupts an), nie im Interrupt. Platz in der Reihenfolge: nach der Sperre der futex-Tabelle
@@ -939,23 +941,40 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
 
         // V47: Fehlt ein Frame, wird einmal gesammelt und der Fehler neu behandelt, aber nach dem Loslassen von _memGate (und damit auch von
         // _gate und StorageLock, die darunter liegen): Ein Voll-GC unter Sperre hielte jeden anderen Thread des Prozesses fest.
-        bool bus = false;
-        bool oom = false;
-        bool handled = false;
-        FrameReclaim.Retry(() =>
+        // Heißpfad ohne Closure: der erste Versuch läuft direkt; nur bei echtem Frame-Mangel (nicht bei Prozessgrenze) kommt der Retry.
+        bool handled = AttemptFault(address, error, out bool bus, out bool oom, out bool shortFrames);
+        if (!handled && oom && shortFrames)
         {
-            lock (_memGate)
+            bool b2 = false;
+            bool o2 = false;
+            bool h2 = false;
+            FrameReclaim.Retry(() =>
             {
-                _noFrame = false;
-                handled = HandlePageFaultLocked(address, error, out bus);
-                oom = !handled && _noFrame;
-                // Nur Speichermangel ist einen zweiten Versuch wert; jedes andere Scheitern (Segfault, SIGBUS) bleibt endgültig.
-                return !oom;
-            }
-        }, static () => GC.Collect(), static () => System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency);
+                h2 = AttemptFault(address, error, out b2, out o2, out bool s2);
+                return !(o2 && s2);
+            }, static () => GC.Collect(), static () => System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency);
+            handled = h2;
+            bus = b2;
+            oom = o2;
+        }
+
         busError = bus;
         outOfMemory = oom;
         return handled;
+    }
+
+    /// <summary>Ein Versuch der Seitenfehlerbehandlung unter <c>_memGate</c>; <paramref name="shortFrames"/>: der Kernel hatte keinen Frame (GC kann helfen), nicht nur die Prozessgrenze.</summary>
+    private bool AttemptFault(ulong address, ulong error, out bool bus, out bool oom, out bool shortFrames)
+    {
+        lock (_memGate)
+        {
+            _noFrame = false;
+            _frameShort = false;
+            bool handled = HandlePageFaultLocked(address, error, out bus);
+            oom = !handled && _noFrame;
+            shortFrames = oom && _frameShort;
+            return handled;
+        }
     }
 
     /// <summary>
@@ -1449,8 +1468,19 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
 
     private ulong NewFrame()
     {
-        ulong frame = !_budget.AllowsPrivate(PrivateFrames) ? 0 : _pages.AllocateFrame();
-        _noFrame |= frame == 0;
+        if (!_budget.AllowsPrivate(PrivateFrames))
+        {
+            _noFrame = true; // Prozessgrenze: SIGKILL, aber kein GC-Retry
+            return 0;
+        }
+
+        ulong frame = _pages.AllocateFrame();
+        if (frame == 0)
+        {
+            _noFrame = true;
+            _frameShort = true;
+        }
+
         return frame;
     }
 
