@@ -918,6 +918,109 @@ public sealed class LinuxUserProcessTests
         Assert.AreEqual(0, failing.Refs, "alle Verweise zurück");
     }
 
+    [TestMethod]
+    public void MmapDateiLesefehlerImSeitenfehlerIstSigbus()
+    {
+        // V30-P3: Lässt sich eine Dateiseite nicht lesen, meldet der Seitenfehler busError; die Brücke schickt dann SIGBUS mit BUS_ADRERR
+        // (Linux mm_fault_error bei VM_FAULT_SIGBUS) statt SIGSEGV. Ein Kernelzugriff auf dieselbe Seite scheitert (-EFAULT).
+        var (process, _) = StartWithFile(100);
+        var failing = new FailingSource();
+        ulong at = process.MapFilePrivate(0, false, 2 * Page, (int)ProtR, failing, 0);
+        Assert.IsTrue(at > 0);
+        Assert.IsFalse(process.HandlePageFault(at + 8, NotPresentRead, out bool bus));
+        Assert.IsTrue(bus, "Lesefehler: SIGBUS");
+        Assert.IsFalse(process.TryRead(at + Page, new byte[4]), "Kernelzugriff scheitert");
+        Assert.IsFalse(process.HandlePageFault(0x10_0000_0000, NotPresentRead, out bus));
+        Assert.IsFalse(bus, "unbelegt bleibt SIGSEGV");
+        Assert.IsFalse(process.HandlePageFault(at, NotPresentWrite, out bus));
+        Assert.IsFalse(bus, "Schreiben auf PROT_READ bleibt SIGSEGV");
+
+        Span<byte> fpu = stackalloc byte[512];
+        Assert.AreEqual(new LinuxFault(7, LinuxFault.BusAdrerr, at + 8, 14, 4, at + 8), LinuxFault.Of(14, 4, at + 8, 0x40_0000, true, fpu, busError: true));
+        Assert.AreEqual(11, LinuxFault.Of(13, 0, 0, 0x40_0000, false, fpu, busError: true).Signal, "nur der Seitenfehler wird SIGBUS");
+        process.Destroy();
+        Assert.AreEqual(0, failing.Refs, "Prozessende gibt die Quelle zurück");
+    }
+
+    [TestMethod]
+    public void MmapDateiHinterDemEndeUndNachFtruncateSigbus()
+    {
+        // V30-P3: Eine Seite ganz hinter dem Dateiende ist SIGBUS (Linux filemap_fault), auch wenn die Datei erst nach mmap gekürzt wurde.
+        // Die Seite, in der die Datei endet, liest bis zum Ende den Inhalt und danach Nullen. Grenze: eine vor dem Kürzen gelesene Seite
+        // behält ihren Inhalt (Linux nimmt sie beim Kürzen aus allen Abbildungen).
+        var (process, content) = StartWithFile(4 * (int)Page);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdWr);
+        long at = Sys(process, LinuxSyscalls.Mmap, 0, 6 * Page, ProtR, MapPrivateFlag, (ulong)fd, 0);
+        Assert.IsTrue(at > 0, "mmap " + at);
+        Assert.IsFalse(process.HandlePageFault((ulong)at + (5 * Page), NotPresentRead, out bool bus));
+        Assert.IsTrue(bus, "schon bei mmap hinter dem Ende");
+
+        byte[] got = new byte[16];
+        Assert.IsTrue(process.TryRead((ulong)at + (3 * Page), got), "vor dem Kürzen gelesen");
+        Assert.AreEqual(0L, Sys(process, 77, (ulong)fd, Page + 10), "ftruncate");
+        Assert.IsTrue(process.TryRead((ulong)at + Page, got));
+        CollectionAssert.AreEqual(content.AsSpan((int)Page, 10).ToArray().Concat(new byte[6]).ToArray(), got, "Endseite: Inhalt, dann Nullen");
+        Assert.IsFalse(process.HandlePageFault((ulong)at + (2 * Page), NotPresentRead, out bus));
+        Assert.IsTrue(bus, "nach ftruncate hinter dem Ende");
+        Assert.IsFalse(process.TryRead((ulong)at + (2 * Page), got), "Kernelzugriff -EFAULT");
+        Assert.IsTrue(process.TryRead((ulong)at + (3 * Page), got), "Grenze: gelesene Seite bleibt");
+        CollectionAssert.AreEqual(content.AsSpan(3 * (int)Page, 16).ToArray(), got);
+
+        // Wächst die Datei wieder, liest die noch nicht gelesene Seite den neuen Inhalt (Nullen aus ftruncate) statt SIGBUS.
+        Assert.AreEqual(0L, Sys(process, 77, (ulong)fd, 3 * Page));
+        Assert.IsTrue(process.HandlePageFault((ulong)at + (2 * Page), NotPresentRead, out bus));
+        Assert.IsFalse(bus);
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void MmapDateiNachCloseUndUnlinkLesbarBisMunmap()
+    {
+        // V30-P3: close und unlink vor dem ersten Zugriff: Die Abbildung hält die Datei offen (MemoryFileStore behält entfernte, offene
+        // Dateien), der Inhalt verschwindet erst mit dem letzten Ausschnitt.
+        var (process, content) = StartWithFile(3 * (int)Page);
+        long fd = OpenIcu(process, LinuxFileSystem.ORdOnly);
+        long at = Sys(process, LinuxSyscalls.Mmap, 0, 3 * Page, ProtR, MapPrivateFlag, (ulong)fd, 0);
+        Assert.IsTrue(at > 0, "mmap " + at);
+        Assert.AreEqual(0L, Sys(process, 3, (ulong)fd));
+        Assert.AreEqual(0L, Sys(process, 87, PutString(process, Data + 0x100, "/icu.dat")), "unlink");
+        Assert.AreEqual(-2L, OpenIcu(process, LinuxFileSystem.ORdOnly), "Name ist weg");
+        byte[] got = new byte[8];
+        Assert.IsTrue(process.TryRead((ulong)at + (2 * Page) + 3, got));
+        CollectionAssert.AreEqual(content.AsSpan((2 * (int)Page) + 3, 8).ToArray(), got);
+        Assert.IsTrue(process.HandlePageFault((ulong)at + Page, NotPresentRead));
+        Assert.AreEqual(0L, Sys(process, LinuxSyscalls.Munmap, (ulong)at, 3 * Page));
+        Assert.AreEqual(0, process.FileExtentCount);
+        process.Destroy();
+    }
+
+    [TestMethod]
+    public void AusschnittMittenInDerSeiteSigbusNurGanzHinterDemEnde()
+    {
+        // V30-P3: Programmsegmente beginnen mitten in einer Seite. SIGBUS nur, wenn die ganze Dateiseite hinter dem Ende liegt.
+        var store = new MemoryFileStore();
+        Assert.AreEqual(0L, store.CreateFile("f", 0x1A4, out ILinuxStoreFile? created));
+        byte[] data = Enumerable.Range(1, 100).Select(i => (byte)i).ToArray();
+        Assert.AreEqual(100L, created!.WriteAt(0, data));
+        var shared = new LinuxSharedStoreFile(created);
+        var extents = new LinuxFileExtents();
+        shared.AddRef();
+        extents.Add(0x10_0010, 0x2000, 0x10, shared);
+        byte[] frame = new byte[Page];
+        Assert.IsTrue(extents.Fill(0x10_0000, frame));
+        CollectionAssert.AreEqual(data.AsSpan(0x10).ToArray(), frame.AsSpan(0x10, 100 - 0x10).ToArray());
+        Assert.IsTrue(frame.AsSpan(100).ToArray().All(b => b == 0), "Rest der Endseite null");
+        Assert.IsFalse(extents.Fill(0x10_1000, new byte[Page]), "nächste Seite ganz hinter dem Ende");
+
+        // Ausschnitt ab 0x70 (hinter dem Ende bei 100), aber die Dateiseite beginnt bei 0 und hat Inhalt: Nullen, kein SIGBUS.
+        shared.AddRef();
+        extents.Add(0x20_0070, 0x10, 0x70, shared);
+        Assert.IsTrue(extents.Fill(0x20_0000, new byte[Page]));
+        extents.Clear();
+        Assert.AreEqual(1, shared.References);
+        Assert.AreEqual(0L, shared.ReleaseChecked());
+    }
+
     private sealed class FailingSource : ILinuxPageSource
     {
         public int Refs { get; private set; } = 1;

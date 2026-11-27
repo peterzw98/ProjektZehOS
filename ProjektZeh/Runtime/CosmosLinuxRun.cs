@@ -88,6 +88,9 @@ internal static unsafe class CosmosLinuxRun
         public ulong FaultVector, FaultError, FaultAddress, FaultRip;
         public bool Fault;
 
+        /// <summary>V30-P3: Signal des Fehlers (SIGBUS bei einer unlesbaren Dateiseite, sonst nach dem Vektor).</summary>
+        public int FaultSignal;
+
         /// <summary>Gesetzt beim Zeitlimit: Schlafen im Kernel endet, der Aufruf kehrt zurück, die Rückkehr verlässt den Ring 3.</summary>
         public volatile bool Cancelled;
 
@@ -151,6 +154,7 @@ internal static unsafe class CosmosLinuxRun
         /// <summary>Ausnahme im Ring 3 auf diesem Thread (V15: ein Kindprozess meldet sie selbst, nicht über <see cref="Running"/>).</summary>
         public bool Fault;
         public ulong FaultVector;
+        public int FaultSignal; // V30-P3: wie Running.FaultSignal
     }
 
     /// <summary>Ergebnis eines Laufs: Status wie bei run-linux.py (<c>exit n</c>, <c>signal n</c>) oder ein Fehlertext.</summary>
@@ -546,7 +550,7 @@ internal static unsafe class CosmosLinuxRun
 
         if (run.Fault)
         {
-            return new Outcome(true, "signal " + SignalOf(run.FaultVector), "Ausnahme " + run.FaultVector + " Fehlercode 0x" + run.FaultError.ToString("X")
+            return new Outcome(true, "signal " + run.FaultSignal, "Ausnahme " + run.FaultVector + " Fehlercode 0x" + run.FaultError.ToString("X")
                 + " Adresse 0x" + run.FaultAddress.ToString("X") + " RIP 0x" + run.FaultRip.ToString("X")
                 + (run.Error != null ? " " + run.Error : string.Empty));
         }
@@ -812,7 +816,7 @@ internal static unsafe class CosmosLinuxRun
             UserMode.Enter(b.EntryRip, b.Start.Rsp);
             if (b.Fault && !ReferenceEquals(process, run.Process))
             {
-                process.RecordFault(SignalOf(b.FaultVector));
+                process.RecordFault(b.FaultSignal);
             }
 
 
@@ -1278,7 +1282,7 @@ internal static unsafe class CosmosLinuxRun
                 UserMode.Enter(entry, stack);
                 if (b.Fault)
                 {
-                    b.Process.RecordFault(SignalOf(b.FaultVector));
+                    b.Process.RecordFault(b.FaultSignal);
                 }
             }
         }
@@ -1333,10 +1337,11 @@ internal static unsafe class CosmosLinuxRun
             return 0;
         }
 
+        bool busError = false; // V30-P3: Dateiseite nicht lesbar, Linux schickt SIGBUS statt SIGSEGV
         try
         {
             // Im vfork-Kind leitet der Prozess an den Speicher des Elternprozesses weiter (V15).
-            if (vector == PageFault && me.Process.HandlePageFault(address, error))
+            if (vector == PageFault && me.Process.HandlePageFault(address, error, out busError))
             {
                 return 1;
             }
@@ -1357,7 +1362,7 @@ internal static unsafe class CosmosLinuxRun
         // Es läuft auf dem Kernelthread und im Speicher des Elternprozesses, ein Handler mit siglongjmp darin bliebe ungeprüft.
         try
         {
-            if (!me.Process.InVfork && DeliverFault(me, frame, vector, error, address))
+            if (!me.Process.InVfork && DeliverFault(me, frame, vector, error, address, busError))
             {
                 return 1;
             }
@@ -1369,8 +1374,10 @@ internal static unsafe class CosmosLinuxRun
 
         // V15: Eine Ausnahme in einem Kindprozess (nach execve) beendet nur ihn; sein Thread meldet sie nach dem Verlassen.
         // Im vfork-Kind (vor execve) bricht sie den ganzen Lauf ab: Der Thread trägt die Register des blockierten Elternthreads.
+        int signal = busError ? LinuxFault.SigBus : SignalOf(vector);
         me.Fault = true;
         me.FaultVector = vector;
+        me.FaultSignal = signal;
         if (!ReferenceEquals(me.Process, run.Process) && !me.Process.InVfork)
         {
             return 0;
@@ -1378,6 +1385,7 @@ internal static unsafe class CosmosLinuxRun
 
         run.Fault = true;
         run.FaultVector = vector;
+        run.FaultSignal = signal;
         run.FaultError = error;
         run.FaultAddress = address;
         run.FaultRip = frame->Rip;
@@ -1389,12 +1397,12 @@ internal static unsafe class CosmosLinuxRun
     /// sichert es dort (ThreadContext.Fpu vor R15, Interrupts.s fxsave64/fxrstor64), der Frame ist der IRQContext ab R15. Was hier hineinkommt,
     /// lädt der Rücksprung des Stubs, ebenso die geänderten Register (UserModeX64.PrepareReturn prüft sie vorher).
     /// </summary>
-    private static bool DeliverFault(Bridge me, UserFrame* frame, ulong vector, ulong error, ulong address)
+    private static bool DeliverFault(Bridge me, UserFrame* frame, ulong vector, ulong error, ulong address, bool busError)
     {
         LinuxUserProcess process = me.Process;
         var fpu = new Span<byte>((byte*)frame - LinuxSignalFrame.FpuSize, LinuxSignalFrame.FpuSize);
         bool mapped = vector == PageFault && process.HasMapping(address);
-        LinuxFault fault = LinuxFault.Of(vector, error, address, frame->Rip, mapped, fpu);
+        LinuxFault fault = LinuxFault.Of(vector, error, address, frame->Rip, mapped, fpu, busError);
         LinuxUserRegs regs = ToRegs(frame);
         if (!LinuxSignalFrame.DeliverFault(process, ref regs, fpu, fault))
         {

@@ -124,8 +124,10 @@ internal sealed class LinuxFileExtents
     }
 
     /// <summary>
-    /// Füllt die (schon genullte) Seite ab <paramref name="page"/> aus allen Ausschnitten. false bei einem Lesefehler; dann ist der Inhalt
-    /// unbrauchbar und der Aufrufer gibt den Frame zurück. Eine kurze Datei (Ende vor dem Ausschnittende) lässt den Rest null wie Linux.
+    /// Füllt die (schon genullte) Seite ab <paramref name="page"/> aus allen Ausschnitten. false bei einem Lesefehler oder wenn die Seite
+    /// eines Ausschnitts ganz hinter dem Dateiende liegt (V30-P3, etwa nach ftruncate); dann ist der Inhalt unbrauchbar, der Aufrufer gibt den
+    /// Frame zurück und der Seitenfehler wird SIGBUS wie bei Linux (<c>filemap_fault</c>: Seitenindex ab der aufgerundeten Dateigröße).
+    /// Endet die Datei in der Seite, bleibt der Rest null wie bei Linux.
     /// </summary>
     public bool Fill(ulong page, Span<byte> frame)
     {
@@ -152,6 +154,11 @@ internal sealed class LinuxFileExtents
 
                 if (n == 0)
                 {
+                    if (done == 0 && (from == page || BeyondEnd(e.Source, offset - (long)(from - page))))
+                    {
+                        return false;
+                    }
+
                     break;
                 }
 
@@ -160,6 +167,17 @@ internal sealed class LinuxFileExtents
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// V30-P3: Liegt die Dateiseite, die bei <paramref name="pageOffset"/> beginnt, ganz hinter dem Dateiende? Gefragt erst, wenn das Lesen ab
+    /// dem Ausschnittbeginn schon 0 lieferte; beginnt der Ausschnitt mitten in der Seite (Programmsegment), prüft ein Byte am Seitenanfang.
+    /// Dateioffset und Adresse sind kongruent (mmap verlangt ausgerichtete Versätze, ELF p_offset ≡ p_vaddr); sonst zählt Offset 0.
+    /// </summary>
+    private static bool BeyondEnd(ILinuxPageSource source, long pageOffset)
+    {
+        Span<byte> one = stackalloc byte[1];
+        return source.ReadAt(Math.Max(0, pageOffset), one) <= 0;
     }
 
     /// <summary>Entfernt [start, end) aus allen Ausschnitten; Randstücke bleiben mit eigenem Verweis.</summary>

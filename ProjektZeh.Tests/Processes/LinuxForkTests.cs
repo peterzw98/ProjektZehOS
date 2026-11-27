@@ -99,6 +99,51 @@ public sealed class LinuxForkTests
     private static void Put(LinuxUserProcess p, ulong at, byte value) => Assert.IsTrue(p.TryWrite(at, new[] { value }));
 
     [TestMethod]
+    public void ForkMitUngelesenenDateiseitenLiestImKind()
+    {
+        // V30-P3: Seiten einer privaten Dateiabbildung, die die Eltern vor fork nicht berührt haben, liest das Kind selbst aus der Datei,
+        // auch nachdem die Eltern close und unlink gerufen haben. Schreiben bleibt im jeweiligen Prozess; die Datei schließt erst, wenn
+        // Kind und Eltern ihre Ausschnitte abgegeben haben.
+        var term = new TerminalDescriptor(new Lines());
+        var store = new MemoryFileStore();
+        var parent = new LinuxUserProcess(new Pages(_store), term, 1, 64 << 20, null, new LinuxFileSystem(store, term));
+        Wire(parent);
+        ulong buf = MapAnon(parent, 3 * Page, MapPrivate);
+        byte[] content = new byte[2 * Page];
+        for (int i = 0; i < content.Length; i++)
+        {
+            content[i] = (byte)((i * 13) + (i >> 12));
+        }
+
+        Assert.IsTrue(parent.TryWrite(buf, "/f\0"u8));
+        Assert.IsTrue(parent.TryWrite(buf + Page, content));
+        long fd = Call(parent, 2, buf, (ulong)(LinuxFileSystem.ORdWr | LinuxFileSystem.OCreat), 0x1A4);
+        Assert.IsTrue(fd >= 0, "open " + fd);
+        Assert.AreEqual((long)content.Length, Call(parent, Write, (ulong)fd, buf + Page, (ulong)content.Length));
+        long m = Call(parent, Mmap, 0, 2 * Page, ProtRw, MapPrivate, (ulong)fd, 0);
+        Assert.IsTrue(m > 0, "mmap " + m);
+        ulong at = (ulong)m;
+        Put(parent, at + 1, 0xAA); // Seite 0 vor fork gelesen und geändert, Seite 1 nicht
+        Assert.AreEqual(0L, Call(parent, Close, (ulong)fd));
+        Assert.AreEqual(0L, Call(parent, 87, buf), "unlink");
+
+        Assert.IsTrue(Call(parent, LinuxSyscalls.Fork) > 0);
+        LinuxUserProcess child = _children[0];
+        Assert.AreEqual(1, child.FileExtentCount, "Kind erbt den Ausschnitt");
+        Assert.AreEqual(content[Page + 5], Get(child, at + Page + 5), "ungelesene Seite im Kind aus der Datei");
+        Assert.AreEqual(0xAA, Get(child, at + 1), "kopierte Seite der Eltern");
+        Put(child, at + Page + 6, 0x11);
+        Assert.AreEqual(content[Page + 6], Get(parent, at + Page + 6), "Schreiben des Kinds bleibt im Kind");
+        long bytesOpen = store.TotalBytes;
+        child.Destroy();
+        Assert.AreEqual(bytesOpen, store.TotalBytes, "Eltern halten die Datei noch");
+        Assert.AreEqual(content[Page + 7], Get(parent, at + Page + 7));
+        Assert.AreEqual(0L, Call(parent, Munmap, at, 2 * Page));
+        Assert.AreEqual(0L, store.TotalBytes, "letzter Ausschnitt schließt die entfernte Datei");
+        parent.Destroy();
+    }
+
+    [TestMethod]
     public void ForkTrenntPrivatenSpeicherUndTeiltGeteilten()
     {
         LinuxUserProcess parent = NewParent();

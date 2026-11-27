@@ -1,0 +1,14 @@
+Datei=1
+mmap 4 Seiten bei 1 Seite + 10=1
+Endseite Inhalt=1 1
+Endseite hinter Ende Null=1 1
+ganz hinter Ende: Zugriff=0 Signal=7 Code=2 Adresse=1
+ftruncate klein=0
+Seite 0 nach Kuerzen=1 1
+Seite 0 hinter neuem Ende Null=1 1
+Seite 3 nach Kuerzen: Zugriff=0 Signal=7 Code=2
+ftruncate gross=0
+Seite 3 nach Wachsen=1 1
+ftruncate wieder klein=0
+write aus Seite hinter Ende=-1 Signal=0
+Kind ohne Handler: Signal=7
