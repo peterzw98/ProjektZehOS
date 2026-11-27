@@ -106,6 +106,7 @@ internal sealed partial class LinuxUserProcess : ILinuxProcView
             Pid = Pid,
             ParentPid = ParentPid,
             GroupPid = GroupPid,
+            SessionId = Session,
             Name = LinuxProcFiles.CommOf(ExePath),
             State = zombie ? 'Z' : running ? 'R' : 'S',
             Uid = Uid,

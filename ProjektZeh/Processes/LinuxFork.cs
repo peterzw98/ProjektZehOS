@@ -90,9 +90,14 @@ internal sealed partial class LinuxUserProcess
         }
 
         var entry = new LinuxChild(child.Pid, child);
-        lock (_children)
+        lock (_ids.GroupGate)
         {
-            _children.Add(entry);
+            // V35: Gruppe erben und sichtbar werden in einem Schritt (wie vfork, LinuxSpawn.cs).
+            child.InheritGroup(this);
+            lock (_children)
+            {
+                _children.Add(entry);
+            }
         }
 
         if (!StartFork(child, stack))

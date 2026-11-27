@@ -667,4 +667,127 @@ public sealed class LinuxProcessWaitTests
         Assert.AreEqual(0L, Sys(r.P, KillNr, 0, 15));
         Assert.AreEqual("kind0 kind1 ich", string.Join(" ", ends));
     }
+
+    // V35: Prozessgruppen und Sitzungen (setpgid, getpgid, setsid; kill und wait4 nach Gruppe).
+    private const long EPERM = 1, EACCES = 13;
+
+    private static long Setpgid(LinuxUserProcess p, int pid, int pgid) => Sys(p, LinuxSyscalls.Setpgid, unchecked((ulong)pid), unchecked((ulong)pgid));
+
+    /// <summary>posix_spawn mit execve: neues Abbild als Kind des ersten Prozesses.</summary>
+    private static LinuxUserProcess SpawnExec(Root r)
+    {
+        LinuxUserProcess c = r.Spawn();
+        Assert.AreEqual(0L, c.Exec("/hello", ["/hello"], []));
+        c.Release();
+        return r.Exec!;
+    }
+
+    [TestMethod]
+    public void VforkKindGruendetMitSetpgidNullNullEineNeueGruppe()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess child = r.Spawn();
+        Assert.AreEqual((long)RootPid, Sys(child, LinuxSyscalls.Getpgrp), "geerbt");
+        Assert.AreEqual(0L, Setpgid(child, 0, 0), "Hub-Kind: setpgid(0,0) im vfork-Kind");
+        Assert.AreEqual((long)child.Pid, Sys(child, LinuxSyscalls.Getpgrp));
+        Assert.AreEqual((long)child.Pid, Sys(r.P, LinuxSyscalls.Getpgid, (ulong)child.Pid), "der Elternprozess sieht die Gruppe");
+        Assert.AreEqual((long)RootPid, Sys(child, LinuxSyscalls.Getsid, 0), "gleiche Sitzung");
+        Assert.AreEqual((long)RootPid, Sys(r.P, LinuxSyscalls.Getpgrp), "die Eltern bleiben");
+
+        Assert.AreEqual(0L, child.Exec("/hello", ["/hello"], []));
+        LinuxUserProcess next = r.Exec!;
+        Assert.AreEqual(-EACCES, Setpgid(r.P, child.Pid, RootPid), "execve abgeschlossen, das Kind trägt das neue Abbild");
+        child.Release();
+        Assert.AreEqual(child.Pid, next.ProcessGroup, "execve behält die Gruppe");
+        Assert.AreEqual(-EACCES, Setpgid(r.P, next.Pid, RootPid), "nach execve darf der Elternprozess nicht mehr");
+        Assert.AreEqual(0L, Setpgid(next, 0, RootPid), "der Prozess selbst schon, in eine Gruppe der Sitzung");
+        Assert.AreEqual(RootPid, next.ProcessGroup);
+        Assert.AreEqual(-EPERM, Setpgid(r.P, 0, 0), "erster Prozess ist Sitzungsführer");
+    }
+
+    [TestMethod]
+    public void SetpgidPrueftZielUndGruppeWieLinux()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess a = r.Spawn();
+        Assert.AreEqual(0L, Setpgid(r.P, a.Pid, 0), "Eltern setzen die Gruppe des Kindes vor execve (pgid 0 = PID des Ziels)");
+        Assert.AreEqual(0L, a.Exec("/hello", ["/hello"], []));
+        a.Release();
+        LinuxUserProcess leader = r.Exec!;
+        LinuxUserProcess b = r.Spawn();
+
+        Assert.AreEqual(-EINVAL, Setpgid(r.P, b.Pid, -1));
+        Assert.AreEqual(-ESRCH, Setpgid(r.P, 4242, 0), "unbekannt");
+        Assert.AreEqual(-ESRCH, Setpgid(b, RootPid, 0), "der Elternprozess ist kein eigenes Kind");
+        Assert.AreEqual(-ESRCH, Setpgid(b, leader.Pid, 0), "Geschwister ebenso");
+        Assert.AreEqual(-EPERM, Setpgid(r.P, b.Pid, 4242), "Gruppe gibt es nicht");
+        Assert.AreEqual(0L, Setpgid(r.P, b.Pid, leader.Pid), "bestehende Gruppe in derselben Sitzung");
+        Assert.AreEqual(leader.Pid, b.ProcessGroup);
+        Assert.AreEqual(0L, Setpgid(b, 0, RootPid), "zurück in die Gruppe des ersten Prozesses");
+
+        Assert.AreEqual((long)b.Pid, Sys(b, LinuxSyscalls.Setsid), "kein Gruppenführer: neue Sitzung");
+        Assert.AreEqual((long)b.Pid, Sys(r.P, LinuxSyscalls.Getsid, (ulong)b.Pid));
+        Assert.AreEqual((long)b.Pid, Sys(b, LinuxSyscalls.Getpgrp));
+        Assert.AreEqual(-EPERM, Setpgid(r.P, b.Pid, b.Pid), "andere Sitzung");
+        Assert.AreEqual(-EPERM, Setpgid(b, 0, 0), "Sitzungsführer");
+        Assert.AreEqual(-EPERM, Sys(b, LinuxSyscalls.Setsid), "schon Gruppenführer");
+        Assert.AreEqual(-EPERM, Setpgid(leader, 0, b.Pid), "Gruppe einer fremden Sitzung");
+        Assert.AreEqual(-EPERM, Sys(leader, LinuxSyscalls.Setsid), "führt seine Gruppe");
+        Root.End(b, LinuxWaitStatus.Exited(0));
+    }
+
+    [TestMethod]
+    public void KillUndWait4MitNegativerGruppeTreffenNurDieGruppe()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess c1 = r.Spawn();
+        Assert.AreEqual(0L, Setpgid(c1, 0, 0));
+        Assert.AreEqual(0L, c1.Exec("/hello", ["/hello"], []));
+        c1.Release();
+        LinuxUserProcess g1 = r.Exec!;
+        LinuxUserProcess other = SpawnExec(r); // bleibt in der Gruppe des ersten Prozesses
+        var hit = new List<string>();
+        g1.OnKilled = _ => hit.Add("g1");
+        other.OnKilled = _ => hit.Add("other");
+        r.P.OnExit = _ => Assert.Fail("der Aufrufer steht nicht in der Gruppe");
+
+        Assert.AreEqual(0L, Sys(r.P, KillNr, unchecked((ulong)-g1.Pid), 15));
+        Assert.AreEqual("g1", string.Join(" ", hit));
+        Assert.AreEqual(-ESRCH, Sys(r.P, KillNr, unchecked((ulong)-4242), 15), "leere Gruppe");
+
+        Assert.AreEqual(0L, r.Wait4(-g1.Pid, 0, LinuxUserProcess.WNohang), "Gruppe hat ein laufendes Kind");
+        g1.ReportEnd(g1.WaitStatusOf(9));
+        Assert.AreEqual(0L, Sys(r.P, KillNr, unchecked((ulong)-g1.Pid), 0), "Zombie der Gruppe: gelingt ohne Wirkung");
+        Assert.AreEqual((long)g1.Pid, r.Wait4(-g1.Pid, 0, LinuxUserProcess.WNohang));
+        Assert.AreEqual(-ECHILD, r.Wait4(-g1.Pid, 0, LinuxUserProcess.WNohang), "Gruppe leer");
+        Assert.AreEqual(0L, r.Wait4(0, 0, LinuxUserProcess.WNohang), "eigene Gruppe: other läuft");
+        Assert.AreEqual(-ESRCH, Sys(r.P, KillNr, unchecked((ulong)-g1.Pid), 0), "geerntet: Gruppe weg");
+
+        r.P.OnExit = _ => hit.Add("ich");
+        Assert.AreEqual(0L, Sys(r.P, KillNr, 0, 15), "kill(0): eigene Gruppe, Aufrufer zuletzt");
+        Assert.AreEqual("g1 other ich", string.Join(" ", hit));
+    }
+
+    [TestMethod]
+    public void ZombieHaeltSeineGruppeFuerSetpgid()
+    {
+        var r = new Root();
+        WriteFile(r.Fs, "/hello", LinuxSpawnTests.Elf());
+        LinuxUserProcess c1 = r.Spawn();
+        Assert.AreEqual(0L, Setpgid(c1, 0, 0));
+        Assert.AreEqual(0L, c1.Exec("/hello", ["/hello"], []));
+        c1.Release();
+        LinuxUserProcess g1 = r.Exec!;
+        g1.ReportEnd(LinuxWaitStatus.Exited(0));
+        LinuxUserProcess c2 = r.Spawn();
+        Assert.AreEqual(0L, Setpgid(c2, 0, g1.Pid), "Linux: die Gruppe besteht, bis der Zombie ausgetragen ist");
+        Assert.AreEqual((long)g1.Pid, Sys(r.P, LinuxSyscalls.Getpgid, (ulong)g1.Pid), "getpgid findet den Zombie");
+        Assert.AreEqual(0L, Setpgid(c2, 0, RootPid));
+        Assert.AreEqual((long)g1.Pid, r.Wait4(g1.Pid, 0, 0));
+        Assert.AreEqual(-EPERM, Setpgid(c2, 0, g1.Pid), "ausgetragen: Gruppe weg");
+        Root.End(c2, LinuxWaitStatus.Exited(0));
+    }
 }

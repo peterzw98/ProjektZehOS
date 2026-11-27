@@ -73,6 +73,7 @@
     <Compile Include="..\ProjektZeh\Processes\LinuxSignals.cs" Link="Processes\LinuxSignals.cs" />
     <Compile Include="..\ProjektZeh\Processes\LinuxOpenFiles.cs" Link="Processes\LinuxOpenFiles.cs" />
     <Compile Include="..\ProjektZeh\Processes\LinuxWait.cs" Link="Processes\LinuxWait.cs" />
+    <Compile Include="..\ProjektZeh\Processes\LinuxProcessGroups.cs" Link="Processes\LinuxProcessGroups.cs" />
     <Compile Include="..\ProjektZeh\Processes\LinuxSpawn.cs" Link="Processes\LinuxSpawn.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxSyscallsStart.cs" Link="Processes\Syscalls\LinuxSyscallsStart.cs" />
     <Compile Include="..\ProjektZeh\Processes\Syscalls\LinuxProcFiles.cs" Link="Processes\Syscalls\LinuxProcFiles.cs" />

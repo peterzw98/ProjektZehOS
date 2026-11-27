@@ -117,6 +117,8 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         _descriptors[1] = terminal;
         _descriptors[2] = terminal;
         Pid = pid;
+        _pgid = pid; // V35: allein in Gruppe und Sitzung, bis fork, vfork oder execve sie vom Elternprozess übernehmen
+        _sid = pid;
         _maxFrames = maxBytes / Page;
 
         // Der Hauptthread trägt die PID als TID (Linux: Thread-Gruppenführer); weitere TIDs vergibt _ids (NextTid über alle Prozesse).
