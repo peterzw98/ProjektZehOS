@@ -28,7 +28,7 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 1. `run hello` im Desktop-Terminal → „Hallo aus dem Ring 3!“, Ende 0.
 2. Linux-Testsätze (`scripts/test-linux-all.py`): **12 von 13** Sätzen wie unter Linux (KVM, 1 und 4 CPUs, engineer 27.11. 09:10); einzige Abweichung `badptr` in s1, weil FAT keine symbolischen Links kennt.
 3. **Ladybirds JavaScript-Engine `js`** (statisch mit musl, 33 MB, unverändert) im ZehOS-Terminal: `1+1` → `2`, REPL mit `(7*6).toString(2)` → `"101010"`, Strg+C bricht Endlosschleife ab. Gastskript 11/11 bei 1 und 4 CPUs. Foto: `zehos-v3-out/js14-1/03-repl-antwort.png` (MSI).
-4. **Ladybird selbst startet im Gast** (27.11., senior2): der Hub aus dem musl-Bau ohne Qt läuft durch ld-musl, ICU und fontconfig mit 2 Threads; Stand der nächsten Hürde wird bis Donnerstag nachgetragen.
+4. **Ladybird rendert eine Seite im ZehOS-Gast** (27.11., senior): `static.html` vollständig als PNG 798 × 4087 (alle 50 Absätze, Tabelle, Umlaute), 8 Ladybird-Prozesse im Ring 3, KVM 1 CPU. Demo: `scripts/ladybird-demo-run.sh`. Wiederholungen und 4 CPUs werden bis Donnerstag nachgetragen.
 
 ## 5. Zahlen zur Machbarkeit
 

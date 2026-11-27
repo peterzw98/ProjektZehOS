@@ -208,6 +208,8 @@ Mit der Abnahme von #423 (Peter, 27.11.) greift wegen D `offen` die Zeile „C o
 
 **Entscheidung: GO** (Peter im Terminal, 27. November 2026): Der Ladybird-Port beginnt, ohne auf D zu warten. D bleibt offen und wird mit dem Port selbst geschlossen (Ladybird ohne Oberfläche im ZehOS-Gast). Nächste Pakete: dynamisches Laden über `PT_INTERP` (die musl-Helfer `WebContent`, `RequestServer` und `ImageDecoder` sind dynamisch gelinkt und brauchen nur `ld-musl`, `libstdc++`, `libgcc_s`, WebContent zusätzlich `libdrm`), Ladybird-Bau ohne Qt für den headless-Start, Fehlersignale (V24).
 
+**Stand D nach GO (27.11., 11:23, agent-peter-senior):** Ladybird (musl-Bündel `99fb75b7`, Hub ohne Qt, `--headless=screenshot --disable-sandbox`) rendert `static.html` **im ZehOS-Gast** vollständig: PNG 798 × 4087 mit allen 50 Absätzen und der Tabelle (KVM, 1 CPU, `story/ladybird` `cbcdb6bb`, ein Lauf, `--screenshot-delay 30`). Dafür nötig waren V25/V25b (dynamisches Laden), V28/V28b (Bündel-Platte, Dateisperren), V29 (`/proc`), V30 (Dateiseiten bei Zugriff), V32 (`MAP_SHARED` auf Dateien), V33 (`FIONBIO`), V34 (Eigentümer), V35 (Prozessgruppen), V36 (Thread-Plätze), V37 (Umgebung), der Cosmos-Patch AHCI-Flush 30 s und im Bündel `fonts.conf`/`conf.d`. Offen: Wiederholungen, 4 CPUs, TCG, VMware; stiller SIGSEGV eines WebContent-Prozesses (V38); Ladedauer im Gast 5–8 s gegenüber 0,3 s unter Linux.
+
 ### Offene Punkte
 
 1. **N1-D2 (#636):** Ursache von `no_screenshot` klären, `static.html` headless mit Screenshot, Branch `task/ladybird-n1d2-alles` mergen, Bericht `…-n1-musl.md`, Urteil D (`trägt` oder `glibc`).
