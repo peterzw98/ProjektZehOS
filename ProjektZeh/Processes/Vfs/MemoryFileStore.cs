@@ -26,6 +26,7 @@ internal sealed class MemoryFileStore : ILinuxFileStore
     private readonly Dictionary<string, Node> _nodes = new(StringComparer.Ordinal);
     private long _totalBytes;
     private long _clock;
+    internal const long MinStampNanos = 1_000_000_000L;
 
     /// <summary>
     /// Änderungszeit: Wanduhr in Nanosekunden seit 1970, nie rückwärts und je Änderung mindestens eins weiter. Ein bloßer Zähler (1, 2, ...)
@@ -34,7 +35,9 @@ internal sealed class MemoryFileStore : ILinuxFileStore
     /// </summary>
     private long Stamp()
     {
-        long now = (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) * 100;
+        // Untergrenze eine Sekunde: Steht die Uhr vor 1970 (Wanduhr nicht gestellt), wäre der Wert negativ oder 0, und Fontconfig
+        // verwürfe den Cache wieder (V41b).
+        long now = Math.Max((DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) * 100, MinStampNanos);
         _clock = now > _clock ? now : _clock + 1;
         return _clock;
     }
@@ -44,7 +47,9 @@ internal sealed class MemoryFileStore : ILinuxFileStore
         MaxFileBytes = maxFileBytes;
         MaxTotalBytes = maxTotalBytes;
         MaxNodes = maxNodes;
-        _nodes[string.Empty] = new Node { Kind = LinuxNodeKind.Directory, Mode = 0x1ED, Children = new SortedSet<string>(StringComparer.Ordinal) };
+        // Wurzel wie jedes andere Verzeichnis mit Zeit (vorher 0). Die Zeit eines Verzeichnisses ändert sich nur beim Anlegen und Umbenennen
+        // des Verzeichnisses selbst, nicht wenn Einträge darin entstehen: bewusst so, Fontconfig vergleicht die Verzeichniszeit mit dem Cache.
+        _nodes[string.Empty] = new Node { Kind = LinuxNodeKind.Directory, Mode = 0x1ED, Mtime = Stamp(), Children = new SortedSet<string>(StringComparer.Ordinal) };
     }
 
     public long MaxFileBytes { get; }
