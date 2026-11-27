@@ -214,21 +214,19 @@ internal static unsafe class Memory
             nuint ip = Cosmos.Kernel.Core.Bridge.ContextSwitchNative.CaptureRegDisplay(&rd);
             UnwindState st = default;
             ExceptionHelper.SeedUnwindStateFromRegDisplay(ref st, &rd, ip);
-            nuint ip1 = 0, ip2 = 0, ip3 = 0;
-            if (!ExceptionHelper.UnwindOneFrameWithCFI(ref st, ip))
+            // Diag: Frames 1-2 sind RhHandleAllocDependent/CreateEntryNoResize; Schluessel ist Frame 4, ausgegeben als
+            // ip2=Frame4, ip1=Frame3, ip3=Frame5.
+            nuint f = ip, f3 = 0, f4 = 0, f5 = 0;
+            for (int n = 1; n <= 5; n++)
             {
-                return;
-            }
-            ip1 = st.ReturnAddress;
-            if (ExceptionHelper.UnwindOneFrameWithCFI(ref st, ip1))
-            {
-                ip2 = st.ReturnAddress;
-                if (ExceptionHelper.UnwindOneFrameWithCFI(ref st, ip2))
+                if (!ExceptionHelper.UnwindOneFrameWithCFI(ref st, f))
                 {
-                    ip3 = st.ReturnAddress;
+                    break;
                 }
+                f = st.ReturnAddress;
+                if (n == 3) { f3 = f; } else if (n == 4) { f4 = f; } else if (n == 5) { f5 = f; }
             }
-            Add(ip2, ip1, ip3);
+            Add(f4, f3, f5);
         }
 
         private static void Add(nuint key, nuint ip1, nuint ip3)
