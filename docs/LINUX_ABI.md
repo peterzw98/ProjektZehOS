@@ -67,6 +67,7 @@ bleibt die Wurzel. Ein abschließendes `/` (auch aus `.`/`..` am Ende) bleibt er
 | 18 | `pwrite64` | V14: wie `write` ab dem Versatz, über Seek nachgebildet wie `pread64` (Position bleibt, auch nach einem Fehler); Versatz < 0 `-EINVAL` vor der Prüfung des Deskriptors, Versatz + Länge über `INT64_MAX` `-EINVAL`; Terminal `-ESPIPE`; Verzeichnis und nur lesend offen `-EBADF`; mit `O_APPEND` hängt es wie Linux ans Ende an |
 | 295, 296 | `preadv`, `pwritev` | V14: wie `readv`/`writev` ab dem Versatz `pos_l` (`pos_h` hat auf x86-64 keine Bedeutung), Position bleibt; Fehlerwege wie `pwrite64`, `preadv` auf ein Verzeichnis `-EISDIR`; mehr als 1024 Einträge `-EINVAL` |
 | 77 | `ftruncate` | V14: setzt die Länge, die Position bleibt; Verlängern liest sich als Nullbytes und läuft auf der Platte in Schritten mit Kontingent (V7, `-ENOSPC`); Länge < 0 `-EINVAL` vor der Prüfung des Deskriptors; nicht zum Schreiben offen, Verzeichnis, Gerät, Terminal `-EINVAL` wie Linux; über der Dateigrenze des Speichers `-EFBIG` |
+| 73 | `flock` | V28b: siehe Abschnitt „Bereichssperren“ |
 | 74, 75 | `fsync`, `fdatasync` | V14: Datei und Verzeichnis `0` (beide Speicher schreiben ungepuffert durch: `DirectoryFileStore` öffnet mit Puffergröße 1, Cosmos-FAT schreibt jeden Cluster sofort); `/dev/null`, `/dev/zero`, `/dev/tty` und das Terminal `-EINVAL` wie Linux für Zeichengeräte und Pipes |
 | 8 | `lseek` | whence 0-2 (`SEEK_DATA`/`SEEK_HOLE` `-EINVAL`); Terminal `-ESPIPE`; bei Verzeichnissen ist die Position der `getdents64`-Index (`rewinddir`, `seekdir`, `telldir`), `SEEK_END` `-EINVAL` |
 | 32, 33, 292 | `dup`, `dup2`, `dup3` | teilen die offene Datei; `dup2` schließt das Ziel still; `dup3` mit gleichen Nummern oder Flags außer `O_CLOEXEC` `-EINVAL` |
@@ -648,6 +649,10 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxFileLocks.cs` (Tabel
   erneut, bis es gelingt; ein Signal mit Handler gibt `-EINTR`, der Abbruch des Programms beendet das Warten.
 - **Abweichungen:** keine Erkennung von Verklemmungen (Linux `-EDEADLK`; hier wartet `F_SETLKW` bis Signal oder Abbruch); die Öffnungsart wird nicht geprüft (Linux
   `-EBADF` für `F_WRLCK` auf eine nur lesend offene Datei); Pipes, Sockets und Terminal `-EINVAL` statt einer Sperre; ohne Sperrtabelle (Ersatzprozesse der Hosttests)
-  `-ENOLCK`. `flock(2)` (73) fehlt weiter.
+  `-ENOLCK`.
+- **`flock(2)` (73):** `LOCK_SH`, `LOCK_EX`, `LOCK_UN`, mit `LOCK_NB` ohne Warten (`-EAGAIN` = `EWOULDBLOCK`), ohne `LOCK_NB` wartend wie `F_SETLKW` (1 ms, `-EINTR`).
+  Ganze Datei, Besitzer ist die offene Datei (`dup` und `fork` teilen sie, ein zweites `open` ist ein anderer Besitzer); flock- und fcntl-Sperren sehen einander nicht.
+  Umstufen löst wie Linux erst die alte Sperre (nicht atomar). Freigabe mit `LOCK_UN` oder beim letzten `close` der offenen Datei. Sonstiger Befehl `-EINVAL`, ungültige
+  Nummer `-EBADF`. Abweichung: Pipes, Sockets und Terminal `0` ohne Wirkung. `close_range` gibt POSIX-Sperren frei wie `close`.
 - **chmod, link:** siehe Tabelle der Dateiaufrufe (V2): `chmod` ohne Wirkung auf FAT, `link` `-EPERM` wie vfat (fontconfig fällt für seine Sperrdatei auf `mkdir` zurück).
 - **HOME:** `CosmosLinuxRun.Environment` setzt `HOME=/` (Prozesswurzel); `experiments/LinuxAbi/run-linux.py` und `expected/s1/args_env_auxv.txt` mit derselben Umgebung.

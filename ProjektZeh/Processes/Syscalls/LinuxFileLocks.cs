@@ -6,6 +6,7 @@ namespace ProjektZeh.Processes.Syscalls;
 /// V28b: beratende Bereichssperren (fcntl F_SETLK/F_SETLKW/F_GETLK und F_OFD_*) aller Prozesse eines Laufs, wie Linux <c>fs/locks.c</c>.
 /// Eine Sperre gehört entweder einem Prozess (POSIX, Besitzer ist die PID) oder einer offenen Datei (OFD, Besitzer ist das Objekt der offenen
 /// Datei); die Datei selbst erkennt die Tabelle an (st_dev, st_ino), damit zwei open derselben Datei dieselben Sperren sehen.
+/// flock-Sperren (<see cref="Range.Flock"/>) stehen in derselben Tabelle, gehören immer der offenen Datei und treffen nur auf andere flock-Sperren.
 /// <para>
 /// Sperren desselben Besitzers stoßen nie zusammen; sie ersetzen, teilen oder verschmelzen sich (Linux <c>posix_lock_inode</c>). POSIX und OFD
 /// sind verschiedene Besitzer, auch im selben Prozess. Freigabe: POSIX bei jedem close einer Nummer des Prozesses auf die Datei und am
@@ -36,6 +37,9 @@ internal sealed class LinuxFileLocks
         public int Type;
         public long Start;
         public long End; // einschließlich
+
+        /// <summary>flock-Sperre (ganze Datei, Besitzer ist immer die offene Datei). Sie trifft wie bei Linux nie auf fcntl-Sperren.</summary>
+        public bool Flock;
     }
 
     /// <summary>Anzahl gehaltener Bereiche (Tests).</summary>
@@ -73,12 +77,12 @@ internal sealed class LinuxFileLocks
     /// F_GETLK: die erste Sperre eines anderen Besitzers, die eine Sperre vom Typ <paramref name="type"/> auf [start, end] verhindern würde;
     /// null, wenn keine.
     /// </summary>
-    public Range? FindConflict(ulong dev, ulong ino, int pid, object? ofd, int type, long start, long end)
+    public Range? FindConflict(ulong dev, ulong ino, int pid, object? ofd, int type, long start, long end, bool flock = false)
     {
         for (int i = 0; i < _ranges.Count; i++)
         {
             Range r = _ranges[i];
-            if (r.Dev == dev && r.Ino == ino && !SameOwner(r, pid, ofd) && r.Start <= end && start <= r.End && (type == Write || r.Type == Write))
+            if (r.Dev == dev && r.Ino == ino && r.Flock == flock && !SameOwner(r, pid, ofd) && r.Start <= end && start <= r.End && (type == Write || r.Type == Write))
             {
                 return r;
             }
@@ -92,9 +96,9 @@ internal sealed class LinuxFileLocks
     /// immer. Wie Linux wird der Bereich des Besitzers erst ganz frei gemacht (Nachbarn geteilt), dann neu eingetragen und mit angrenzenden
     /// Bereichen gleichen Typs verschmolzen.
     /// </summary>
-    public bool TrySet(ulong dev, ulong ino, int pid, object? ofd, int type, long start, long end)
+    public bool TrySet(ulong dev, ulong ino, int pid, object? ofd, int type, long start, long end, bool flock = false)
     {
-        if (type != Unlock && FindConflict(dev, ino, pid, ofd, type, start, end) != null)
+        if (type != Unlock && FindConflict(dev, ino, pid, ofd, type, start, end, flock) != null)
         {
             return false;
         }
@@ -103,7 +107,7 @@ internal sealed class LinuxFileLocks
         for (int i = _ranges.Count - 1; i >= 0; i--)
         {
             Range r = _ranges[i];
-            if (r.Dev != dev || r.Ino != ino || !SameOwner(r, pid, ofd) || r.End < start || end < r.Start)
+            if (r.Dev != dev || r.Ino != ino || r.Flock != flock || !SameOwner(r, pid, ofd) || r.End < start || end < r.Start)
             {
                 continue;
             }
@@ -138,7 +142,7 @@ internal sealed class LinuxFileLocks
         for (int i = _ranges.Count - 1; i >= 0; i--)
         {
             Range r = _ranges[i];
-            if (r.Dev != dev || r.Ino != ino || !SameOwner(r, pid, ofd) || r.Type != type)
+            if (r.Dev != dev || r.Ino != ino || r.Flock != flock || !SameOwner(r, pid, ofd) || r.Type != type)
             {
                 continue;
             }
@@ -155,7 +159,7 @@ internal sealed class LinuxFileLocks
             }
         }
 
-        _ranges.Add(new Range { Dev = dev, Ino = ino, Pid = pid, Ofd = ofd, Type = type, Start = start, End = end });
+        _ranges.Add(new Range { Dev = dev, Ino = ino, Pid = pid, Ofd = ofd, Type = type, Start = start, End = end, Flock = flock });
         return true;
     }
 
@@ -166,7 +170,7 @@ internal sealed class LinuxFileLocks
     /// <summary>Prozessende: alle POSIX-Sperren von <paramref name="pid"/>, auf jeder Datei.</summary>
     public void ReleaseProcess(int pid) => _ranges.RemoveAll(r => r.Ofd == null && r.Pid == pid);
 
-    /// <summary>Letztes close der offenen Datei: ihre OFD-Sperren fallen (Linux <c>locks_remove_file</c>).</summary>
+    /// <summary>Letztes close der offenen Datei: ihre OFD- und flock-Sperren fallen (Linux <c>locks_remove_file</c>).</summary>
     public void ReleaseOfd(object ofd) => _ranges.RemoveAll(r => ReferenceEquals(r.Ofd, ofd));
 
     private static bool SameOwner(Range r, int pid, object? ofd) => ofd == null ? r.Ofd == null && r.Pid == pid : ReferenceEquals(r.Ofd, ofd);

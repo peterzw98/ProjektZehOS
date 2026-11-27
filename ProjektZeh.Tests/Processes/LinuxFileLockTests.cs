@@ -14,7 +14,7 @@ namespace ProjektZeh.Tests.Processes;
 public sealed class LinuxFileLockTests
 {
     private const ulong Page = 4096;
-    private const long Open = 2, Close = 3, Lseek = 8, Dup = 32, Fcntl = 72, Link = 86, Chmod = 90, Fchmod = 91, Linkat = 265, Fchmodat2 = 452;
+    private const long Open = 2, Close = 3, Lseek = 8, Dup = 32, Fcntl = 72, Flock = 73, CloseRange = 436, Link = 86, Chmod = 90, Fchmod = 91, Linkat = 265, Fchmodat2 = 452;
     private const int GetLk = 5, SetLk = 6, SetLkW = 7, OfdGetLk = 36, OfdSetLk = 37;
     private const short Rd = 0, Wr = 1, Un = 2;
     private const long ENOENT = 2, EBADF = 9, EAGAIN = 11, EEXIST = 17, EINVAL = 22, EPERM = 1, EOVERFLOW = 75;
@@ -265,6 +265,52 @@ public sealed class LinuxFileLockTests
         Assert.AreEqual(0, Lock(b, mb, fb, SetLkW, Wr, 0, 0));
         Assert.AreEqual(3, host.Sleeps, "wartet, bis a die Sperre mit close freigibt");
         Assert.AreEqual(-EAGAIN, Lock(a, ma, OpenFile(a, ma), SetLk, Rd, 0, 1));
+    }
+
+    [TestMethod]
+    public void FlockSharesExcludesAndIgnoresFcntlLocks()
+    {
+        const ulong Sh = 1, Ex = 2, Nb = 4, Unl = 8;
+        var (a, ma) = NewProcess(1);
+        var (b, mb) = NewProcess(2);
+        int fa = OpenFile(a, ma), fb = OpenFile(b, mb);
+
+        Assert.AreEqual(0, Call(a, Flock, (ulong)fa, Sh));
+        Assert.AreEqual(0, Call(b, Flock, (ulong)fb, Sh | Nb), "Leser teilen");
+        Assert.AreEqual(-EAGAIN, Call(b, Flock, (ulong)fb, Ex | Nb), "Umstufen scheitert am anderen Leser");
+        Assert.AreEqual(0, Call(a, Flock, (ulong)fa, Ex | Nb), "b hat seine Lesesperre beim Umstufen verloren (wie Linux)");
+        Assert.AreEqual(-EAGAIN, Call(b, Flock, (ulong)fb, Sh | Nb));
+
+        // flock und fcntl sehen einander nicht; ein zweites open desselben Prozesses ist ein anderer Besitzer.
+        Assert.AreEqual(0, Lock(b, mb, fb, SetLk, Wr, 0, 0));
+        int fa2 = OpenFile(a, ma);
+        Assert.AreEqual(-EAGAIN, Call(a, Flock, (ulong)fa2, Sh | Nb));
+
+        Assert.AreEqual(-EINVAL, Call(a, Flock, (ulong)fa, 3));
+        Assert.AreEqual(-EBADF, Call(a, Flock, 99, Sh));
+
+        // dup teilt die offene Datei: close der ersten Nummer gibt nichts frei, erst das letzte close.
+        long dupped = Call(a, Dup, (ulong)fa);
+        Assert.IsTrue(dupped >= 3);
+        Assert.AreEqual(0, Call(a, Close, (ulong)fa));
+        Assert.AreEqual(-EAGAIN, Call(b, Flock, (ulong)fb, Sh | Nb));
+        Assert.AreEqual(0, Call(a, Close, (ulong)dupped));
+        Assert.AreEqual(0, Call(b, Flock, (ulong)fb, Ex | Nb), "letztes close gibt die flock-Sperre frei");
+        Assert.AreEqual(0, Call(b, Flock, (ulong)fb, Unl));
+        Assert.AreEqual(0, Call(a, Flock, (ulong)fa2, Ex | Nb), "LOCK_UN gibt frei");
+    }
+
+    [TestMethod]
+    public void CloseRangeReleasesPosixLocks()
+    {
+        var (a, ma) = NewProcess(1);
+        var (b, mb) = NewProcess(2);
+        int fa = OpenFile(a, ma), fb = OpenFile(b, mb);
+
+        Assert.AreEqual(0, Lock(a, ma, fa, SetLk, Wr, 0, 0));
+        Assert.AreEqual(-EAGAIN, Lock(b, mb, fb, SetLk, Wr, 0, 1));
+        Assert.AreEqual(0, Call(a, CloseRange, (ulong)fa, (ulong)fa, 0));
+        Assert.AreEqual(0, Lock(b, mb, fb, SetLk, Wr, 0, 1), "close_range gibt die POSIX-Sperre frei wie close");
     }
 
     [TestMethod]

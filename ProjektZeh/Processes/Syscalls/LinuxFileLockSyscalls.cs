@@ -4,7 +4,7 @@ namespace ProjektZeh.Processes.Syscalls;
 
 /// <summary>
 /// V28b: fcntl F_GETLK/F_SETLK/F_SETLKW und F_OFD_GETLK/F_OFD_SETLK/F_OFD_SETLKW über <see cref="LinuxFileLocks"/>. Anlass: sqlite (Ladybird-Profil
-/// <c>Ladybird.db</c>) bricht ohne F_SETLK mit „disk I/O error“ ab.
+/// <c>Ladybird.db</c>) bricht ohne F_SETLK mit „disk I/O error“ ab. Dazu flock(2) (73): Ladybirds Hub endet ohne es mit ENOSYS.
 /// </summary>
 internal static partial class LinuxSyscalls
 {
@@ -14,9 +14,14 @@ internal static partial class LinuxSyscalls
     /// <summary>Wartezeit zwischen zwei Versuchen von F_SETLKW; gehalten wird dabei keine Sperre.</summary>
     private const long LockRetryNanos = 1_000_000;
 
-    /// <summary>true für F_SETLKW und F_OFD_SETLKW: Der Verteiler ruft dann <see cref="DoFcntlLockWait"/> statt der groben Dateisperre.</summary>
+    // flock(2): Befehle wie <sys/file.h>.
+    private const int LockSh = 1, LockEx = 2, LockNb = 4, LockUn = 8;
+
+    /// <summary>
+    /// true für F_SETLKW, F_OFD_SETLKW und flock ohne LOCK_NB: Der Verteiler ruft dann <see cref="DoFcntlLockWait"/> statt der groben Dateisperre.
+    /// </summary>
     private static bool IsWaitingLock(ref SyscallArgs a) =>
-        a.Number == FileNr.Fcntl && (int)a.A1 is FdSetlkw or FdOfdSetlkw;
+        (a.Number == FileNr.Fcntl && (int)a.A1 is FdSetlkw or FdOfdSetlkw) || (a.Number == FileNr.Flock && ((int)a.A1 & LockNb) == 0);
 
     /// <summary>
     /// F_SETLKW: versucht unter FileGate zu sperren; steht ein anderer Besitzer im Weg, wartet der Aufruf außerhalb der Sperre und versucht
@@ -30,7 +35,9 @@ internal static partial class LinuxSyscalls
             long r;
             lock (f.FileGate)
             {
-                r = p.GetDescriptor((int)a.A0) is null ? -EBADF : DoFcntlLock(p, (int)a.A0, (int)a.A1, a.A2);
+                r = p.GetDescriptor((int)a.A0) is null ? -EBADF
+                    : a.Number == FileNr.Flock ? DoFlock(p, (int)a.A0, (int)a.A1)
+                    : DoFcntlLock(p, (int)a.A0, (int)a.A1, a.A2);
             }
 
             if (r != -EAGAIN)
@@ -122,6 +129,59 @@ internal static partial class LinuxSyscalls
         }
 
         return p.Memory.TryWrite(arg, b) ? 0 : -EFAULT;
+    }
+
+    /// <summary>
+    /// flock(2) mit gehaltener FileGate: LOCK_SH/LOCK_EX/LOCK_UN auf die ganze Datei, Besitzer ist die offene Datei (dup und fork teilen sie, ein
+    /// zweites open ist ein anderer Besitzer). flock- und fcntl-Sperren sehen einander nicht (Linux seit 2.0). Wie Linux <c>flock_lock_inode</c>
+    /// fällt die eigene alte Sperre vor dem neuen Versuch; ein Umstufen ist also nicht atomar, und zwei Leser, die gleichzeitig auf LOCK_EX
+    /// umstufen, verklemmen sich nicht. Konflikt: -EAGAIN (= EWOULDBLOCK); ohne LOCK_NB wartet <see cref="DoFcntlLockWait"/>.
+    /// Freigabe beim letzten close der offenen Datei (<see cref="LinuxFileLocks.ReleaseOfd"/>).
+    /// </summary>
+    private static long DoFlock(ILinuxProcess p, int fd, int op)
+    {
+        ILinuxDescriptor? d = p.GetDescriptor(fd);
+        if (d is null)
+        {
+            return -EBADF;
+        }
+
+        int type = (op & ~LockNb) switch
+        {
+            LockSh => LinuxFileLocks.Read,
+            LockEx => LinuxFileLocks.Write,
+            LockUn => LinuxFileLocks.Unlock,
+            _ => -1,
+        };
+        if (type < 0)
+        {
+            return -EINVAL;
+        }
+
+        if (d is not ILinuxFile file)
+        {
+            return 0; // Pipes, Sockets, Terminal: Sperre ohne Wirkung (Abweichung, LINUX_ABI.md); Linux sperrt auch sie
+        }
+
+        if (p is not ILinuxFileLocking locking)
+        {
+            return -FileENOLCK;
+        }
+
+        long r = file.Stat(out LinuxStat st);
+        if (r < 0)
+        {
+            return r;
+        }
+
+        LinuxFileLocks locks = locking.FileLocks;
+        locks.TrySet(st.Dev, st.Ino, 0, file, LinuxFileLocks.Unlock, 0, LinuxFileLocks.ToEnd, flock: true);
+        if (type == LinuxFileLocks.Unlock)
+        {
+            return 0;
+        }
+
+        return locks.TrySet(st.Dev, st.Ino, 0, file, type, 0, LinuxFileLocks.ToEnd, flock: true) ? 0 : -EAGAIN;
     }
 
     /// <summary>

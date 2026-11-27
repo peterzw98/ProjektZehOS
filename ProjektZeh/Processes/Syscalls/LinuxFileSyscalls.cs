@@ -12,7 +12,7 @@ internal static partial class LinuxSyscalls
 {
     private static class FileNr
     {
-        public const long Read = 0, Open = 2, Close = 3, Lseek = 8, Pread64 = 17, Pwrite64 = 18, Readv = 19, Pipe = 22, Dup = 32, Dup2 = 33, Fcntl = 72,
+        public const long Read = 0, Open = 2, Close = 3, Lseek = 8, Pread64 = 17, Pwrite64 = 18, Readv = 19, Pipe = 22, Dup = 32, Dup2 = 33, Fcntl = 72, Flock = 73,
             Fsync = 74, Fdatasync = 75, Ftruncate = 77, Getcwd = 79, Chdir = 80, Fchdir = 81, Openat = 257, Dup3 = 292, Pipe2 = 293, Preadv = 295, Pwritev = 296,
             MemfdCreate = 319;
     }
@@ -59,6 +59,7 @@ internal static partial class LinuxSyscalls
 
                 return WithCloseOnExec(f, DoDup2(p, f, (int)a.A0, (int)a.A1, allowSame: false), ((int)a.A2 & FileOCloexec) != 0);
             case FileNr.Fcntl: return DoFcntl(p, f, (int)a.A0, (int)a.A1, a.A2);
+            case FileNr.Flock: return DoFlock(p, (int)a.A0, (int)a.A1); // V28b: nur LOCK_NB oder LOCK_UN; wartend über DoFcntlLockWait
             case FileNr.Getcwd: return DoGetcwd(p, f, a.A0, a.A1);
             case FileNr.Chdir: return DoChdir(p, f, a.A0);
             case FileNr.Fchdir: return DoFchdir(p, f, (int)a.A0);
