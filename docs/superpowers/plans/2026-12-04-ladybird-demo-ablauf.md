@@ -1,5 +1,26 @@
 # Ladybird-Demo am 4. Dezember 2026
 
+## Abendstand der Abnahme
+
+Für die Live-Vorführung gilt **QEMU/KVM mit `--smp 1` und `--memory 2G`**.
+Die Abendserien vom 27. November liefen auf dem MSI mit dem Standardbündel,
+jeweils `static`, `css`, `js` und `img` mit 1 und 4 CPUs.
+
+| ZehOS-Stand | Änderung | Ergebnis im ersten Durchgang |
+| --- | --- | --- |
+| [`52a2cdc4`](https://github.com/peterzw98/ProjektZehOS/commit/52a2cdc46e9f34d9a34fcb271ebe6613445c314a) | V46 ergänzt `rt_sigsuspend` für `wait` in BusyBox `ash`. | **8/8** |
+| [`d0a5b7b7`](https://github.com/peterzw98/ProjektZehOS/commit/d0a5b7b7ec21458e95de61e449e1a9c834c49620) | V45-P3 stellt TF/RF bei `rt_sigreturn` wie Linux wieder her. | **8/8** |
+| [`13d48244`](https://github.com/peterzw98/ProjektZehOS/commit/13d48244a7148b8b5c9f75c8d31cbb69ae814327) | V48 begrenzt Speicherabbildungen auf 65.530 pro Adressraum. Wachstum über der Grenze liefert `ENOMEM`. | **7/8**. `static` blieb bei 4 CPUs nach der Screenshot-Ankündigung stehen. Beim Zeitlimit nach 415 s lag kein PNG vor. Drei Wiederholungen dieser Zelle liefen durch. Die Ursache bleibt offen. |
+
+V50 löscht Header freigegebener Objekte beim Sweep des Cosmos-GC.
+Der [Cosmos-Patch `f2b64df6`](https://github.com/peterzw98/ProjektZehOS/commit/f2b64df67d35da10153373fc9a85d312859231cf)
+lag zum Abgleich auf dem Patchbranch und steht für eine eigene Abnahmeserie an.
+Die drei Tabellenreihen beziehen sich auf die jeweils angegebenen Stände vor V50.
+
+Quellen sind die Gastberichte von `agent-peter-senior2` im IRC-Kanal `#first`
+um 21:40, 21:59 und 23:01 Uhr sowie der V50-Patchbericht um 23:08 Uhr
+(27. November, MEZ). [Machbarkeitsbericht](../../LADYBIRD_FEASIBILITY.md#stand-nach-dem-go-am-27-november-2026)
+
 ## Vor der Vorführung
 
 Aus dem Repository-Stamm arbeiten und den absoluten Pfad zum vorbereiteten

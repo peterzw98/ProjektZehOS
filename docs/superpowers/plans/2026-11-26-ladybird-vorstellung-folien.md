@@ -1,6 +1,6 @@
 # Ladybird auf ZehOS: Stichpunkte für die Vorstellung (4.12.2026)
 
-> Stand 27. November 2026 nach den Generalproben. Peter gab am 27.11. das **GO** am Tor N1-Z. Teststände und Grenzen stehen im [Machbarkeitsbericht](../../LADYBIRD_FEASIBILITY.md#stand-nach-dem-go-am-27-november-2026), Befehle und Rückfall im [Demo-Ablauf](2026-12-04-ladybird-demo-ablauf.md).
+> Stand 27. November 2026, abends. Peter gab am 27.11. das **GO** am Tor N1-Z. Teststände und Grenzen stehen im [Machbarkeitsbericht](../../LADYBIRD_FEASIBILITY.md#stand-nach-dem-go-am-27-november-2026), Befehle und Rückfall im [Demo-Ablauf](2026-12-04-ladybird-demo-ablauf.md).
 
 ## 1. Frage
 
@@ -23,7 +23,7 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 | Dateisystem | eigene Wurzel auf der Datenplatte, Rechteprüfung des angemeldeten Nutzers, kein Ausbruch über `..`/Links/8.3-Kurznamen, Wachstumskontingent |
 | Terminal | Ausgabe, Eingabe, termios, Rohmodus für Zeileneditoren, Abbruch mit Strg+C und Strg+Umschalt+Esc |
 
-## 4. Demo (im Gast, QEMU/KVM, 1 und 4 CPUs)
+## 4. Gastnachweise und Demo (live mit 1 CPU)
 
 1. `run hello` im Desktop-Terminal → „Hallo aus dem Ring 3!“, Ende 0.
 2. Linux-Testsätze (`scripts/test-linux-all.py`): **12 von 13** Sätzen wie unter Linux (KVM, 1 und 4 CPUs, engineer 27.11. 09:10); einzige Abweichung `badptr` in s1, weil FAT keine symbolischen Links kennt.
@@ -32,6 +32,7 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 5. **Abnahme von vier Seiten:** `0760f4b8` mit V43/V45, KVM, 2 GiB, `lb-headless-99fb75b7`. HTML, CSS, JavaScript und PNG-Dekodierung je mit 1 und 4 CPUs, **8/8 im ersten Versuch**, Gastlauf 82–89 s, gleicher Anteil nicht-weißer Pixel je Seite. TCG auf demselben Stand, 1 CPU, `static.html` und `js.html` je 1/1.
 6. **Generalprobe mit dem Standardbündel:** KVM auf `ca0e3238` mit dem ISO `0760f4b8-run`. `static.html`, Projektseite und Canvas dauerten je 88 s gesamt. Die WSL-Probe mit TCG prüfte `static.html` zweimal in je 104 s, davon 96 s im Gast. Beide PNGs waren bytegleich zur MSI-Referenz. [Demo-Ablauf](2026-12-04-ladybird-demo-ablauf.md)
 7. **Seite über HTTP im Gast:** BusyBox-`httpd` und Ladybird in demselben LinuxRun-Prozessbaum. `http://127.0.0.1:8080/zehos-projekt.html` ergab 798 × 720 Pixel, **3/3** auf KVM mit 1 CPU und 2 GiB (`e4f5eff6`, `6301341f`, `2dd30960`, 68–91 s). [Machbarkeitsbericht](../../LADYBIRD_FEASIBILITY.md#stand-nach-dem-go-am-27-november-2026)
+8. **Abendserien auf MSI/KVM, 2 GiB:** `static`, `css`, `js` und `img` jeweils mit 1 und 4 CPUs. `52a2cdc4` (V46) und `d0a5b7b7` (mit V45-P3) je **8/8**. `13d48244` (mit V48) **7/8** im ersten Durchgang. `static` mit 4 CPUs blieb einmal beim Screenshot stehen. Drei Wiederholungen dieser Zelle liefen durch. Die Ursache bleibt offen. [Abendstand im Demo-Ablauf](2026-12-04-ladybird-demo-ablauf.md#abendstand-der-abnahme)
 
 ## 5. Zahlen zur Machbarkeit
 
@@ -46,12 +47,14 @@ Kann ZehOS (C#-Kernel auf Cosmos) einen echten Webbrowser wie Ladybird tragen, u
 
 - Jeder Baustein mit unabhängigem Review; mehrere Sicherheitsreviews (Linux-Schnittstelle, ELF-Lader, Dateisystem) fanden und schlossen u. a.: Kernel-OOM über Terminal, Zugriff auf Sicherheitsdatenbank per 8.3-Kurzname, Datenverlust beim Ordner-Umbenennen mit offenen Dateien.
 - Host- und Gasttests sind in den Berichten zu den jeweiligen Ständen dokumentiert. [Nachweise](../../LADYBIRD_FEASIBILITY.md)
+- V46 ergänzt `rt_sigsuspend` für das Warten auf Kindprozesse in BusyBox `ash`. V45-P3 stellt bei `rt_sigreturn` die Flags TF und RF wie Linux wieder her. V48 begrenzt die Zahl der Speicherabbildungen auf 65.530 pro Adressraum und liefert bei Überschreitung `ENOMEM`. V50 räumt im Cosmos-GC die Header freigegebener Objekte auf. Der Patch `f2b64df6` stand zum Abgleich noch vor der Story-Übernahme. [Teststände und Quellen](2026-12-04-ladybird-demo-ablauf.md#abendstand-der-abnahme)
 
 ## 7. Grenzen (ehrlich)
 
 - Alle Threads **aller Prozesse eines Laufs** auf einer CPU (4 CPUs bringen Ladybird noch keine Parallelität, laser Risiko-Review 27.11.); fork kopiert den Adressraum sofort (kein Copy-on-Write).
 - Geprüfter Netzpfad ist HTTP über IPv4-Loopback. Die Demo rendert headless. FAT stellt keine symbolischen Links oder nativen Unix-Rechte bereit.
 - Die Demo verwendet 2 GiB Gast-RAM. Seit V43 kann bei 512 MiB `WebContent` per `SIGKILL` enden. Neustarts können bis zum Zeitlimit laufen und ein weißes oder fehlendes PNG hinterlassen.
+- Live läuft die Demo mit **einer CPU**. Bei einem Stillstand greifen die vorbereiteten Gastbilder und die Drei-Minuten-Grenze im Runbook.
 - Nicht geprüft: VMware, echte Hardware.
 
 ## 8. Ausblick
