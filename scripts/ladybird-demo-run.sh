@@ -7,11 +7,12 @@
 #                                       [--page <name>] [--accel kvm|tcg] [--wait-scale F] [--memory 1G]
 # Ausgabe: <ausgabeordner>/shot.png (Standard ~/ladybird-demo-out/<zeitstempel>), run.log (alles, mit Zeitstempeln), times.txt,
 #          dazu die Dateien des Gastskripts (serial.log, program-out.txt). Exit 0 nur mit PNG und Hub-Status "exit 0".
+#          Kernel-Halt im Gast (KERNEL PANIC, "System halting", [FAILFAST]): sofortiger Abbruch statt --timeout, Exit 3.
 # Voraussetzungen: dotnet (DOTNET_ROOT, Standard ~/.dotnet), KVM, qemu-img, mtools, Netz nur fuer den Cosmos-Quellbau.
 # Ein Gast gleichzeitig: bei laufendem qemu bricht das Skript ab (QEMU_OK=1 erzwingt den Start).
 # --skip-cosmos: vorhandene Werkzeuge unter .tools/cosmos-tools/<VERSION> nutzen; --skip-build: --iso verwenden; --disk: fertige Platte.
 # --page: Demoseite aus experiments/Ladybird.Probe/pages (beim Plattenbau samt PNG-Bildern und fonts/ nach /share/zehos-probe gelegt).
-# --memory: Gastspeicher statt 512M (QEMU -m).
+# --memory: Gastspeicher (QEMU -m, Standard 2G; mit 512M haelt der Kernel bei Ladybird aus Speichermangel).
 # --accel tcg: ohne KVM (feste Wartezeiten x10, --wait-scale aendert den Faktor); --timeout dann entsprechend hoeher setzen.
 set -u
 R=$(cd "$(dirname "$0")/.." && pwd)
@@ -21,7 +22,7 @@ URL=file:///share/zehos-probe/static.html; DELAY=30; SMP=1; TIMEOUT=600; SKIPC=0
 while [ $# -gt 0 ]; do case $1 in
   -b) BUNDLE=$2; shift 2;; -o) OUT=$2; shift 2;; -u) URL=$2; shift 2;; -s) DELAY=$2; shift 2;;
   --smp) SMP=$2; shift 2;; --timeout) TIMEOUT=$2; shift 2;; --skip-cosmos) SKIPC=1; shift;; --skip-build) SKIPB=1; shift;;
-  --iso) ISO=$2; shift 2;; --disk) DISK=$2; shift 2;; -h|--help) sed -n 2,14p "$0"; exit 0;;
+  --iso) ISO=$2; shift 2;; --disk) DISK=$2; shift 2;; -h|--help) sed -n 2,16p "$0"; exit 0;;
   --page)
     case ${2-} in
       ""|[!a-z0-9]*|*[!a-z0-9-]*)
@@ -83,6 +84,12 @@ RUN="bin/Hub --headless=screenshot --disable-sandbox --force-cpu-painting --wind
 step "Gastlauf: $RUN"
 timed gastlauf python3 scripts/test-linux-root-disk-guest.py "$ISO" "$DISK" "$OUT/guest" --dest lb --run "$RUN" --timeout "$TIMEOUT" --smp "$SMP" --accel "$ACCEL" ${WSCALE:+--wait-scale "$WSCALE"} ${MEM:+--memory "$MEM"} --fetch lb/shot.png --out "$OUT/shot.png"
 RC=$?
+if [ "$RC" = 3 ]; then
+  # Das Gastskript hat eine Haltmarke gesehen und den Gast beendet; die Platte wurde nicht gelesen.
+  step "KERNEL-HALT: $(grep -m1 -E 'KERNEL PANIC|System halting|\[FAILFAST\]' "$OUT/guest/serial.log" 2>/dev/null)"
+  echo "gesamt $(( $(date +%s)-T0 )) s (Kernel-Halt)" >> "$OUT/times.txt"
+  echo "KERNEL-HALT (Gast $OUT/guest/serial.log, Log $LOG)"; exit 3
+fi
 [ -s "$OUT/shot.png" ] && file "$OUT/shot.png" | tee -a "$LOG" | sed 's/.*: //' || step "kein Screenshot"
 step "gesamt $(( $(date +%s)-T0 )) s, Gastlauf rc=$RC"
 echo "gesamt $(( $(date +%s)-T0 )) s" >> "$OUT/times.txt"
