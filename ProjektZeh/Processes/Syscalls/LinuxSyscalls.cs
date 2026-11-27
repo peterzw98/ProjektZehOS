@@ -307,7 +307,11 @@ internal static partial class LinuxSyscalls
             {
                 if (p.GetDescriptor(fd) is LinuxMemFile mem)
                 {
-                    return offset > long.MaxValue / 2 ? -EINVAL : shared.MapShared(mem, flen, prot, (long)(offset / 0x1000));
+                    // Wie Linux 6.12 (file_mmap_ok mit MAX_LFS_FILESIZE): Offset plus Länge über LONG_MAX gibt -EOVERFLOW; darunter
+                    // passt die Dateiseite in long und der Bereich hinter dem Dateiende scheitert erst beim Zugriff.
+                    return flen > long.MaxValue || offset / 0x1000 > (ulong)(long.MaxValue - (long)flen) >> 12
+                        ? -Vfs.LinuxErrno.EOVERFLOW
+                        : shared.MapShared(mem, flen, prot, (long)(offset / 0x1000));
                 }
             }
         }
@@ -445,7 +449,13 @@ internal static partial class LinuxSyscalls
             return 0;
         }
 
-        return p.Protect(addr, (len + 0xfff) & ~0xfffUL, prot) ? 0 : -ENOMEM;
+        ulong flen = (len + 0xfff) & ~0xfffUL;
+        if (p is ILinuxSharedMemory shared)
+        {
+            return shared.ProtectShared(addr, flen, prot); // V17: -EACCES für versiegelte geteilte Abbildungen
+        }
+
+        return p.Protect(addr, flen, prot) ? 0 : -ENOMEM;
     }
 
     private static long DoArchPrctl(ILinuxProcess p, ulong code, ulong arg)

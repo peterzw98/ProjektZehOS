@@ -14,11 +14,12 @@ namespace ProjektZeh.Tests.Processes;
 public sealed class LinuxMemFileTests
 {
     private const ulong Page = 4096;
-    private const long Read = 0, Write = 1, Close = 3, Fstat = 5, Lseek = 8, Mmap = 9, Munmap = 11, Fcntl = 72, Ftruncate = 77, Madvise = 28,
+    private const long Read = 0, Write = 1, Close = 3, Fstat = 5, Lseek = 8, Mmap = 9, Munmap = 11, Fcntl = 72, Ftruncate = 77, Madvise = 28, Mprotect = 10,
         MemfdCreate = 319;
     private const int ProtRw = 3, ProtR = 1, MapShared = 1, MapPrivate = 2;
     private const int FAddSeals = 1033, FGetSeals = 1034, MfdCloexec = 1, MfdAllowSealing = 2, MfdHugetlb = 4;
-    private const long EPERM = 1, EBUSY = 16, EINVAL = 22;
+    private const long EPERM = 1, EACCES = 13, EBUSY = 16, EINVAL = 22, EFBIG = 27, EOVERFLOW = 75;
+    private const int ProtNone = 0;
 
     /// <summary>Frames aller Prozesse wie der PageAllocator des Kernels: eine Quelle, Zählung der lebenden Frames.</summary>
     private sealed class Frames
@@ -242,6 +243,83 @@ public sealed class LinuxMemFileTests
         long priv = Call(p, Mmap, 0, Page, ProtRw, MapPrivate, (ulong)fd, 0);
         Assert.IsTrue(priv > 0);
         Assert.AreEqual(0, p.SharedRegionCount - 1);
+        p.Destroy();
+        Assert.AreEqual(0, _store.Live.Count);
+    }
+
+    /// <summary>
+    /// V17-Review P2: mprotect darf ein Schreibsiegel nicht umgehen. Erwartungen wie Linux 6.12 auf dem Host gemessen: Auch eine
+    /// PROT_READ- oder PROT_NONE-Abbildung vor dem Siegel blockiert F_SEAL_WRITE (-EBUSY); eine danach entstandene wird nie schreibbar
+    /// (-EACCES), auch nicht ihr Reststück nach munmap in der Mitte.
+    /// </summary>
+    [TestMethod]
+    public void MprotectUmgehtSchreibsiegelNicht()
+    {
+        var (p, _, mem) = NewProcess(1);
+        int fd = Memfd(p, mem, MfdAllowSealing);
+        Assert.AreEqual(0, Call(p, Ftruncate, (ulong)fd, 2 * Page));
+
+        ulong ro = MapSharedFd(p, fd, Page, ProtR);
+        Assert.AreEqual(-EBUSY, Call(p, Fcntl, (ulong)fd, FAddSeals, 8), "lesende Abbildung darf schreibbar werden");
+        Assert.AreEqual(0, Call(p, Mprotect, ro, Page, ProtRw), "vor dem Siegel erlaubt");
+        Assert.AreEqual(0, Call(p, Munmap, ro, Page));
+
+        ulong none = MapSharedFd(p, fd, Page, ProtNone);
+        Assert.AreEqual(-EBUSY, Call(p, Fcntl, (ulong)fd, FAddSeals, 8), "PROT_NONE zählt ebenso");
+        Assert.AreEqual(0, Call(p, Munmap, none, Page));
+
+        Assert.AreEqual(0, Call(p, Fcntl, (ulong)fd, FAddSeals, 8));
+        ulong sealed_ = MapSharedFd(p, fd, 2 * Page, ProtR);
+        Assert.AreEqual(-EACCES, Call(p, Mprotect, sealed_, Page, ProtRw));
+        Assert.AreEqual(-EACCES, Call(p, Mprotect, sealed_ + Page, Page, 2), "PROT_WRITE allein");
+        Assert.AreEqual(0, Call(p, Mprotect, sealed_, Page, ProtR));
+        Assert.AreEqual(0, Call(p, Mprotect, sealed_, 2 * Page, ProtNone));
+        Assert.AreEqual(0, Call(p, Munmap, sealed_ + Page, Page));
+        Assert.AreEqual(-EACCES, Call(p, Mprotect, sealed_, Page, ProtRw), "Reststück bleibt lesend");
+        Assert.IsFalse(p.Protect(sealed_, Page, ProtRw), "auch der Weg ohne Fehlernummer");
+        Assert.IsFalse(p.TryWrite(sealed_, new byte[] { 1 }));
+
+        // Anonymer Speicher daneben bleibt unberührt.
+        Assert.AreEqual(0, Call(p, Mprotect, mem, Page, ProtRw));
+        p.Destroy();
+        Assert.AreEqual(0, _store.Live.Count);
+    }
+
+    /// <summary>V17-Review P2: write nach lseek(LONG_MAX - 1) lief über und gab CopyLocked einen negativen Versatz (Linux: -EINVAL).</summary>
+    [TestMethod]
+    public void WriteHinterLongMaxLaeuftNichtUeber()
+    {
+        var (p, _, mem) = NewProcess(1);
+        int fd = Memfd(p, mem);
+        Assert.AreEqual(long.MaxValue - 1, Call(p, Lseek, (ulong)fd, (ulong)(long.MaxValue - 1), 0));
+        Assert.AreEqual(-EINVAL, Call(p, Write, (ulong)fd, mem, 4));
+        Assert.AreEqual(1 << 26, Call(p, Lseek, (ulong)fd, 1 << 26, 0));
+        Assert.AreEqual(-EFBIG, Call(p, Write, (ulong)fd, mem, 1), "Obergrenze ist der Speicher des Erzeugers (64 MiB)");
+        Assert.AreEqual((1 << 26) - 4, Call(p, Lseek, (ulong)fd, (1 << 26) - 4, 0));
+        Assert.AreEqual(4, Call(p, Write, (ulong)fd, mem, 4), "genau bis zur Grenze");
+        Assert.AreEqual(-EFBIG, Call(p, Write, (ulong)fd, mem, 1));
+        p.Destroy();
+        Assert.AreEqual(0, _store.Live.Count);
+    }
+
+    /// <summary>mmap-Offset nahe 2^63 wie Linux 6.12 (file_mmap_ok): bis LONG_MAX abbildbar, darüber -EOVERFLOW; der Zugriff scheitert am Dateiende.</summary>
+    [TestMethod]
+    public void MmapOffsetNahe2Hoch63()
+    {
+        var (p, _, mem) = NewProcess(1);
+        int fd = Memfd(p, mem);
+        Assert.AreEqual(0, Call(p, Ftruncate, (ulong)fd, Page));
+        Assert.AreEqual(-EOVERFLOW, Call(p, Mmap, 0, Page, ProtR, MapShared, (ulong)fd, 0x7fff_ffff_ffff_f000UL));
+        Assert.AreEqual(-EOVERFLOW, Call(p, Mmap, 0, Page, ProtR, MapShared, (ulong)fd, 0x8000_0000_0000_0000UL));
+        Assert.AreEqual(-EOVERFLOW, Call(p, Mmap, 0, Page, ProtR, MapShared, (ulong)fd, 0xffff_ffff_ffff_f000UL));
+        Assert.AreEqual(-EOVERFLOW, Call(p, Mmap, 0, 2 * Page, ProtR, MapShared, (ulong)fd, 0x7fff_ffff_ffff_e000UL), "Offset plus Länge");
+
+        ulong high = MapSharedFd(p, fd, Page, ProtR, 0x7fff_ffff_ffff_e000UL);
+        ulong mid = MapSharedFd(p, fd, Page, ProtR, 0x4000_0000_0000_0000UL);
+        Assert.IsFalse(p.TryRead(high, new byte[1]), "hinter dem Dateiende");
+        Assert.IsFalse(p.TryRead(mid, new byte[1]));
+        Assert.AreEqual(0, Call(p, Munmap, high, Page));
+        Assert.AreEqual(0, Call(p, Munmap, mid, Page));
         p.Destroy();
         Assert.AreEqual(0, _store.Live.Count);
     }

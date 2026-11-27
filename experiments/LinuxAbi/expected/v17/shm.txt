@@ -36,4 +36,18 @@ ftruncate gross=-1 errno=1
 mmap rw versiegelt=-1 errno=1
 mmap ro=0 errno=0
 inhalt=S
+ftruncate=0 errno=0
+seal write bei ro=-1 errno=16
+mprotect rw vor siegel=0 errno=0
+seal write bei none=-1 errno=16
+seal write=0 errno=0
+mprotect rw versiegelt=-1 errno=13
+mprotect r versiegelt=0 errno=0
+munmap mitte=0 errno=0
+mprotect rw rest=-1 errno=13
+lseek=0 errno=0
+write ueberlauf=-1 errno=22
+mmap 2^63-4096=-1 errno=75
+mmap 2^63=-1 errno=75
+mmap 2^63-8192=0 errno=0
 ende

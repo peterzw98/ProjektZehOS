@@ -190,11 +190,50 @@ static void part_seals(void)
     close(fd);
 }
 
+/* V17-Review: mprotect umgeht das Schreibsiegel nicht (auch lesende Abbildungen vor dem Siegel zählen, VM_MAYWRITE), write nach
+ * lseek(LONG_MAX - 1) läuft nicht über, mmap-Offset nahe 2^63. */
+static void part_limits(void)
+{
+    int fd = memfd("grenzen", MFD_ALLOW_SEALING);
+    show("ftruncate", ftruncate(fd, 8192));
+    char *ro = mmap(NULL, 4096, PROT_READ, MAP_SHARED, fd, 0);
+    show("seal write bei ro", fcntl(fd, F_ADD_SEALS, F_SEAL_WRITE));
+    show("mprotect rw vor siegel", mprotect(ro, 4096, PROT_READ | PROT_WRITE));
+    munmap(ro, 4096);
+    char *none = mmap(NULL, 4096, PROT_NONE, MAP_SHARED, fd, 0);
+    show("seal write bei none", fcntl(fd, F_ADD_SEALS, F_SEAL_WRITE));
+    munmap(none, 4096);
+    show("seal write", fcntl(fd, F_ADD_SEALS, F_SEAL_WRITE));
+    char *s = mmap(NULL, 8192, PROT_READ, MAP_SHARED, fd, 0);
+    show("mprotect rw versiegelt", mprotect(s, 4096, PROT_READ | PROT_WRITE));
+    show("mprotect r versiegelt", mprotect(s, 4096, PROT_READ));
+    show("munmap mitte", munmap(s + 4096, 4096));
+    show("mprotect rw rest", mprotect(s, 4096, PROT_READ | PROT_WRITE));
+    munmap(s, 4096);
+    close(fd);
+
+    int g = memfd("ueberlauf", 0);
+    show("lseek", lseek(g, 0x7ffffffffffffffeL, SEEK_SET) == 0x7ffffffffffffffeL ? 0 : -1);
+    show("write ueberlauf", write(g, "abcd", 4));
+    void *m = mmap(NULL, 4096, PROT_READ, MAP_SHARED, g, 0x7ffffffffffff000UL);
+    show("mmap 2^63-4096", m == MAP_FAILED ? -1 : 0);
+    m = mmap(NULL, 4096, PROT_READ, MAP_SHARED, g, 0x8000000000000000UL);
+    show("mmap 2^63", m == MAP_FAILED ? -1 : 0);
+    m = mmap(NULL, 4096, PROT_READ, MAP_SHARED, g, 0x7fffffffffffe000UL);
+    show("mmap 2^63-8192", m == MAP_FAILED ? -1 : 0);
+    if (m != MAP_FAILED)
+    {
+        munmap(m, 4096);
+    }
+    close(g);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     part_share();
     part_seals();
+    part_limits();
     printf("ende\n");
     return 0;
 }

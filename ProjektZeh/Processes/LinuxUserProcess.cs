@@ -1005,7 +1005,8 @@ internal sealed partial class LinuxUserProcess : ILinuxProcess, IUserMemory, ILi
 
     private bool ProtectLocked(ulong addr, ulong len, int prot)
     {
-        if (!InUserRange(addr, len) || !TryAccess(prot, out MapAccess access))
+        // V17: ein nach F_SEAL_WRITE geteilt abgebildeter Bereich wird nie schreibbar (Fehlernummer liefert ProtectShared).
+        if (!InUserRange(addr, len) || !TryAccess(prot, out MapAccess access) || ((prot & ProtWrite) != 0 && DeniesWrite(addr, addr + len)))
         {
             return false;
         }

@@ -369,16 +369,16 @@ Gastprogramm `experiments/LinuxAbi/src/v17/shm.c`, Erwartung Linux 6.12 in `expe
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
 | 319 | `memfd_create` | Name bis 249 Bytes (länger `-EINVAL`), `MFD_CLOEXEC`, `MFD_ALLOW_SEALING`, `MFD_NOEXEC_SEAL` (setzt `F_SEAL_EXEC`), `MFD_EXEC`; `MFD_HUGETLB` `-EINVAL`; Datei aus Frames im Arbeitsspeicher, Länge höchstens der Speicher des Erzeugers (`-EFBIG`) |
-| 0, 1, 8, 17, 18, 77 | `read`, `write`, `lseek`, `pread64`, `pwrite64`, `ftruncate` | wie tmpfs: Löcher lesen sich als Nullen, Kürzen nullt den Rest der angeschnittenen Seite |
+| 0, 1, 8, 17, 18, 77 | `read`, `write`, `lseek`, `pread64`, `pwrite64`, `ftruncate` | wie tmpfs: Löcher lesen sich als Nullen, Kürzen nullt den Rest der angeschnittenen Seite; `write` hinter `LONG_MAX` (nach `lseek(LONG_MAX - 1)`) `-EINVAL`, über die Obergrenze `-EFBIG` |
 | 5 | `fstat` | `S_IFREG` mit 0777, `st_nlink` 0, Größe, Blöcke nach belegten Frames |
-| 9 | `mmap` | `MAP_SHARED` einer memfd: alle Abbildungen, auch in anderen Prozessen, bilden dieselben Frames ab; Frames kommen beim ersten Zugriff; ein Zugriff hinter dem Dateiende endet wie ein Seitenfehler ohne Bereich (Linux: `SIGBUS`); `MAP_SHARED|MAP_FIXED` `-EINVAL` wie bei anderen Dateien; `MAP_PRIVATE` bleibt die Kopie aus V12 |
+| 9 | `mmap` | `MAP_SHARED` einer memfd: alle Abbildungen, auch in anderen Prozessen, bilden dieselben Frames ab; Frames kommen beim ersten Zugriff; ein Zugriff hinter dem Dateiende endet wie ein Seitenfehler ohne Bereich (Linux: `SIGBUS`); `MAP_SHARED|MAP_FIXED` `-EINVAL` wie bei anderen Dateien; Offset plus Länge über `LONG_MAX` `-EOVERFLOW` (2^63 - 8192 mit einer Seite geht noch, der Zugriff scheitert dann am Dateiende); `MAP_PRIVATE` bleibt die Kopie aus V12 |
 | 11, 28 | `munmap`, `madvise(MADV_DONTNEED)` | gibt nur den Verweis der Seite zurück; der Inhalt bleibt in der Datei. munmap in der Mitte lässt zwei Reststücke mit richtigem Dateiversatz |
-| 72 | `fcntl` `F_ADD_SEALS`, `F_GET_SEALS` | nur memfd (sonst `-EINVAL`); ohne `MFD_ALLOW_SEALING` ist `F_SEAL_SEAL` gesetzt (`-EPERM`); `F_SEAL_WRITE` bei beschreibbarer geteilter Abbildung `-EBUSY`; danach `write`, beschreibbares `MAP_SHARED` `-EPERM`; `F_SEAL_SHRINK`/`F_SEAL_GROW` sperren `ftruncate` und Wachsen durch `write` (`-EPERM`) |
+| 72 | `fcntl` `F_ADD_SEALS`, `F_GET_SEALS` | nur memfd (sonst `-EINVAL`); ohne `MFD_ALLOW_SEALING` ist `F_SEAL_SEAL` gesetzt (`-EPERM`); `F_SEAL_WRITE` bei geteilter Abbildung `-EBUSY`, auch mit `PROT_READ` oder `PROT_NONE` (Linux 6.12: `VM_MAYWRITE`); danach `write`, beschreibbares `MAP_SHARED` `-EPERM`, `mprotect` mit `PROT_WRITE` auf eine danach entstandene Abbildung `-EACCES`; `F_SEAL_SHRINK`/`F_SEAL_GROW` sperren `ftruncate` und Wachsen durch `write` (`-EPERM`) |
 
 Lebensdauer: Jeder Frame zählt Verweise (Seitentabelle der Datei und jede Prozessseite, die ihn abbildet). Die Datei lebt, solange eine Nummer, eine Nachricht
 mit `SCM_RIGHTS` oder eine Abbildung sie hält; danach gibt sie ihre Frames frei. Frames, die eine Prozessseite noch abbildet, bleiben bis zu deren `munmap`
 oder Prozessende. Sperren: Speichersperre des Prozesses vor der Sperre der memfd (Blattsperre über dem PageAllocator).
 
 Grenzen: Schrumpft `ftruncate` eine abgebildete Datei, behalten schon abgebildete Seiten ihren alten Frame (Linux entfernt sie, der nächste Zugriff gibt
-`SIGBUS`). `mprotect` kann eine geteilte Abbildung nachträglich beschreibbar machen, auch bei `F_SEAL_WRITE` (Linux: `-EACCES`). `mremap` vergrößert
+`SIGBUS`). `mremap` vergrößert
 geteilte Abbildungen nicht (wie alle, V9). Geteilte Frames zählen bei jedem abbildenden Prozess gegen seine Speichergrenze. Kein `fork` (Kopie beim Schreiben).

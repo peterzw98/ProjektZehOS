@@ -18,6 +18,9 @@ internal interface ILinuxSharedMemory
     /// Frames kommen erst beim Zugriff (Seitenfehler oder Kernelzugriff) und gehören dann Datei und Abbildung gemeinsam.
     /// </summary>
     long MapShared(LinuxMemFile file, ulong len, int prot, long pageOffset);
+
+    /// <summary>mprotect mit Fehlernummer: 0, -EACCES (PROT_WRITE auf eine nach F_SEAL_WRITE entstandene Abbildung) oder -ENOMEM.</summary>
+    long ProtectShared(ulong addr, ulong len, int prot);
 }
 
 /// <summary>
@@ -166,12 +169,19 @@ internal sealed class LinuxMemFile : ILinuxFile
                 return 0;
             }
 
-            long end = _position + data.Length;
-            if (end > _maxBytes)
+            // Erst gegen Überlauf prüfen: nach lseek(LONG_MAX - 1) wäre _position + Length negativ und käme an beiden Grenzen vorbei
+            // (V17-Review P2). Linux 6.12 meldet den Überlauf mit -EINVAL (rw_verify_area), die Obergrenze mit -EFBIG.
+            if (_position > long.MaxValue - data.Length)
+            {
+                return -EINVAL;
+            }
+
+            if (_position > _maxBytes - data.Length)
             {
                 return -EFBIG;
             }
 
+            long end = _position + data.Length;
             if (end > _size && (_seals & SealGrow) != 0)
             {
                 return -EPERM;
@@ -300,35 +310,50 @@ internal sealed class LinuxMemFile : ILinuxFile
     }
 
     /// <summary>
-    /// Eine Abbildung beginnt; -EPERM, wenn F_SEAL_WRITE ein Schreiben verbietet. <paramref name="split"/>: Reststück einer bestehenden
-    /// Abbildung nach munmap in der Mitte, für das die Siegelprüfung nicht noch einmal gilt (Linux teilt die VMA ohne Prüfung).
+    /// Eine geteilte Abbildung beginnt; -EPERM, wenn <paramref name="writable"/> (PROT_WRITE) und ein Schreibsiegel gesetzt ist.
+    /// <paramref name="mayWrite"/>: ob sie später schreibbar werden darf (Linux: VM_MAYWRITE). Ohne Schreibsiegel zählt sie deshalb
+    /// immer als schreibbar, auch mit PROT_READ oder PROT_NONE (Linux 6.12: F_SEAL_WRITE gibt dann -EBUSY).
     /// </summary>
-    internal long AddMapping(bool writable, bool split = false)
+    internal long AddMapping(bool writable, out bool mayWrite)
     {
         lock (_gate)
         {
-            if (!split && writable && (_seals & (SealWrite | SealFutureWrite)) != 0)
+            mayWrite = (_seals & (SealWrite | SealFutureWrite)) == 0;
+            if (writable && !mayWrite)
             {
                 return -EPERM;
             }
 
-            _mappings++;
-            if (writable)
-            {
-                _writableMappings++;
-            }
-
+            CountLocked(mayWrite);
             return 0;
         }
     }
 
-    /// <summary>Eine Abbildung endet (munmap, Prozessende).</summary>
-    internal void RemoveMapping(bool writable)
+    /// <summary>Reststück einer bestehenden Abbildung nach munmap in der Mitte; ohne Siegelprüfung (Linux teilt die VMA ohne Prüfung).</summary>
+    internal void AddSplit(bool mayWrite)
+    {
+        lock (_gate)
+        {
+            CountLocked(mayWrite);
+        }
+    }
+
+    private void CountLocked(bool mayWrite)
+    {
+        _mappings++;
+        if (mayWrite)
+        {
+            _writableMappings++;
+        }
+    }
+
+    /// <summary>Eine Abbildung endet (munmap, Prozessende); <paramref name="mayWrite"/> wie bei <see cref="AddMapping"/>.</summary>
+    internal void RemoveMapping(bool mayWrite)
     {
         lock (_gate)
         {
             _mappings--;
-            if (writable)
+            if (mayWrite)
             {
                 _writableMappings--;
             }
