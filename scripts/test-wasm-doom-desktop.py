@@ -32,7 +32,8 @@ Szenarien (mehrere laufen gleichzeitig in eigenen VMs):
            Shell nicht erzeugen ("write" in den Paketbestand: Zugriff verweigert); diese Sperre ist nur hostgetestet.
   aotold   Paket mit .aot auf einem Kernel ohne AOT-Auswahl (aelteres ISO): Installation und Start unter wasm3.
   aotfault  ISO wie aot: .aot, dessen Code nur aus ungueltigen Befehlen besteht -> App endet mit CpuFault, das System laeuft
-           weiter; danach startet dasselbe gueltige .aot bis zum Neustart unter wasm3 (zehos_host_aot_guard.h), wiederholt.
+           weiter; die Ausnahme lag im AOT-Code, die Hauptschleife baut WAMR ab (#582), danach laeuft ein gueltiges .aot
+           wieder nativ (Exitcode 7, kein Rueckfall auf wasm3).
   aotcorrupt  Server liefert ein veraendertes .aot; die Installation muss mit Pruefsummenfehler scheitern.
 Gruppen: quick = remove upgrade corrupt minkernel (fuer jede Aenderung), all = alle Szenarien ausser den AOT-Faellen
 (vor dem PR), aotall = aot aotfault aotcorrupt (Gruppennamen duerfen keine Szenarionamen sein: Kindprozesse expandieren sonst endlos).
@@ -824,11 +825,15 @@ def scenario_aotfault(guest: Guest, args: argparse.Namespace, fixtures: Path, re
     end = start_engine(guest, "aotvorher", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc-nrz")
     guest.wait("WASM Speicher", 60, end)
     start_engine(guest, "aotfault", "Ende: App abgebrochen: CpuFault", "aot wamr245-aot5-x64-bc-nrz")
-    # Das gueltige .aot laeuft jetzt nicht mehr nativ: Der Exitcode 7 bleibt aus, das .wasm zeigt Bilder.
-    for _ in range(2):
-        start_engine(guest, "aotapp", "erstes Bild", "aot wamr245-aot5-x64-bc-nrz",
-                     "wasm3 AOT-Rueckfall: LoadFailed AOT nach CPU-Fehler bis zum Neustart gesperrt")
-        guest.quit_testapp_named("aotapp")
+    # #582: Die Ausnahme lag im AOT-Code, WAMR ist abgebaut; das gueltige .aot laeuft wieder nativ (Exitcode 7 statt Bilder
+    # des .wasm unter wasm3). Je Paket ein Start: das Fenster einer beendeten App bleibt offen.
+    end = start_engine(guest, "aotapp", "Ende: App beendet (Exitcode 7)", "aot wamr245-aot5-x64-bc-nrz")
+    log = (guest.work / "serial.log").read_text(encoding="utf-8", errors="replace")
+    if "AOT nach CPU-Fehler bis zum Neustart gesperrt" in log:
+        raise RuntimeError("AOT blieb nach der Ausnahme im AOT-Code gesperrt.")
+    if not re.search(r"WASM CPU-Ausnahme im App-Code \(Vektor 6,[^\r\n]*nativ frei", log):
+        raise RuntimeError("Die Hauptschleife meldet den nativen Lauf nach #UD nicht als frei.")
+    guest.wait("WASM Speicher", 60, end)
 
 
 def scenario_aotcorrupt(guest: Guest, args: argparse.Namespace, fixtures: Path, repository: Repository) -> None:

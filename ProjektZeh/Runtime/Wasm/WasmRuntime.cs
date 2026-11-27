@@ -35,15 +35,10 @@ internal static unsafe partial class WasmRuntime
     private static Thread? worker;
     private static Action<WasmStatus, int, string>? running;
     private static int isolatedRuns;
-    // Thread und Stack raeumt die Hauptschleife nach einer Isolation ab (E6-G); die native wasm3- bzw. WAMR-Instanz des
-    // abgebrochenen Laufs bleibt aber belegt: Ihre Handles liegen im C-Rahmen auf dem Worker-Stack, ihr Zustand ist
-    // unbekannt, und wasm_runtime_destroy ist global. Deshalb bleibt die Zahl der Isolationen bis zum Neustart begrenzt.
-#if ZEHOS_ISOLATION_PROBE
-    // Die Isolationsprobe loest vier Fehler nacheinander aus (de, pf, gp, ud) und braucht danach noch einen Worker.
-    private const int MaximumIsolatedRuns = 5;
-#else
-    private const int MaximumIsolatedRuns = 3;
-#endif
+    // Thread und Stack (E6-G) sowie den nativen Speicher des Laufs (I2-C fuer wasm3, #582 fuer AOT) gibt die Hauptschleife
+    // nach einer Isolation frei. Bis zum Neustart begrenzt sind nur noch Isolationen, nach denen davon etwas belegt bleibt
+    // (IsolationBudget); nur die Hauptschleife zaehlt.
+    private static readonly ProjektZeh.Runtime.IsolationBudget isolationBudget = new();
     // Aufgegebener Worker, bis Cosmos ihn abgeraeumt hat (E6-G); nur von der Hauptschleife gelesen und geschrieben.
     private static readonly ProjektZeh.Runtime.PendingReap pendingReap = new();
     private static bool workerRetired;
@@ -197,8 +192,8 @@ internal static unsafe partial class WasmRuntime
     /// <summary>
     /// Hauptschleife (Roadmap 12.4-I1): Hat eine CPU-Ausnahme den Worker aufgegeben, raeumt sie Thread und 8-MiB-Stack ab,
     /// sobald die CPU der Ausnahme den Stack verlassen hat (E6-G), beendet den Lauf von aussen, gibt seine Ressourcen frei
-    /// und startet einen neuen Worker fuer die Warteschlange. Den nativen Speicher der Instanz gibt ReleaseIsolatedArena
-    /// frei (I2-C, nicht nach AOT).
+    /// und startet einen neuen Worker fuer die Warteschlange. Den nativen Speicher der Instanz gibt ReleaseIsolatedNative
+    /// frei (I2-C; unter AOT nur nach einer Ausnahme im AOT-Code, #582).
     /// </summary>
     public static void PollFaultIsolation()
     {
@@ -235,7 +230,7 @@ internal static unsafe partial class WasmRuntime
         }
         Action<WasmStatus, int, string>? completed;
         string? restart = null;
-        bool retiredNow = false;
+        bool retiredNow;
         List<Action<WasmStatus, int, string>>? dropped = null;
         lock (gate)
         {
@@ -247,12 +242,6 @@ internal static unsafe partial class WasmRuntime
             // Bis zum Ende des Aufraeumens startet niemand einen Ersatzworker (auch nicht EnqueueLoaded): ein neuer Lauf
             // setzte sonst current/save/network/files, und ReleaseRunResources schloesse dessen Ressourcen (Review pink P2-2).
             cleaningUp = true;
-            if (Volatile.Read(ref isolatedRuns) + 1 >= MaximumIsolatedRuns)
-            {
-                workerRetired = true;
-                retiredNow = true;
-                restart = $"nach {MaximumIsolatedRuns} CPU-Fehlern kein weiterer Worker";
-            }
         }
         // Raeumt die Strukturen des aufgegebenen Workers (save, files, network) von hier aus ab. Sicher, weil er nie wieder
         // laeuft: TakeIsolated liefert ihn erst, wenn seine CPU ihn nicht mehr fuehrt (Cosmos hat ihn als Dead aufgegeben
@@ -268,12 +257,26 @@ internal static unsafe partial class WasmRuntime
             clean = false;
             Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Aufraeumen nach CPU-Ausnahme fehlgeschlagen: {exception.GetType().Name}\n");
         }
-        // Vor dem Ersatzworker unten: Dessen Lauf startet eine neue Arena, die end sonst mitraeumte.
-        ReleaseIsolatedArena();
+        // Vor dem Ersatzworker unten: Dessen Lauf startet eine neue Arena, die end sonst mitraeumte, und unter AOT fasste er
+        // WAMR an, waehrend die Hauptschleife es abbaut. Wie ReleaseRunResources: ein Wurf darf das Ende des Laufs nicht
+        // verhindern; der Speicher gilt dann als belegt.
+        ProjektZeh.Runtime.NativeReleasePlan native;
+        try { native = ReleaseIsolatedNative(); }
+        catch (Exception exception)
+        {
+            native = ProjektZeh.Runtime.NativeReleasePlan.Leaked;
+            Cosmos.Kernel.System.Diagnostics.Log.WriteString($"WASM Freigabe des nativen Laufs fehlgeschlagen: {exception.GetType().Name}\n");
+        }
         lock (gate)
         {
             cleaningUp = false;
-            if (!retiredNow)
+            retiredNow = isolationBudget.Record(ProjektZeh.Runtime.IsolationBudget.LeavesResources(reap, native));
+            if (retiredNow)
+            {
+                workerRetired = true;
+                restart = $"nach {ProjektZeh.Runtime.IsolationBudget.MaximumUnclean} CPU-Fehlern mit belegtem Speicher kein weiterer Worker";
+            }
+            else
             {
                 // Ein gescheiterter Ersatzstart ist voruebergehend: kein Ruhestand, die naechste App
                 // startet den Worker ueber EnqueueLoaded erneut.
@@ -291,6 +294,7 @@ internal static unsafe partial class WasmRuntime
         Cosmos.Kernel.System.Diagnostics.Log.WriteString(
             $"WASM CPU-Ausnahme im App-Code (Vektor {ProjektZeh.Runtime.FaultIsolation.IsolatedVector}, RIP 0x{ProjektZeh.Runtime.FaultIsolation.IsolatedRip:x}), " +
             $"Worker-Thread {thread} aufgegeben ({(reap == ProjektZeh.Runtime.ReapOutcome.Reaped ? "Thread und Stack frei" : "Thread und Stack belegt")}, " +
+            $"nativ {(ProjektZeh.Runtime.NativeReleasePolicy.LeavesNativeMemory(native) ? "belegt" : "frei")}, " +
             $"Ressourcen {(clean ? "frei" : "nicht ganz frei")})" +
             (restart == null ? "; neuer Worker gestartet.\n"
                 : retiredNow ? $"; kein neuer Worker ({restart}). Paket-Apps erst nach einem Neustart des Systems.\n"

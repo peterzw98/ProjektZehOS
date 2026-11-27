@@ -122,6 +122,92 @@ internal sealed class PendingReap
     }
 }
 
+/// <summary>Laufzeit, mit der ein isolierter Lauf nativ lief (<c>WasmRuntime.BeginArena</c>).</summary>
+internal enum NativeEngine
+{
+    None,
+    Wasm3,
+    Aot,
+}
+
+/// <summary>Ergebnis von <c>zehos_wasm_aot_reclaim</c> (<c>zehos_host_wamr.c</c>); die Werte sind die der C-Funktion.</summary>
+internal enum AotReclaim
+{
+    /// <summary>Kein AOT-Lauf offen: Die Ausnahme lag vor dem Start oder nach dem Abbau von WAMR.</summary>
+    NotActive = 0,
+    /// <summary>Instanz, Modul, Ausfuehrungsumgebung, Ladepuffer und WAMR selbst sind abgebaut; AOT ist wieder frei.</summary>
+    Released = 1,
+    /// <summary>Die Ausnahme lag nicht im AOT-Code; der halbe WAMR-Zustand bleibt, AOT bis zum Neustart gesperrt.</summary>
+    Kept = 2,
+}
+
+/// <summary>Was die Hauptschleife nach einer Isolation mit dem nativen Speicher des Laufs tut (#582).</summary>
+internal enum NativeReleasePlan
+{
+    /// <summary>Kein nativer Lauf, nichts belegt.</summary>
+    Nothing,
+    /// <summary>Die Laufarena freigeben (zehos_memory_end); danach ist nichts mehr belegt.</summary>
+    EndArena,
+    /// <summary>AOT ohne Arena, aber ueber WAMR abgebaut; nichts mehr belegt.</summary>
+    Freed,
+    /// <summary>Die Arena gehoert einem belassenen AOT-Lauf und bleibt fuer immer aktiv (spaetere Laeufe ohne Arena).</summary>
+    KeepArena,
+    /// <summary>Nativer Lauf ohne Arena, dessen Speicher niemand freigeben kann.</summary>
+    Leaked,
+}
+
+/// <summary>Entscheidung ohne Cosmos und ohne C fuer den Hosttest; aufgerufen aus <c>WasmRuntime.ReleaseIsolatedNative</c>.</summary>
+internal static class NativeReleasePolicy
+{
+    /// <summary>
+    /// Freigabeweg nach einer Isolation. Die Arena zaehlt jeden Block des Laufs; sie freizugeben ist bei wasm3 immer sicher,
+    /// weil wasm3 keinen globalen Zustand hat (je Lauf eigene Umgebung). Bei AOT nur, wenn WAMR schon abgebaut ist
+    /// (<see cref="AotReclaim.Released"/>) oder nie lief: sonst zeigten WAMRs globale Listen und der Referenzzaehler auf
+    /// freigegebene Bloecke. <paramref name="aot"/> gilt nur fuer <see cref="NativeEngine.Aot"/>.
+    /// </summary>
+    public static NativeReleasePlan Plan(NativeEngine engine, bool arenaHeld, AotReclaim aot)
+    {
+        if (engine == NativeEngine.Aot && aot == AotReclaim.Kept)
+            return arenaHeld ? NativeReleasePlan.KeepArena : NativeReleasePlan.Leaked;
+        if (arenaHeld) return NativeReleasePlan.EndArena;
+        if (engine == NativeEngine.Wasm3) return NativeReleasePlan.Leaked;
+        if (engine == NativeEngine.Aot && aot == AotReclaim.Released) return NativeReleasePlan.Freed;
+        return NativeReleasePlan.Nothing;
+    }
+
+    /// <summary>true, wenn nach dem Plan nativer Speicher des Laufs belegt bleibt.</summary>
+    public static bool LeavesNativeMemory(NativeReleasePlan plan) => plan is NativeReleasePlan.KeepArena or NativeReleasePlan.Leaked;
+}
+
+/// <summary>
+/// Begrenzt die Isolationen, die etwas belegt lassen (#582). Bis E6-G kostete jede Isolation Thread, 8-MiB-Stack und den
+/// nativen Speicher des Laufs, deshalb startete nach drei Isolationen kein Worker mehr. Jetzt zaehlen nur noch Isolationen,
+/// nach denen Thread und Stack nicht abgeraeumt sind oder nativer Speicher belegt bleibt; eine saubere Isolation kostet
+/// nichts, was ein Neustart zurueckgaebe. Die Grenze schuetzt nicht vor einem beschaedigten Heap (das kann schon die erste
+/// Ausnahme), dafuer steht "Neustart empfohlen" in jeder Meldung. Gehoert nur der Hauptschleife, deshalb ohne Sperre.
+/// </summary>
+internal sealed class IsolationBudget
+{
+    /// <summary>Nach so vielen Isolationen mit Rest startet bis zum Neustart kein Worker mehr.</summary>
+    public const int MaximumUnclean = 3;
+
+    private int unclean;
+
+    /// <summary>Bisher gezaehlte Isolationen mit Rest.</summary>
+    public int Unclean => unclean;
+
+    /// <summary>true, wenn nach dieser Isolation etwas belegt bleibt.</summary>
+    public static bool LeavesResources(ReapOutcome reap, NativeReleasePlan native) =>
+        reap != ReapOutcome.Reaped || NativeReleasePolicy.LeavesNativeMemory(native);
+
+    /// <summary>Zaehlt eine Isolation; true, wenn danach kein Worker mehr starten darf.</summary>
+    public bool Record(bool leavesResources)
+    {
+        if (leavesResources) unclean++;
+        return unclean >= MaximumUnclean;
+    }
+}
+
 /// <summary>
 /// Uebergabe eines aufgegebenen Workers vom Ausnahmepfad an die Hauptschleife (E6-C.9, #390). Der Ausnahme-Hook meldet den
 /// Thread an, bevor Cosmos den Wechsel weg von ihm anlegt (<c>TryAbandonCurrentFromInterrupt</c>); die Hauptschleife
