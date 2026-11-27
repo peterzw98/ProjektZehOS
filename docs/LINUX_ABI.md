@@ -216,7 +216,7 @@ Grenzen (Review V2, bewusst offen):
   zu Kopien (absolute Ziele ab der Bündelwurzel wie in der Prozesswurzel), fehlende Ziele, Ordnerkreise, Namen über 255 Zeichen, Pfade ab 4096 Bytes, in FAT
   verbotene Zeichen, Punkt oder Leerzeichen am Ende, `.zehos`-Teile, Namen, die sich nur in der Schreibweise unterscheiden, Einträge unter einem Link oder
   einer Datei und Namen, die kein UTF-8 sind, brechen vorher ab; ein Abbruch beim Schreiben lässt kein halbes Image zurück.
-  `scripts/test-linux-root-disk-guest.py` startet ein Programm daraus im Desktop-Terminal (`cd /data/lb`, `run …`). Geprüft (27.11., KVM smp 1, Testbau `ZehOSLinuxRun`):
+  `scripts/test-linux-root-disk-guest.py` startet ein Programm daraus im Desktop-Terminal (`cd /data/lb`, `run …`). Mit `--fetch lb/shot.png` holt `scripts/fetch-data-disk-file.py` danach eine vom Programm geschriebene Datei aus der Platten-Kopie (qemu-img + mtools, Gast vorher beendet), etwa den Screenshot von `bin/Hub --headless=screenshot --screenshot-path /shot.png`. Geprüft (27.11., KVM smp 1, Testbau `ZehOSLinuxRun`):
   Name mit 199 Zeichen, gemischte und kleine Schreibweise in `readdir`, aufgelöste Datei- und Ordnerlinks, Datei mit 20 MB. Grenzen: Ausführungsrechte gehen
   verloren (vorhandene Dateien melden 0755, V26). `run` und `execve` lesen vom Programm nur Kopf, Programmköpfe und die Dateibytes von `PT_LOAD` und
   `PT_INTERP` (`ElfFile.LoadedLength`); die Grenze von 128 MiB gilt für diesen Teil, Debugabschnitte dahinter zählen nicht (Ladybirds `WebContent`:

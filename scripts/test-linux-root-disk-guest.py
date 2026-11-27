@@ -2,10 +2,13 @@
 
 Nutzung: scripts/test-linux-root-disk-guest.py <iso> <platte.qcow2> <arbeitsordner> --dest lb --run "bin/prog arg..."
              [--expect TEXT ...] [--status "exit 0"] [--timeout 300] [--smp 1] [--memory 2G]
+             [--fetch lb/shot.png --out shot.png]
 Die Platte kommt von scripts/linux-root-disk.py (im Gast /data/<dest>). Das Skript meldet sich an, uebernimmt /data/<dest>,
 dessen bin/ und das Programm (security adopt, wie test-linux-js.py), wechselt im Terminal nach /data/<dest> und startet --run.
 Prueft: LINUXRUN BEGIN, das Ende mit --status und jeden --expect-Text in der Ausgabe. Die ganze Ausgabe steht danach in
 <arbeitsordner>/program-out.txt, die seriellen Zeilen in serial.log. Die Platte wird als Kopie verwendet; das Original bleibt.
+--fetch <pfad-auf-der-platte> (mit --out, Standard <arbeitsordner>/<dateiname>): nach dem Herunterfahren holt scripts/fetch-data-disk-file.py
+die Datei aus der Platten-Kopie (mtools), z. B. den Screenshot von Hub --headless=screenshot --screenshot-path /data/lb/shot.png.
 """
 import argparse
 import importlib.util
@@ -32,6 +35,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--smp", default="1")
     parser.add_argument("--memory")
+    parser.add_argument("--fetch", help="Datei auf der Datenplatte (relativ zur Wurzel, z. B. lb/shot.png), nach dem Lauf holen")
+    parser.add_argument("--out", type=Path, help="Ziel fuer --fetch (Standard: <arbeitsordner>/<dateiname>)")
     args = parser.parse_args()
     spec = importlib.util.spec_from_file_location("t", R / "scripts/test-wasm-doom-desktop.py")
     t = importlib.util.module_from_spec(spec)
@@ -107,6 +112,15 @@ def main() -> int:
         if process.poll() is None:
             process.kill()
             process.wait()
+    if args.fetch:
+        # Der Gast ist beendet, die Platten-Kopie ist vollstaendig geschrieben.
+        spec = importlib.util.spec_from_file_location("fetch_disk", R / "scripts/fetch-data-disk-file.py")
+        fetcher = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fetcher)
+        out = args.out or args.work / Path(args.fetch).name
+        results.append(False)
+        results[-1] = fetcher.fetch(disk, args.fetch, out) == 0
+        print(("PASS " if results[-1] else "FAIL ") + f"holen {args.fetch}", flush=True)
     print(f"ERGEBNIS {sum(results)}/{len(results)}")
     return 0 if results and all(results) else 1
 
