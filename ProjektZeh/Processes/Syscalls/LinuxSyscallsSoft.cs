@@ -61,6 +61,9 @@ internal static partial class LinuxSyscalls
             case EpollCreate: return DoEpollCreate(f, (int)a.A0); // V22
             case EpollCreate1: return DoEpollCreate1(f, (int)a.A0);
             case EpollCtl: return DoEpollCtl(p, (int)a.A0, (int)a.A1, (int)a.A2, a.A3);
+            case TimerfdCreate: return DoTimerfdCreate(p, f, (int)a.A0, (int)a.A1); // V22b
+            case TimerfdSettime: return DoTimerfdSettime(p, (int)a.A0, (int)a.A1, a.A2, a.A3);
+            case TimerfdGettime: return DoTimerfdGettime(p, (int)a.A0, a.A1);
             default: return -ENOSYS;
         }
     }

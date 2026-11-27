@@ -1,0 +1,40 @@
+create Uhr ungueltig: ret=-1 errno=22
+create CPU-Uhr: ret=-1 errno=22
+create Flag ungueltig: ret=-1 errno=22
+FD_CLOEXEC: ret=1 errno=0
+F_GETFL: ret=2050 errno=0
+read nicht gestellt: ret=-1 errno=11
+read 4 Byte: ret=-1 errno=22
+write: ret=-1 errno=22
+gettime nicht gestellt 0: ja
+settime tv_nsec zu gross: ret=-1 errno=22
+settime Flag ungueltig: ret=-1 errno=22
+settime fd ungueltig: ret=-1 errno=9
+settime kein timerfd: ret=-1 errno=22
+gettime kein timerfd: ret=-1 errno=22
+settime new NULL: ret=-1 errno=14
+gettime Restzeit <= 30 ms: ja
+poll sofort: ret=0 errno=0
+poll mit Frist: ret=1 errno=0
+  revents=1
+  mindestens 25 ms: ja
+read: ret=8 errno=0
+  Ablaeufe == 1: ja
+read danach: ret=-1 errno=11
+einmalig: danach 0: ja
+periodisch: n=1 events=1 data=6666
+periodisch: n=1 events=1 data=6666
+periodisch: n=1 events=1 data=6666
+alter Stand: Intervall 10 ms: ja
+alter Stand: Restzeit <= 10 ms: ja
+epoll entschaerft: ret=0 errno=0
+neu gestellt verwirft: ret=-1 errno=11
+absolut vergangen poll: ret=1 errno=0
+  ohne Warten (< 500 ms): ja
+absolut vergangen read: ret=8 errno=0
+  Ablaeufe=1
+realtime blockierend: ret=8 errno=0
+  Ablaeufe == 1: ja
+  mindestens 25 ms: ja
+CLOCK_BOOTTIME: ja
+fertig

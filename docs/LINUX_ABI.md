@@ -494,7 +494,7 @@ weiter (`epoll` seit V22). Die Sperren von eventfd und inotify sind Blattsperren
 ## epoll (V22)
 
 Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxEpoll.cs` (Hosttests `LinuxEpollTests`, Gastprogramm `experiments/LinuxAbi/src/v22/epoll.c`, Ausgabe
-gleich Linux 6.12). Anlass: LibCore von Ladybird wartet über epoll; s3 `pipe_epoll` prüft den Umfang (braucht darüber hinaus timerfd und fork).
+gleich Linux 6.12). Anlass: LibCore von Ladybird wartet über epoll; s3 `pipe_epoll` prüft den Umfang (braucht darüber hinaus timerfd, seit V22b, und fork).
 
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
@@ -514,3 +514,22 @@ ohne Ereigniszähler (Terminal, lauschendes Socket) meldet nur den Übergang von
 meldet ein lauschendes Socket also nicht erneut. Platz zum Schreiben zählt nur als Übergang (Linux weckt `EPOLLOUT` bei jedem Lesen der Gegenseite). Bereitschaft
 wird bei jedem Aufruf erfragt, nicht über Rückrufe gesammelt: Ein Aufruf kostet Zeit proportional zur Zahl der Einträge. Ein Prozess nach vfork, der dasselbe epoll
 benutzt, sieht die Einträge mit seinen eigenen Nummern.
+
+## timerfd (V22b)
+
+Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxTimerFd.cs` (Hosttests `LinuxTimerFdTests`, Gastprogramm `experiments/LinuxAbi/src/v22/timerfd.c`,
+Ausgabe gleich Linux 6.12). Anlass: s3 `pipe_epoll` und Ereignisschleifen, die Zeitgeber über epoll warten lassen.
+
+| Nr. | Aufruf | Verhalten |
+| --- | --- | --- |
+| 283 | `timerfd_create` | Uhren `CLOCK_REALTIME`, `CLOCK_MONOTONIC`, `CLOCK_BOOTTIME` (hier die monotone Uhr) und die Alarmformen (ohne uid 0 `-EPERM`), andere `-EINVAL`; Flags nur `TFD_CLOEXEC`, `TFD_NONBLOCK`, andere `-EINVAL`; anon_inode wie eventfd, `F_GETFL` `O_RDWR` |
+| 286 | `timerfd_settime` | Reihenfolge wie Linux: `new` unlesbar `-EFAULT`; Flags außer `TFD_TIMER_ABSTIME`, `TFD_TIMER_CANCEL_ON_SET` oder ungültiger timespec `-EINVAL`; fd `-EBADF`, kein timerfd `-EINVAL`. `it_value` 0 entschärft, sonst relativ oder absolut (ein vergangener Zeitpunkt läuft sofort ab); ausstehende Abläufe werden verworfen; `old` erhält Intervall und Restzeit (danach `-EFAULT` möglich, der Zeitgeber bleibt gestellt) |
+| 287 | `timerfd_gettime` | fd `-EBADF`, kein timerfd `-EINVAL`, dann Restzeit bis zum nächsten Ablauf (einmalig abgelaufen: 0) und Intervall |
+| 0, 1, 7 | `read`, `write`, `poll` auf timerfd | `read` unter 8 Byte `-EINVAL`, sonst die Zahl der Abläufe seit dem letzten `read` (periodisch alle verpassten) und zurück auf 0; ohne Ablauf wartet es oder `-EAGAIN`; `write` `-EINVAL`; `poll` und epoll nur `POLLIN`, `EPOLLET` meldet jeden neuen Ablauf |
+
+Es gibt keinen Zeitgeber-Interrupt dahinter: Abläufe werden bei jeder Abfrage aus der Uhr nachgerechnet, Wartende (`read`, `poll`, epoll auf einen Eintrag) schlafen
+höchstens bis zum nächsten Ablauf. Bei mehreren epoll-Einträgen gilt die 10-ms-Scheibe von epoll, ein Ablauf kann also bis zu 10 ms spät gemeldet werden. Die Sperre ist
+eine Blattsperre wie bei eventfd.
+
+Grenzen: `TFD_TIMER_CANCEL_ON_SET` wird angenommen, `read` liefert aber nie `-ECANCELED` (ZehOS stellt die Wanduhr nicht um); die Alarmuhren wecken kein
+schlafendes System; `ioctl(TFD_IOC_SET_TICKS)` fehlt.
