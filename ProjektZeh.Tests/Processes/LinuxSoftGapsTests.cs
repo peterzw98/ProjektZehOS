@@ -211,6 +211,11 @@ public sealed class LinuxSoftGapsTests
     [TestMethod]
     public void StatfsDerPlatteMeldetKontingent()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
         string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "zehos-v20-" + Guid.NewGuid().ToString("N"));
         System.IO.Directory.CreateDirectory(dir);
         try
