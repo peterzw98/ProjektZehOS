@@ -325,4 +325,54 @@ public sealed class LinuxUnixListenTests
         Assert.IsTrue(_p.TryRead(Len, lb));
         Assert.AreEqual(0, BitConverter.ToInt32(lb), "unbenannter Sender: Länge 0");
     }
+
+    [TestMethod]
+    public void AngenommenesEndeIstGebundenUndVerbunden()
+    {
+        // Review V16 P3 (1): das angenommene Ende trägt den Namen des Lauschenden; bind darauf ist wie bei Linux -EINVAL.
+        int s = Sock(Stream);
+        Assert.AreEqual(0, Bind(s, "acc", true));
+        Assert.AreEqual(0, Call(LinuxSyscalls.Listen, (ulong)s, 1));
+        int c = Sock(Stream);
+        Assert.AreEqual(0, Connect(c, "acc", true));
+        int x = (int)Call(LinuxSyscalls.Accept, (ulong)s, 0, 0);
+        Assert.IsTrue(x >= 0);
+        Assert.AreEqual(-EINVAL, Bind(x, "neu", true), "bind auf angenommenes Ende");
+        Assert.AreEqual(0, Bind(Sock(Stream), "neu", true), "fehlgeschlagenes bind belegt keinen Namen");
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Listen, (ulong)x, 1), "listen auf angenommenes Ende");
+        Assert.AreEqual(-EISCONN, Connect(x, "acc", true), "connect auf angenommenes Ende");
+        Assert.AreEqual(-EINVAL, Call(LinuxSyscalls.Listen, (ulong)c, 1), "listen auf verbundenes Ende");
+    }
+
+    [TestMethod]
+    public void ListenGegenConnectDesselbenSocketsSchliesstSichAus()
+    {
+        // Review V16 P3 (4): listen und connect desselben Sockets nebenläufig; genau eines gewinnt, nie lauschend und verbunden zugleich.
+        var names = new LinuxUnixNames();
+        var listener = new LinuxUnixSocket(Stream, false, 1);
+        Assert.IsTrue(listener.TryBeginBind());
+        listener.CompleteBind(LinuxUnixAddress.Abstract(Encoding.ASCII.GetBytes("\0ziel")), names);
+        Assert.AreEqual(0, listener.Listen(LinuxUnixSocket.MaxBacklog));
+        for (int i = 0; i < 200; i++)
+        {
+            var u = new LinuxUnixSocket(Stream, false, 1);
+            Assert.IsTrue(u.TryBeginBind());
+            u.CompleteBind(LinuxUnixAddress.Abstract(Encoding.ASCII.GetBytes("\0r" + i)), names);
+            long lr = 1, cr = 1;
+            using var go = new ManualResetEventSlim();
+            var t = Task.Run(() => { go.Wait(); cr = u.ConnectTo(listener, true, null); });
+            go.Set();
+            lr = u.Listen(1);
+            t.Wait();
+            Assert.IsFalse(u.IsListening && u.IsConnected, $"Runde {i}: listen {lr}, connect {cr}");
+            Assert.IsTrue((lr == 0) != (cr == 0), $"Runde {i}: genau eines gewinnt (listen {lr}, connect {cr})");
+            u.Close();
+            while (listener.Accept(true, null, out LinuxUnixSocket? x) == 0)
+            {
+                x!.Close();
+            }
+        }
+
+        listener.Close();
+    }
 }

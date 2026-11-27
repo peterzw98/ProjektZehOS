@@ -346,7 +346,7 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `
 | Nr. | Aufruf | Verhalten |
 | --- | --- | --- |
 | 41 | `socket` | nur `AF_UNIX` (sonst `-EAFNOSUPPORT`, kein Netz), `SOCK_STREAM`, `SOCK_SEQPACKET` (`SOCK_DGRAM` `-ESOCKTNOSUPPORT`), unbekannte Flags `-EINVAL`; `SOCK_NONBLOCK`, `SOCK_CLOEXEC` |
-| 49 | `bind` | abstrakte Namen (führendes Nullbyte, binär) und Pfade relativ zum Arbeitsverzeichnis; ein Pfad legt eine leere Datei an (vorhanden: `-EADDRINUSE`), die nach `close` stehen bleibt; Länge 2 bindet automatisch (`\0` und fünf Hexziffern); schon gebunden `-EINVAL`; Namen gelten je Lauf |
+| 49 | `bind` | abstrakte Namen (führendes Nullbyte, binär) und Pfade relativ zum Arbeitsverzeichnis; ein Pfad legt eine leere Datei an (vorhanden: `-EADDRINUSE`), die nach `close` stehen bleibt; Länge 2 bindet automatisch (`\0` und fünf Hexziffern); schon gebunden oder angenommenes Ende `-EINVAL`; Namen gelten je Lauf |
 | 50 | `listen` | unbenannt oder verbunden `-EINVAL`; Rückstand bis 4096, wie Linux wartet eine Verbindung mehr als angegeben |
 | 42 | `connect` | legt das Gegenende sofort an (Senden vor `accept` geht); volle Warteschlange: blockierend warten, sonst `-EAGAIN`; kein Lauschender, gewöhnliche Datei oder anderer Typ unter abstraktem Namen `-ECONNREFUSED`, anderer Typ unter Pfad `-EPROTOTYPE`, fehlender Pfad `-ENOENT` (auch nach `unlink`), verbunden `-EISCONN`, Länge bis 2 `-EINVAL` |
 | 43, 288 | `accept`, `accept4` | älteste Verbindung; nicht lauschend `-EINVAL`, leer mit `O_NONBLOCK` `-EAGAIN`; Name des Verbindenden (unbenannt: Länge 2); `SOCK_NONBLOCK`, `SOCK_CLOEXEC`; `close` des Lauschenden beendet nicht angenommene Verbindungen (EOF beim Verbindenden) |
@@ -363,7 +363,9 @@ Plattformunabhängig in `ProjektZeh/Processes/Syscalls/LinuxUnixSocket.cs` und `
 
 Grenzen: Ein Socket, das sich selbst (oder einen Kreis von Sockets) in einer ungelesenen Nachricht trägt, wird nie geschlossen (Linux räumt solche Kreise mit
 einem Garbage Collector ab). Der Puffer zählt Nutzbytes, nicht den Verwaltungsaufwand je Nachricht wie Linux; wie viele Bytes bis `-EAGAIN` passen, weicht ab.
-Die Socket-Sperre ist eine Blattsperre (Dateisperre vor Socket-Sperre); Senden und Empfangen warten ohne Dateisperre. Pipes und Sockets warten seit V16 mit dem
+Rechte: `bind` legt die Socketdatei mit 0755 an, ohne `umask` (es gibt keine), und `connect` prüft nur, dass der Pfad ein Socket ist, nicht das
+Schreibrecht darauf (Linux verlangt `w`); da alle Prozesse eines Laufs eine UID haben, weicht nur ein bewusst schreibgeschützter Socketpfad ab. Pfadnamen
+werden als UTF-8 gelesen: ungültige Bytefolgen werden zu U+FFFD, zwei solche Namen können zusammenfallen. Die Socket-Sperre ist eine Blattsperre (Dateisperre vor Socket-Sperre); Senden und Empfangen warten ohne Dateisperre. Pipes und Sockets warten seit V16 mit dem
 Abbruch des aufrufenden Prozesses (`ILinuxPollable.ReadAs`/`WriteAs`/`WaitPoll`): Vorher lieferte eine Pipe, die ein beendetes vfork-Kind angelegt hatte, den
 Eltern nur noch `-EINTR`.
 
