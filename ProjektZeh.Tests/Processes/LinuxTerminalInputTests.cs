@@ -207,6 +207,83 @@ public sealed class LinuxTerminalInputTests
     }
 
     [TestMethod]
+    public void ReadvMitRiesigenEintraegenAllokiertNichtUndLiefertFehler()
+    {
+        var (session, _, _, p) = Program();
+        session.Submit("hallo");
+        void Iov(int i, ulong b, ulong l)
+        {
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16, 8), b);
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16 + 8, 8), l);
+        }
+        // Ein einzelner Eintrag mit fast MAX_RW_COUNT: gelesen wird hoechstens ein Chunk (4096), nie die Eintragslaenge.
+        Iov(0, Base + 0x100, 0x7ffff000UL);
+        Assert.AreEqual(6, Call(p, LinuxSyscalls.Readv, 0, Base, 1));
+        session.Submit("hallo");
+        // Spaeterer Eintrag ueber der Grenze: -EINVAL, auch wenn der erste harmlos ist.
+        Iov(0, Base + 0x100, 4);
+        Iov(1, Base + 0x200, 0x80000000UL);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Readv, 0, Base, 2));
+        // Summe ueber MAX_RW_COUNT: -EINVAL.
+        Iov(0, Base + 0x100, 0x7ffff000UL);
+        Iov(1, Base + 0x200, 0x1000UL);
+        Assert.AreEqual(-LinuxSyscalls.EINVAL, Call(p, LinuxSyscalls.Readv, 0, Base, 2));
+        // Die Eingabezeile ging nirgends verloren.
+        Iov(0, Base + 0x100, 16);
+        Assert.AreEqual(6, Call(p, LinuxSyscalls.Readv, 0, Base, 1));
+    }
+
+    private sealed class RecordingInput : ILinuxInput
+    {
+        public int LastBuffer = -1;
+        public long Write(ReadOnlySpan<byte> data) => data.Length;
+        public bool InputReady => true;
+        public bool WaitInput(long timeoutMs) => true;
+        public long ReadInput(Span<byte> dst)
+        {
+            LastBuffer = dst.Length;
+            dst.Fill((byte)'x');
+            return dst.Length;
+        }
+    }
+
+    [TestMethod]
+    public void ReadvLiestNurBisZumErstenErfuelltenEintragUndAllokiertNichtFuerSpaetere()
+    {
+        var input = new RecordingInput();
+        var p = new Proc(input);
+        void Iov(int i, ulong b, ulong l)
+        {
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16, 8), b);
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16 + 8, 8), l);
+        }
+        // iov[0] gueltig (4 KiB), iov[1] 1 GiB auf ungueltiger Adresse: hoechstens 4 KiB, kein -EFAULT, keine Grossallokation.
+        Iov(0, Base + 0x1000, 4096);
+        Iov(1, 0x10, 0x40000000UL);
+        Assert.AreEqual(4096, Call(p, LinuxSyscalls.Readv, 0, Base, 2));
+        Assert.AreEqual(4096, input.LastBuffer, "Puffer nur so gross wie die gepruefte Summe");
+    }
+
+    [TestMethod]
+    public void ReadvLiefertDatenNurImErstenPufferBisChunkGrenze()
+    {
+        var input = new RecordingInput();
+        var p = new Proc(input);
+        void Iov(int i, ulong b, ulong l)
+        {
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16, 8), b);
+            BitConverter.TryWriteBytes(p.Mem.Data.AsSpan(i * 16 + 8, 8), l);
+        }
+        // laser-Fall: readv({8192},{1024}) lieferte 5001 B, Bytes ab 4096 landeten im 2. Puffer (musl fread > 4 KiB).
+        Iov(0, Base + 0x100, 8192);
+        Iov(1, Base + 0x2200, 1024);
+        Assert.AreEqual(4096, Call(p, LinuxSyscalls.Readv, 0, Base, 2));
+        Assert.AreEqual(4096, input.LastBuffer);
+        Assert.IsTrue(System.Linq.Enumerable.All(p.Mem.Data[0x100..0x1100], b => b == (byte)'x'), "Daten im 1. Puffer");
+        Assert.IsTrue(System.Linq.Enumerable.All(p.Mem.Data[0x2200..0x2600], b => b == 0), "2. Puffer unberuehrt");
+    }
+
+    [TestMethod]
     public void PollMeldetEingabeUndWartetOhneFristAufEnter()
     {
         var (session, _, clock, p) = Program();

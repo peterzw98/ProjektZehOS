@@ -94,7 +94,9 @@ internal static partial class LinuxSyscalls
         // Wie bei read: nur Einträge bis Chunk Bytes, und die müssen beschreibbar sein, bevor gewartet wird.
         ulong room = Math.Min(total, (ulong)Chunk);
         ulong left = room;
-        for (ulong i = 0; i < cnt && left > 0; i++)
+        // Ohne Abbruch bei left == 0: Restliche Eintraege werden 0, sonst behielten sie ihre OriginalLaenge (bis MaxRw) und
+        // ReadToUser summierte sie zu einem Riesenpuffer und schriebe in ungepruefte Bereiche.
+        for (ulong i = 0; i < cnt; i++)
         {
             ulong take = Math.Min(lens[i], left);
             lens[i] = take;
