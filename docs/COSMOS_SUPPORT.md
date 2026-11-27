@@ -209,7 +209,12 @@ ein und meldet `Thread abandoned.`, sonst (kein anderer Thread, Wechsel schon an
 **Geprüft:** Gastprobe `-p:ZehOSIsolationProbe=true` mit `scripts/test-isolation-probe.py` (#DE, #PF, #GP und #UD im Worker, danach
 `GC.Collect` und ein weiterer Lauf, Anmeldung und Textshell) unter QEMU KVM und TCG. Die Gegenprobe
 `-p:ZehOSIsolationProbeNegative=true --negative` (Ausnahme im Probe-Thread) hält weiterhin an. Die Probe vergleicht den
-gemeldeten Vektor mit dem erwarteten (#DE 0, #UD 6, #GP 13, #PF 14). Die Gegenprobe
+gemeldeten Vektor mit dem erwarteten (#DE 0, #UD 6, #GP 13, #PF 14). Mit WAMR folgen seit #582 echte AOT-Läufe über
+`WasmRuntime.Run` mit der Fixture `ret42` (`Native/AotProbe`): ein sauberer Lauf (Ok/42), dann drei Runden aus #DE und #PF im
+AOT-Code (der Code ist umgeschrieben: am Anfang jeder Funktion `div` durch null bzw. ein Lesen von Adresse 0, sonst `ud2`) mit
+je einem sauberen Lauf danach. Verlangt sind „nativ frei“ und `Aot Released` für jede der sechs Isolationen, Arena 0 und
+höchstens 1 MiB Rückgang des freien Speichers. Ergebnis (27. November 2026, Cosmos smp.17, Celeron J3455): KVM `-smp 1`
+3/3 und `-smp 4` 3/3, TCG 1/1, Rückgang 0 bis 188 KiB. Die Gegenprobe
 `-p:ZehOSIsolationProbeNmi=true --nmi` schickt per QMP `inject-nmi` einen NMI, während der Worker im Gastzustand rechnet;
 das System muss anhalten. QEMU stellt `inject-nmi` nur über ein unmaskiertes LINT1 mit Zustellart NMI zu
 (`hw/i386/kvm/apic.c`, `do_inject_external_nmi`). Cosmos 3.0.97 maskierte LINT1 beim Start, sodass NMIs still verworfen
