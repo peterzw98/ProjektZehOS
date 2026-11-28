@@ -693,7 +693,8 @@ internal static unsafe class CosmosLinuxRun
     public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null,
         string? root = null, string? cwd = null, string? exePath = null, ILinuxFileStore? store = null, IDisposable? lease = null)
     {
-        if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
+        // Run übernimmt die Bindung immer, auch wenn schon ein Programm läuft (Review B2, P2): Der Aufrufer hat sie abgegeben.
+        if (!LinuxRunGate.TryEnter(ref busy, lease))
         {
             return new Outcome(false, string.Empty, "es läuft schon ein Programm");
         }
