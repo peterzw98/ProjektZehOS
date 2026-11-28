@@ -1308,10 +1308,11 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         // Der alte Zugriff je Seite mit Frame, damit eine Seite, die die Tabelle nicht freigibt, in der Karte so bleibt, wie die
         // Tabelle sie abbildet (V3-Review P3 b). Sonst erlaubte die Karte dem Kernel, was die Tabelle dem Programm verwehrt, oder umgekehrt.
         List<ulong> pages = PagesWithFrames(addr, addr + len);
-        var before = new MapAccess[pages.Count];
-        for (int i = 0; i < pages.Count; i++)
+        var before = new Dictionary<ulong, MapAccess>(pages.Count);
+        foreach (ulong page in pages)
         {
-            _map.TryFind(pages[i], out before[i]);
+            _map.TryFind(page, out MapAccess old);
+            before[page] = old;
         }
 
         if (!_map.Protect(addr, len, access).IsOK())
@@ -1319,32 +1320,79 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             return false;
         }
 
+        // N4-S2: mit IUserPagesRange ein Abschuss je Folge zusammenhängender Seiten statt Aufheben und neu Abbilden je Seite; die
+        // Seite bleibt dabei abgebildet, ein anderer Thread bekommt keinen unechten Seitenfehler. PROT_NONE hebt weiter auf (die
+        // Tabelle kennt keinen Eintrag ohne Zugriff), der Frame bleibt beim Prozess. Lehnt die Tabelle ein Stück ab (eine Seite nicht
+        // abgebildet, etwa nach gescheitertem Abbilden unten), geht dieses Stück Seite für Seite den alten Weg.
         bool ok = true;
-        for (int i = 0; i < pages.Count; i++)
+        if (_pages is IUserPagesRange range)
         {
-            ulong page = pages[i];
+            Span<bool> gone = stackalloc bool[RangeChunk];
+            foreach ((ulong first, int count) in FrameRuns(pages, addr, addr + len))
+            {
+                if (access == MapAccess.None)
+                {
+                    range.UnmapRange(first, count, gone);
+                    for (int i = 0; i < count; i++)
+                    {
+                        ulong page = first + (ulong)i * Page;
+                        if (!gone[i])
+                        {
+                            _map.Protect(page, Page, before[page], enforceLimit: false); // wie ProtectPage: Karte folgt der Tabelle
+                            ok = false;
+                        }
+                    }
 
-            // Neu abbilden statt umschreiben: IUserPages kennt nur Map und Unmap, der Frame und sein Inhalt bleiben.
-            if (!_pages.Unmap(page))
-            {
-                _map.Protect(page, Page, before[i], enforceLimit: false); // Zurücksetzen darf am Limit nicht scheitern (V48-Review)
-                ok = false;
-                continue;
+                    continue;
+                }
+
+                bool changed = range.ProtectRange(first, count, access);
+                for (int i = 0; i < count; i++)
+                {
+                    ulong page = first + (ulong)i * Page;
+                    ok &= changed ? Protected(page, access) : ProtectPage(page, before[page], access);
+                }
             }
 
-            // Scheitert das neue Abbilden, bleibt der Frame beim Prozess und die Seite unabgebildet: Karte und Tabelle widersprechen
-            // sich nicht, der nächste Zugriff des Programms bildet über HandlePageFault nach, der Kernel liest über den Frame.
-            if (access != MapAccess.None && !_pages.Map(page, _frames[page], access))
-            {
-                ok = false;
-            }
-            else if (access == MapAccess.ReadWrite && _shared.TryGetValue(page, out LinuxSharedFrame? sf))
-            {
-                sf.Owner.MarkDirty(sf); // V32-P2: ab jetzt ohne Seitenfehler beschreibbar
-            }
+            return ok;
+        }
+
+        foreach (ulong page in pages)
+        {
+            ok &= ProtectPage(page, before[page], access);
         }
 
         return ok;
+    }
+
+    /// <summary>Eine Seite mit Frame auf den neuen Zugriff, durch Aufheben und neu Abbilden; unter _memGate, Karte schon geändert.</summary>
+    private bool ProtectPage(ulong page, MapAccess before, MapAccess access)
+    {
+        // Neu abbilden statt umschreiben: IUserPages kennt nur Map und Unmap, der Frame und sein Inhalt bleiben.
+        if (!_pages.Unmap(page))
+        {
+            _map.Protect(page, Page, before, enforceLimit: false); // Zurücksetzen darf am Limit nicht scheitern (V48-Review)
+            return false;
+        }
+
+        // Scheitert das neue Abbilden, bleibt der Frame beim Prozess und die Seite unabgebildet: Karte und Tabelle widersprechen
+        // sich nicht, der nächste Zugriff des Programms bildet über HandlePageFault nach, der Kernel liest über den Frame.
+        if (access != MapAccess.None && !_pages.Map(page, _frames[page], access))
+        {
+            return false;
+        }
+
+        return Protected(page, access);
+    }
+
+    private bool Protected(ulong page, MapAccess access)
+    {
+        if (access == MapAccess.ReadWrite && _shared.TryGetValue(page, out LinuxSharedFrame? sf))
+        {
+            sf.Owner.MarkDirty(sf); // V32-P2: ab jetzt ohne Seitenfehler beschreibbar
+        }
+
+        return true;
     }
 
     public bool TryRead(ulong addr, Span<byte> dst) => Copy(addr, dst, default, write: false);

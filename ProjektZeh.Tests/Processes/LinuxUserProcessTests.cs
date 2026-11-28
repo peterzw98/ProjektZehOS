@@ -417,6 +417,45 @@ public sealed class LinuxUserProcessTests
         Assert.AreEqual(0, pages.Frames.Count);
     }
 
+    private static readonly int[] ThreePageRun = { 3 };
+    private static readonly int[] ThreePageRunTwice = { 3, 3 };
+
+    [TestMethod]
+    public void ProtectChangesRangeInPlace()
+    {
+        // N4-S2: mprotect ändert die Rechte abgebildeter Seiten in einem Bereichsaufruf, ohne Aufheben; Frames und Inhalt bleiben.
+        var (process, pages, _, _) = Start();
+        ulong a = process.MapAnonymous(3 * Page, 3);
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.IsTrue(process.TryWrite(a + (ulong)i * Page, new byte[] { (byte)(i + 1) }));
+        }
+
+        ulong frame = pages.Mapped[a].Frame;
+        Assert.IsTrue(process.Protect(a, 3 * Page, 1));
+        CollectionAssert.AreEqual(ThreePageRun, pages.ProtectRanges);
+        Assert.AreEqual(0, pages.UnmapRanges.Count, "nicht aufgehoben");
+        Assert.AreEqual(MapAccess.Read, pages.Mapped[a + 2 * Page].Access);
+        Assert.AreEqual(frame, pages.Mapped[a].Frame);
+
+        // PROT_NONE hebt in einem Bereichsaufruf auf, die Frames bleiben beim Prozess.
+        int frames = process.FrameCount;
+        Assert.IsTrue(process.Protect(a, 3 * Page, 0));
+        CollectionAssert.AreEqual(ThreePageRun, pages.UnmapRanges);
+        Assert.AreEqual(0, pages.Mapped.Count(m => m.Key >= a && m.Key < a + 3 * Page));
+        Assert.AreEqual(frames, process.FrameCount);
+
+        // Zurück auf RW: die Tabelle lehnt den Bereich ab (nichts abgebildet), der Prozess bildet Seite für Seite neu ab.
+        Assert.IsTrue(process.Protect(a, 3 * Page, 3));
+        CollectionAssert.AreEqual(ThreePageRunTwice, pages.ProtectRanges);
+        Assert.AreEqual(MapAccess.ReadWrite, pages.Mapped[a + Page].Access);
+        byte[] b = new byte[1];
+        Assert.IsTrue(process.TryRead(a + 2 * Page, b));
+        Assert.AreEqual(3, b[0], "Inhalt über die Schutzwechsel erhalten");
+        process.Destroy();
+        Assert.AreEqual(0, pages.Frames.Count);
+    }
+
     [TestMethod]
     public void RefusedUnmapKeepsTheFrame()
     {
