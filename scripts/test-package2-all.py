@@ -8,8 +8,12 @@ Baut einmal das gemeinsame Test-ISO (-p:ZehOSWasm=true -p:ZehOSLinuxRun=true, oe
   live   scripts/test-package2-upgrade-live-guest.py (Upgrade, waehrend run --pkg laeuft; braucht mdir aus mtools)
 Am Ende steht eine Tabelle Probe x Stufe; Exit 0 nur, wenn alle ausgefuehrten Laeufe PASS sind. Eine Probe ohne ihre
 Voraussetzung (dyn ohne --ld-musl) steht als "-" in der Tabelle und mit Grund darunter. Strg+C gibt die Tabelle der
-bisherigen Laeufe aus und endet mit Exit 130. Aufraeumen: Die Datenplatten der Laeufe (data.qcow2, data.raw unter
-.tools/package2-guest/) und das gebaute ISO im Arbeitsordner werden geloescht; --keep-images behaelt sie.
+bisherigen Laeufe aus und endet mit Exit 130, SIGTERM/SIGHUP (Zeitlimit des Aufrufers, ssh-Abbruch) ebenso mit 143/129;
+der laufende Gast wird in beiden Faellen beendet (SIGKILL an den Sammelaufruf laesst ihn weiterlaufen). Aufraeumen: Die
+Datenplatten der Laeufe (data.qcow2, data.raw in dem Ordner unter .tools/package2-guest/, den die Probe in ihrer
+Abschlusszeile "Protokolle: <ordner>" nennt) und das gebaute ISO im Arbeitsordner werden geloescht; --keep-images behaelt
+sie. Fehlt die Abschlusszeile (Zeitlimit, Abbruch), bleiben die Platten liegen und der Ordner wird nur genannt: Er laesst
+sich nicht sicher von dem eines parallelen Laufs unterscheiden.
 
 Nutzung (aus dem Repository-Wurzelordner):
   python3 -I scripts/test-package2-all.py --key <ordner>/private.pem [--public <ordner>/public.b64 | --iso <iso>]
@@ -40,6 +44,23 @@ PROBES = {
     "live": ("scripts/test-package2-upgrade-live-guest.py", "PACKAGE2_UPGRADE_LIVE"),
 }
 BUILD_TIMEOUT = 3600  # Sekunden fuer den Kernelbau
+WORK_LINE = re.compile(r"; Protokolle: (.+)$")
+
+
+class Terminated(BaseException):
+    """SIGTERM/SIGHUP als Ausnahme: Ohne sie beendete Python den Sammelaufruf ohne finally, und QEMU (eigene Sitzung,
+    erreicht also kein Signal an unsere Gruppe) liefe ohne Aufsicht weiter und belegte den Gastplatz."""
+
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _on_signal(signum, frame):
+    # Weitere Signale waehrend des Aufraeumens nicht mehr unterbrechen lassen.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    raise Terminated(signum)
 
 
 def run(cmd, log, env=None, timeout=None):
@@ -97,11 +118,29 @@ def work_dirs():
     return set(GUEST_WORK.iterdir()) if GUEST_WORK.is_dir() else set()
 
 
-def drop_images(before):
-    """Loescht die Platten der Laeufe, die seit der Momentaufnahme entstanden sind; Protokolle bleiben."""
-    for d in work_dirs() - before:
-        for name in ("vm/data.qcow2", "data.raw"):
-            (d / name).unlink(missing_ok=True)
+def own_work_dir(log: Path):
+    """Arbeitsordner aus der Abschlusszeile der Probe ("...; Protokolle: <ordner>"), sonst None."""
+    text = log.read_text(encoding="utf-8", errors="replace").splitlines() if log.exists() else []
+    for line in reversed(text):
+        m = WORK_LINE.search(line)
+        if m:
+            return Path(m.group(1).strip())
+    return None
+
+
+def drop_images(before, log: Path):
+    """Loescht die Platten des eigenen Laufs; Protokolle bleiben. Gibt die neuen Ordner zurueck, die stehen bleiben.
+
+    Eigen ist nur der Ordner aus der Abschlusszeile und nur, wenn er seit der Momentaufnahme unter GUEST_WORK neu ist.
+    Ein anderer neuer Ordner kann einem parallelen Lauf gehoeren, dessen Gast noch auf seine Platte schreibt."""
+    new = work_dirs() - before
+    own = own_work_dir(log)
+    own = own.resolve() if own else None
+    for d in new:
+        if own is not None and d.resolve() == own:
+            for name in ("vm/data.qcow2", "data.raw"):
+                (d / name).unlink(missing_ok=True)
+    return sorted(d for d in new if own is None or d.resolve() != own)
 
 
 def summary_line(log: Path, marker: str) -> str:
@@ -126,6 +165,19 @@ def probe_command(probe, args, iso, accel):
 
 
 def main(argv=None) -> int:
+    old = {s: signal.signal(s, _on_signal) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        return _main(argv)
+    except Terminated as t:
+        # Nur waehrend des Baus erreichbar (die Gastlaeufe fangen das Signal selbst); run() hat die Gruppe beendet.
+        print(f"Abbruch durch Signal {t.signum} waehrend des Baus", file=sys.stderr)
+        return 128 + t.signum
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+
+
+def _main(argv) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--key", type=Path, required=True, help="privater Testschluessel (PEM)")
     src = ap.add_mutually_exclusive_group()
@@ -181,7 +233,7 @@ def main(argv=None) -> int:
         print(f"ISO gebaut: {rel(iso)}", flush=True)
 
     results = {}  # probe -> {stufe: (ok, text)}
-    interrupted = False
+    interrupted = None  # Exit-Code bei Abbruch
     try:
         for accel, smp in configs:
             key = f"{accel}{smp}"
@@ -199,12 +251,16 @@ def main(argv=None) -> int:
                     rc = run(cmd, log, env=env, timeout=args.timeout)
                 finally:
                     if not args.keep_images:
-                        drop_images(before)
+                        for d in drop_images(before, log):
+                            print(f"Platten nicht geloescht (Ordner nicht sicher zuzuordnen): {rel(d)}", file=sys.stderr)
                 row[key] = (rc == 0, summary_line(log, PROBES[probe][1]))
                 print(f"{probe} {key}: {'PASS' if rc == 0 else 'FAIL'}", flush=True)
     except KeyboardInterrupt:
-        interrupted = True
+        interrupted = 130
         print("\nAbbruch durch Strg+C, Tabelle der bisherigen Laeufe:", file=sys.stderr)
+    except Terminated as t:
+        interrupted = 128 + t.signum
+        print(f"\nAbbruch durch Signal {t.signum}, Tabelle der bisherigen Laeufe:", file=sys.stderr)
     finally:
         if built and not args.keep_images:
             iso.unlink(missing_ok=True)
@@ -232,8 +288,8 @@ def main(argv=None) -> int:
         print(f"entfaellt {probe} {c}: {text}")
     for probe, c, text in failed:
         print(f"FAIL {probe} {c}: {text}")
-    if interrupted:
-        return 130
+    if interrupted is not None:
+        return interrupted
     return 1 if failed or total == 0 else 0
 
 
