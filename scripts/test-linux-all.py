@@ -42,13 +42,13 @@ ISO = ROOT / "ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso"
 #   expected: Erwartungsordner (None: keiner)
 #   runner:  anderes Laufskript; configs: nur diese Stufen (Praefix des Beschleunigers)
 SPECIAL = {
-    # symlinks braucht ein Dateisystem mit Symlinks; das FAT-Datenlaufwerk des Gastes liefert -EPERM (wie vfat unter Linux).
+    # symlinks braucht ein Dateisystem mit Symlinks; das FAT-Datenlaufwerk des Gastes liefert -EPERM (wie vfat unter Linux), belegt durch v7bsymlink.
     "s1": {"exclude": ["symlinks"]},
     # spin kommt aus v3neg: Es laeuft endlos und wird mit signal 9 beendet.
     "v3": {"build": ["v3", "v3neg"], "extra": [("v3neg", "spin")], "status": {"spin": "signal 9"}},
-    # drei v7b-Programme ohne Erwartungsdatei, nur Exit 0; v7bfull braucht eine fast volle Datenplatte (Fuelldatei).
-    "v7b": {"build": ["v7b"], "files": [("v7b", "v7bnames"), ("v7b", "v7bopen"), ("v7b", "v7bquota")], "expected": None,
-            "status": {"v7bnames": "exit 0", "v7bopen": "exit 0", "v7bquota": "exit 0"}},
+    # vier v7b-Programme ohne Erwartungsdatei, nur Exit 0; v7bfull braucht eine fast volle Datenplatte (Fuelldatei).
+    "v7b": {"build": ["v7b"], "files": [("v7b", "v7bnames"), ("v7b", "v7bopen"), ("v7b", "v7bquota"), ("v7b", "v7bsymlink")], "expected": None,
+            "status": {"v7bnames": "exit 0", "v7bopen": "exit 0", "v7bquota": "exit 0", "v7bsymlink": "exit 0"}},
     "v7bfull": {"build": ["v7b"], "files": [("v7b", "v7bfull")], "expected": None, "status": {"v7bfull": "exit 0"},
                 "runner": FULL, "accel": {"kvm"}},
 }
