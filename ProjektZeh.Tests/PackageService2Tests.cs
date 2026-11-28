@@ -450,7 +450,7 @@ public sealed class PackageService2Tests
         var observed = new PackageService2(Root, store, Trust) { ServiceStep = steps.Add };
         var result = observed.Upgrade(Source(), CancellationToken.None);
         Assert.IsTrue(result.IsOK(), result.Status.Message);
-        CollectionAssert.AreEqual(new[] { "stufen musl", "stufen libfoo", "stufen app", "aktivieren", "index" }, steps);
+        CollectionAssert.AreEqual(new[] { "stufen musl", "stufen libfoo", "stufen app", "aktivieren", "index", "aufraeumen" }, steps);
         Assert.AreEqual("app 2.0.0-r1 requested,libfoo 1.1.0-r1 auto,musl 1.2.5-r2 auto", Describe(store));
         Assert.IsFalse(observed.Upgrade(Source(), CancellationToken.None).Value!.Changed);
         Assert.IsTrue(new PackageStore2(Root, Trust, Kernel).Reconcile().IsOK());
@@ -548,8 +548,8 @@ public sealed class PackageService2Tests
         Assert.IsTrue(unused.IsOK(), unused.Status.Message);
         CollectionAssert.AreEqual(new[] { "libfoo", "musl" }, unused.Value!.Removed);
         Assert.AreEqual("", Describe(store));
-        // Dateien bleiben bis zum Einbinden (N3-B zaehlt erst Nutzer); Reconcile entfernt sie dann.
-        Assert.AreEqual(3, VersionDirectories(Root).Length);
+        // N3-B3: Ohne laufende Nutzer raeumt der Auftrag nach dem Wechsel selbst auf; Reconcile findet nichts mehr.
+        Assert.AreEqual(0, VersionDirectories(Root).Length);
         Assert.IsTrue(store.Reconcile().IsOK());
         Assert.AreEqual(0, VersionDirectories(Root).Length);
     }

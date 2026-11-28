@@ -303,6 +303,10 @@ internal static unsafe class CosmosLinuxRun
 
         // Pfade gelten im Paketbestand; ".." kuerzt Normalize innerhalb der Wurzel, der Index nimmt danach nur kanonische Pfade.
         string path = LinuxPath.Normalize(arguments[0][0] == '/' ? arguments[0] : "/" + arguments[0]);
+
+        // N3-B3: Versionen, die ein frueherer Lauf nach einem Upgrade zuletzt freigegeben hat, hier im Shellthread entfernen (das
+        // Laufende selbst greift nicht auf die Platte zu). Ein Fehler laesst sie liegen und haelt den Start nicht auf.
+        packages.CollectUnused();
         ResultObject<ProjektZeh.Packages.PackageIndexLease> bound = packages.Bind();
         if (!bound.IsOK())
         {
@@ -359,6 +363,9 @@ internal static unsafe class CosmosLinuxRun
         finally
         {
             lease?.Dispose();
+
+            // Nach einem Lauf ohne Shell (Gastprobe) ist die Bindung hier schon frei; was sie zuletzt hielt, gleich entfernen.
+            packages.CollectUnused();
         }
     }
 

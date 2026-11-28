@@ -119,12 +119,12 @@ public sealed partial class PackageIndex2Tests
         return built.Value!;
     }
 
-    private (PackageStore2 Store, PackageService2 Service) Installed()
+    private (PackageStore2 Store, PackageService2 Service) Installed(Action<string>? step = null)
     {
         foreach (var pkg in new[] { MuslR1, FooR1, AppR1 }) Publish(pkg);
         PublishCatalog(1, MuslR1, FooR1, AppR1);
         var store = new PackageStore2(Root, Trust, Kernel);
-        var service = new PackageService2(Root, store, Trust);
+        var service = new PackageService2(Root, store, Trust) { ServiceStep = step };
         Assert.IsTrue(service.Update(new DirectoryPackageSource(Repo), CancellationToken.None).IsOK());
         var installed = service.Install(new DirectoryPackageSource(Repo), ["app"], CancellationToken.None);
         Assert.IsTrue(installed.IsOK(), installed.Status.Message);
@@ -277,6 +277,9 @@ public sealed partial class PackageIndex2Tests
         var first = service.CurrentIndex();
         Assert.IsTrue(first.IsOK(), first.Status.Message);
         var old = first.Value!;
+        // N3-B3: Dateien eines Stands haelt nur eine Bindung, nicht schon der geholte Verweis.
+        using var hold = service.Bind().Value!;
+        Assert.AreSame(old, hold.Index);
         Assert.AreEqual("musl 1.2.5-r1 lib/ld-musl-x86_64.so.1 exec", Describe(old.Resolve("/usr/lib/libc.so")));
         Assert.IsTrue(PackageIndex2.Verify(old.Resolve("/usr/lib/libc.so").Value!, CancellationToken.None).IsOK());
 
@@ -293,7 +296,7 @@ public sealed partial class PackageIndex2Tests
         var current = service.CurrentIndex().Value!;
         Assert.IsTrue(current.Generation > old.Generation);
         Assert.AreEqual("musl 1.2.5-r2 lib/ld-musl-x86_64.so.1 exec", Describe(current.Resolve("/usr/lib64/libc.so")));
-        // Wer den alten Stand hielt, sieht ihn weiter; seine Dateien liegen bis Reconcile (N3-B3: erst nach der letzten Nutzung).
+        // Wer den alten Stand gebunden hat, sieht ihn weiter; seine Dateien liegen bis nach der letzten Freigabe (N3-B3).
         Assert.AreEqual("musl 1.2.5-r1 lib/ld-musl-x86_64.so.1 exec", Describe(old.Resolve("/usr/lib/libc.so")));
         Assert.IsTrue(PackageIndex2.Verify(old.Resolve("/usr/lib/libc.so").Value!, CancellationToken.None).IsOK());
 
