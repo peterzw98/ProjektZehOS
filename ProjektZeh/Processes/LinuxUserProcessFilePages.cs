@@ -77,14 +77,15 @@ internal sealed partial class LinuxUserProcess : ILinuxFileMapping
     /// execve: trägt die Dateiteile der Programmsegmente (nicht die des Interpreters) als Ausschnitte ein; je Segment ein eigener Verweis.
     /// Vor dem Start, ohne Nebenläufigkeit.
     /// </summary>
-    private void AddProgramExtents(UserImage image, ILinuxPageSource program)
+    private void AddProgramExtents(UserImage image, ILinuxPageSource? program, ILinuxPageSource? interpreter)
     {
         foreach (UserSegment segment in image.Segments)
         {
-            if (!segment.Interpreter && segment.FileSize > 0)
+            ILinuxPageSource? from = segment.Interpreter ? interpreter : program;
+            if (from != null && segment.FileSize > 0)
             {
-                program.AddRef();
-                _fileExtents.Add(segment.Address, segment.FileSize, (long)segment.FileOffset, program);
+                from.AddRef();
+                _fileExtents.Add(segment.Address, segment.FileSize, (long)segment.FileOffset, from);
             }
         }
     }
@@ -93,10 +94,21 @@ internal sealed partial class LinuxUserProcess : ILinuxFileMapping
     /// V30: wie <see cref="Load(UserImage, System.ReadOnlySpan{byte})"/>, aber die Programmsegmente kommen beim Zugriff aus
     /// <paramref name="program"/> (der Aufrufer behält seinen Verweis); <paramref name="head"/> ist nur der Kopfteil, den der Lader las.
     /// </summary>
-    public ResultErr Load(UserImage image, System.ReadOnlySpan<byte> head, ILinuxPageSource program)
+    public ResultErr Load(UserImage image, System.ReadOnlySpan<byte> head, ILinuxPageSource program) => Load(image, head, program, null);
+
+    /// <summary>
+    /// N2-Z: wie oben; mit <paramref name="interpreter"/> kommen auch die Segmente des Interpreters beim Zugriff aus dessen Datei
+    /// (<see cref="UserImage.InterpreterLazy"/>), ohne den Interpreter ganz zu lesen und zu kopieren. <paramref name="program"/> darf
+    /// dann null sein (Programm aus einem ganz gelesenen Puffer, <paramref name="head"/> ist die ganze Datei).
+    /// </summary>
+    public ResultErr Load(UserImage image, System.ReadOnlySpan<byte> head, ILinuxPageSource? program, ILinuxPageSource? interpreter)
     {
-        System.ArgumentNullException.ThrowIfNull(program);
-        AddProgramExtents(image, program);
-        return LoadCore(image, head, lazyProgram: true);
+        if (image.InterpreterLazy != (interpreter != null))
+        {
+            return ResultErr.CreateFailure(ResultCode.Failure, "Quelle des Interpreters und Abbild passen nicht zusammen.");
+        }
+
+        AddProgramExtents(image, program, interpreter);
+        return LoadCore(image, head, lazyProgram: program != null);
     }
 }

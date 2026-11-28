@@ -477,6 +477,36 @@ public sealed class ElfLoaderTests
     };
 
     [TestMethod]
+    public void DynamicLazyInterpreterReadsOnlyHeadAndSkipsItsBytes()
+    {
+        byte[] elf = Dynamic().Build();
+        byte[] interp = Interp();
+        byte[] head = interp.AsSpan(0, 64 + 56 * 5).ToArray();
+        ElfLoadOptions options = new()
+        {
+            Random = FixedRandom,
+            StackSize = 64 * 1024,
+            ReadInterpreterHead = (string path, out byte[] h, out long length, out bool lazy) =>
+            {
+                h = head;
+                length = interp.Length;
+                lazy = true;
+                return 0;
+            },
+        };
+        UserImage image = ElfLoader.Load(elf, ["p"], [], options);
+
+        Assert.IsTrue(image.InterpreterLazy);
+        Assert.AreSame(head, image.Interpreter);
+        Assert.AreEqual(ElfLoader.InterpreterBase + 0x1010, image.Entry);
+        Assert.IsTrue(image.Segments.Any(s => s.Interpreter && s.FileSize > 0));
+        UserSegment seg = image.Segments.First(s => s.Interpreter && s.FileSize > 0);
+        byte[] page = new byte[4096];
+        image.FillPage(elf, seg.Address & ~4095UL, page);
+        CollectionAssert.AreEqual(new byte[4096], page, "Seiten des Interpreters kommen beim Zugriff aus der Datei, nicht aus dem Kopfteil");
+    }
+
+    [TestMethod]
     public void DynamicLoadsInterpreterAndAuxv()
     {
         byte[] elf = Dynamic().Build();

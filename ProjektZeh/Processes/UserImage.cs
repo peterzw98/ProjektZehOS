@@ -59,6 +59,9 @@ internal sealed class UserImage
     /// <see cref="FillPage"/> wie bisher nur die Programmdatei übergeben bekommt.</summary>
     public byte[]? Interpreter { get; init; }
 
+    /// <summary>N2-Z: <see cref="Interpreter"/> ist nur der Kopfteil; die Segmente des Interpreters kommen beim Zugriff aus der Datei (<see cref="FillPage"/> lässt sie aus).</summary>
+    public bool InterpreterLazy { get; init; }
+
     /// <summary>V25: Verschiebung des Interpreters (AT_BASE), 0 ohne Interpreter.</summary>
     public ulong InterpreterBias { get; init; }
 
@@ -116,7 +119,7 @@ internal sealed class UserImage
         ulong pageEnd = pageAddress + AddressSpaceMap.PageSize;
         foreach (UserSegment segment in _segments)
         {
-            if (skipProgram && !segment.Interpreter)
+            if ((skipProgram && !segment.Interpreter) || (InterpreterLazy && segment.Interpreter))
             {
                 continue;
             }
