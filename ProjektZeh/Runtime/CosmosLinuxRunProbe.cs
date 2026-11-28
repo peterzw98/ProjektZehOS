@@ -30,7 +30,8 @@ namespace ProjektZeh.Runtime;
 internal static unsafe partial class CosmosLinuxRunProbe
 {
     private const uint Magic = 0x3152_4C5A; // "ZLR1"
-    private const int TimeoutSeconds = 20;
+    // 60 s: oom_loop braucht unter TCG (~2 s je Runde, 12 Runden) mehr als 20 s; das Limit fängt nur Hänger ab.
+    private const int TimeoutSeconds = 60;
     private const string RootBase = "/data/linuxrun";
 
     /// <summary>
