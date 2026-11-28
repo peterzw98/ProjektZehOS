@@ -307,7 +307,7 @@ Umsetzung und Grenzen:
   `FUTEX_WAKE` weckt nur die gewählten Wartenden (ein Warteobjekt je Thread), nicht alle des Prozesses. Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.
 - Ein Absturz in einem Thread (Ausnahme, ungültige Register, Fehler der Brücke) beendet den ganzen Prozess wie bei Linux. `pthread_exit` in `main` lässt die
   anderen weiterlaufen; der Prozess endet mit dem letzten Thread.
-- Signalmaske, anhängige Signale und Alternativstack sind noch je Prozess, nicht je Thread (V18 stellt zu, siehe dort); `rt_sigsuspend` gibt es seit v46 (Wartemaske wie ppoll, immer -EINTR); `rt_sigpending` (V23) meldet anhängig und blockiert der einen Prozessmenge (Echtzeitsignale gibt es nicht).
+- Signalmaske je Thread seit V38, ebenso an einen Thread gerichtete anhängige Signale (tgkill, tkill); Signale an den Prozess und der Alternativstack sind je Prozess (V18 stellt zu, siehe dort); `rt_sigsuspend` gibt es seit v46 (Wartemaske wie ppoll, immer -EINTR); `rt_sigpending` (V23) meldet anhängig und blockiert der einen Prozessmenge (Echtzeitsignale gibt es nicht).
 - Dateien (V11): Deskriptortabelle, Arbeitsverzeichnis, `LinuxFileSystem` und die offenen Dateien schützt eine Sperre je Prozess (`ILinuxFiles.FileGate`). Jeder Datei- und Pfadaufruf läuft ganz unter ihr, auch `pread` (Position sichern, lesen, zurücksetzen) ist dadurch atomar; Dateiaufrufe verschiedener Threads laufen nacheinander, auch während einer langsamen Platte. Schreiben auf das Terminal und Lesen von fd 0 halten sie nicht (Lesen wartet auf Eingabe). Reihenfolge: Dateisperre vor Speichersperre und vor `StorageLock`, nie zusammen mit der futex-Tabelle. Grenze: Ersetzt ein Thread fd 0 per `dup2`, während ein anderer `read` darauf beginnt, kann dieser `-EBADF` sehen (die Art des Deskriptors wird vor der Sperre bestimmt).
 - Ein Thread, der in `read` auf fd 0 wartet, endet beim Prozessende über das Dateiende der Sitzung; ohne Sitzung (Gastprobe) liest fd 0 ohnehin leer.
 
@@ -492,11 +492,11 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
   (`SignalsTaken`); ein `-EINTR` ohne Signal (abgehängtes Terminal) bleibt `-EINTR`, statt endlos neu zu starten.
 - **SIGCHLD** beim Ende eines Kinds an die Eltern; Standard und SIG_IGN verwerfen es (SIG_IGN und `SA_NOCLDWAIT` holen das Kind weiter selbst ab).
 - **SIGPIPE** nach `-EPIPE` aus write, writev, pwrite, sendto, sendmsg (nicht mit `MSG_NOSIGNAL`); Standardaktion beendet den Prozess wie Linux.
-- **Grenzen**: Maske, anhängige Signale und Alternativstack je Prozess, nicht je Thread; ein Handler blockiert sein Signal für alle Threads, bis
-  rt_sigreturn die Maske des Rahmens zurückschreibt. Echtzeitsignale reihen sich nicht mehrfach ein. Ein Thread, der ohne Aufruf rechnet, bekommt
+- **Grenzen**: Die Maske ist seit V38 je Thread (ein Handler blockiert sein Signal nur im eigenen Thread, bis rt_sigreturn die Maske des
+  Rahmens zurückschreibt), an einen Thread gerichtete Signale stehen bei ihm; Signale an den Prozess und der Alternativstack sind je Prozess. Echtzeitsignale reihen sich nicht mehrfach ein. Ein Thread, der ohne Aufruf rechnet, bekommt
   ein Signal mit Handler seit N4 IRQ-Signal beim Rücksprung eines Interrupts in den Ring 3 (Cosmos-Patch `user-return-work`: Merker am Thread und Anstoß `0xF0`
   an seine CPU, Rückruf `OnReturnWork` mit offenen Interrupts, Zustellung wie nach rt_sigreturn; Satz `n4smp`, `sig_spin`). Auf einer CPU wirkt das mit dem
-  nächsten Takt oder Wechsel. Ein Kindthread vor seinem ersten Aufruf (Register aus clone noch nicht geladen) nimmt es erst nach einem späteren Aufruf. SIGKILL und Signale mit Standardaktion „beenden“ beenden einen rechnenden Thread trotzdem (`RequestLeave`, Satz `n4smp`,
+  nächsten Takt oder Wechsel. Ein Kindthread vor seinem ersten Aufruf (Register aus clone noch nicht geladen) nimmt es erst nach einem späteren Aufruf. Verlässt ein Thread den Ring 3, während ein Signal an den Prozess anhängt (der Merker verfällt am Ende von `Enter`), stößt er die übrigen Threads erneut an (`PassOnSignals`). SIGKILL und Signale mit Standardaktion „beenden“ beenden einen rechnenden Thread trotzdem (`RequestLeave`, Satz `n4smp`,
   `kill_spinner`); Handler für Ausnahmen seit V24 (eigener Abschnitt). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigtimedwait` und
   `signalfd` fehlen.
 

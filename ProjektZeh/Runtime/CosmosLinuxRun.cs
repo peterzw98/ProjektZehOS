@@ -975,6 +975,7 @@ internal static unsafe class CosmosLinuxRun
         {
             // V19: execve ohne vfork hat den Prozess ersetzt (run.Process und der Hauptthread zeigen auf das neue Abbild).
             process = main.Process;
+            PassOnSignals(run, process);
 
             // Erst wenn kein anderer Thread mehr im Ring 3 oder im Kernel auf dem Adressraum arbeitet, darf er weg.
             WaitForThreads(run, process, main);
@@ -1153,6 +1154,7 @@ internal static unsafe class CosmosLinuxRun
             }
 
             process.ThreadGone(b.Linux);
+            PassOnSignals(run, process);
             ReleaseSlot(run, b);
         }
     }
@@ -1325,6 +1327,25 @@ internal static unsafe class CosmosLinuxRun
         {
             me.Frame = null;
         }
+    }
+
+    /// <summary>
+    /// N4 IRQ-Signal, nach <see cref="UserMode.Enter"/>: Cosmos löscht den Merker von <see cref="UserMode.RequestWork"/> beim Ende von Enter
+    /// (user-return-work ab 2ecd10951). Eine Anfrage zwischen der letzten Rückkehr dieses Threads und diesem Löschen ist damit weg, und hatte
+    /// <see cref="RequestSignalWork"/> einen anderen Thread des Prozesses ausgelassen (Kernelthread noch ohne <see cref="Bridge.Sched"/>), nimmt
+    /// niemand das Signal an den Prozess, bis ein anderer Thread einen Aufruf macht. Jeder Kernelthread betritt den Ring 3 nur einmal (Haupt-,
+    /// Kind- und Prozessthread), ein späteres Enter gibt es nicht; deshalb stößt der Thread hier die übrigen an, solange der Prozess lebt und
+    /// etwas anhängt. An diesen Thread gerichtete Signale (tgkill) verfallen mit ihm wie bei Linux. Ein Anstoß zu viel kostet nur einen leeren
+    /// Durchlauf von <see cref="OnReturnWork"/>.
+    /// </summary>
+    private static void PassOnSignals(Running run, LinuxUserProcess process)
+    {
+        if (process.ExitCode.HasValue || process.PendingSignals == 0)
+        {
+            return;
+        }
+
+        RequestSignalWork(run, process, null);
     }
 
     /// <summary>
@@ -1684,6 +1705,7 @@ internal static unsafe class CosmosLinuxRun
         finally
         {
             process = b.Process; // V19: execve ohne vfork ersetzt den Prozess auf diesem Thread
+            PassOnSignals(run, process);
 
             // Wie WaitForThreads, nur für diesen Prozess: erst wenn kein eigener Thread mehr läuft, darf der Adressraum weg.
             while (HasOtherThreads(run, process, b))
