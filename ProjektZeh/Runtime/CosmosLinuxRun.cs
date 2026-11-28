@@ -1449,9 +1449,28 @@ internal static unsafe class CosmosLinuxRun
                 UserPageTable.UnbindCurrentThread();
             }
 
-            process.ReportEnd(process.WaitStatusOf(9));
-            process.Destroy();
-            ReleaseSlot(run, b);
+            try
+            {
+                process.ReleaseMemoryBeforeReport(); // V50: erst der Speicher, dann der Zombie (wie exit_mm vor exit_notify)
+            }
+            catch (Exception exception)
+            {
+                run.Error ??= exception.GetType().Name + ": " + exception.Message;
+            }
+            finally
+            {
+                // V50 P3: Ende melden, Ids und Slot freigeben, auch wenn das Schließen einer Datei geworfen hat.
+                try
+                {
+                    process.ReportEnd(process.WaitStatusOf(9));
+                    process.Destroy();
+                }
+                finally
+                {
+                    ReleaseSlot(run, b);
+                }
+            }
+
             if (FrameReclaim.ShouldCollectAtExit(UserPageTable.FreePages, UserPageTable.TotalPages, UserPageTable.ReservedPages))
             {
                 GC.Collect();

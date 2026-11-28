@@ -1327,11 +1327,44 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         }
     }
 
+    private bool _memoryDestroyed;
+
+    /// <summary>
+    /// V50: Dateien schließen und Speicher freigeben, <b>bevor</b> das Ende dem Elternprozess gemeldet wird. Linux gibt den Adressraum in
+    /// <c>do_exit</c> (exit_mm) vor dem Zombie frei; meldete ZehOS erst danach, sähe ein Elternprozess nach wait4 noch den ganzen Speicher
+    /// des Kindes belegt (gemessen: nach einem Kind mit 380 MiB frei 64 statt 426 MiB) und liefe beim nächsten Seitenfehler in den OOM-Kill.
+    /// Doppelter Aufruf und das spätere <see cref="Destroy"/> sind wirkungslos.
+    /// </summary>
+    public void ReleaseMemoryBeforeReport()
+    {
+        try
+        {
+            CloseAllFiles();
+        }
+        finally
+        {
+            DestroyMemory();
+        }
+    }
+
     /// <summary>Gibt Tabelle und Frames frei; ein vfork-Kind besitzt keinen eigenen Speicher (er gehört dem Elternprozess).</summary>
     private void DestroyMemory()
     {
-        if (_vforkOf == null)
+        if (_vforkOf != null)
         {
+            return;
+        }
+
+        // V50 P3: unter _memGate wie jeder andere Zugriff auf Tabelle und Frames; ein /proc-Leser auf einer anderen CPU
+        // (Copy, Seitenfehler) sieht sonst halb freigegebene Tabellen. Die Sperre ist wiederholbar, DropFrame darf sie erneut nehmen.
+        lock (_memGate)
+        {
+            if (_memoryDestroyed)
+            {
+                return;
+            }
+
+            _memoryDestroyed = true;
             // Erst die Tabelle: Solange sie besteht, könnte eine CPU über sie noch einen Frame erreichen.
             _pages.DestroyTable();
             foreach (ulong page in new List<ulong>(_frames.Keys))

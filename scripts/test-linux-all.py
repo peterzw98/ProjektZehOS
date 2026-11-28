@@ -51,8 +51,10 @@ SPECIAL = {
             "status": {"v7bnames": "exit 0", "v7bopen": "exit 0", "v7bquota": "exit 0", "v7bsymlink": "exit 0"}},
     "v7bfull": {"build": ["v7b"], "files": [("v7b", "v7bfull")], "expected": None, "status": {"v7bfull": "exit 0"},
                 "runner": FULL, "accel": {"kvm"}},
+    # V50: Speicher bis zum Ende fuellen; das Ende ist je nach Pfad ENOMEM (Exit 0) oder SIGKILL des Prozesses, der Kernel muss leben (zz_alive).
+    "v50": {"expected": None, "status": {"oom_brk": "exit 0", "oom_mmap": "signal 9", "oom_big": "signal 9", "oom_shared": "signal 9", "oom_small": "exit 0", "oom_fork": "exit 0", "oom_thr": "signal 9", "oom_memfd": "exit 0", "oom_edge": "signal 9", "oom_loop": "exit 0", "oom_probe": "exit 0", "zz_alive": "exit 0"}},
 }
-DEFAULT_SETS = ["s1", "s3", "v3", "v7b", "v9", "v10", "v11", "v14", "v15", "v16", "v17", "v18", "v29c", "v7bfull"]
+DEFAULT_SETS = ["s1", "s3", "v3", "v7b", "v9", "v10", "v11", "v14", "v15", "v16", "v17", "v18", "v29c", "v7bfull", "v50"]
 # Saetze ohne Gast-Lauf ueber das Buendel (Hilfsprogramme anderer Saetze oder eigener Bau)
 SKIPPED = {"v3neg": "Hilfsprogramme fuer v3 (spin)", "v3stdin": "Desktop-Terminal: scripts/test-linux-stdin.py",
            "tools": "eigener Bau (toybox/Rust), kein Buendellauf"}

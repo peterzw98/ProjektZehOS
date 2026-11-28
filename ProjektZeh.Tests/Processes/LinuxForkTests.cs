@@ -227,6 +227,31 @@ public sealed class LinuxForkTests
     }
 
     [TestMethod]
+    public void SpeicherIstVorDemZombieFreiUndDoppelAufrufWirkungslos()
+    {
+        LinuxUserProcess parent = NewParent();
+        Assert.IsTrue(Call(parent, LinuxSyscalls.Fork) > 0);
+        LinuxUserProcess child = _children[0];
+        ulong mem = MapAnon(child, 4 * Page, MapPrivate);
+        for (ulong i = 0; i < 4; i++)
+        {
+            Put(child, mem + (i * Page), 1);
+        }
+
+        Assert.IsTrue(child.FrameCount > 0);
+        int childFrames = 0;
+        child.Exit(3);
+        child.ReleaseMemoryBeforeReport();
+        Assert.AreEqual(0, child.FrameCount, "Speicher weg, bevor das Ende gemeldet wird");
+        child.ReleaseMemoryBeforeReport(); // zweiter Aufruf: wirkungslos
+        child.ReportEnd(child.WaitStatusOf(9));
+        Assert.AreEqual(childFrames, child.FrameCount, "auch beim Zombie noch frei");
+        child.Destroy(); // wirkungslos für den Speicher, gibt die Ids frei
+        parent.Destroy();
+        Assert.AreEqual(0, _store.Live.Count);
+    }
+
+    [TestMethod]
     public void KindErbtDeskriptorenMitZaehlung()
     {
         LinuxUserProcess parent = NewParent();
