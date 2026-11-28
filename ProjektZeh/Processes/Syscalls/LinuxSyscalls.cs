@@ -96,6 +96,7 @@ internal static partial class LinuxSyscalls
             case Getrlimit:
             case Setrlimit:
             case SchedGetaffinity:
+            case Getcpu:
             case Prctl:
                 return DispatchLimits(ref a, p); // V9: Stackmessung, Grenzen, CPU-Maske, Threadname (js-Vorbereitung)
             default:

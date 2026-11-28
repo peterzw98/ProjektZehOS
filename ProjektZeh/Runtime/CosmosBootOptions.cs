@@ -35,6 +35,13 @@ internal static unsafe class CosmosBootOptions
     public static string Apply()
     {
         Current = BootOptions.Parse(ReadCommandLine());
+        if (Current.TlbTimeoutMs is int tlbTimeout)
+        {
+            // Vor dem ersten Linux-Lauf, also vor jedem Abschuss; der Wert ist ein einzelnes int (Volatile in Cosmos).
+#pragma warning disable COSMOS0001 // UserPageTable gilt als Vorschau.
+            Cosmos.Kernel.Core.Memory.UserPageTable.ShootdownTimeoutMs = tlbTimeout;
+#pragma warning restore COSMOS0001
+        }
         try
         {
             // Die Standardaffinität zuerst, vor den Threadstarts. Environment.ProcessorCount beeinflusst das nicht mehr: CoreLib hat den

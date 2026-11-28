@@ -408,7 +408,7 @@ internal static class LinuxProcFiles
         {
             case Entry.SysStat: return SysStat(p);
             case Entry.MemInfo: return MemInfo(p);
-            case Entry.CpuInfo: return CpuInfo();
+            case Entry.CpuInfo: return CpuInfo(p is ILinuxCpus set ? set.CpuCount : 1);
         }
 
         LinuxProcSnapshot? s = Snapshot(p, pid);
@@ -629,7 +629,7 @@ internal static class LinuxProcFiles
         return b.ToString();
     }
 
-    /// <summary>/proc/stat: eine CPU (wie sched_getaffinity), alle Zeit seit dem Start als idle in USER_HZ.</summary>
+    /// <summary>/proc/stat: die CPUs des Laufs (wie sched_getaffinity), alle Zeit seit dem Start als idle in USER_HZ.</summary>
     internal static string SysStat(ILinuxProcess p)
     {
         long mono = p is ILinuxHost host ? host.MonotonicNanos : 0;
@@ -639,8 +639,14 @@ internal static class LinuxProcFiles
         int procs = p is ILinuxProcView view ? view.ProcessCount : 1;
         string i = idle.ToString(CultureInfo.InvariantCulture);
         var b = new StringBuilder(256);
-        b.Append("cpu  0 0 0 ").Append(i).Append(" 0 0 0 0 0 0\n");
-        b.Append("cpu0 0 0 0 ").Append(i).Append(" 0 0 0 0 0 0\n");
+        // N4-S2: eine cpuN-Zeile je CPU des Laufs (wie sched_getaffinity); die Summenzeile zählt die Leerlaufzeit aller.
+        int cpus = p is ILinuxCpus set ? Math.Clamp(set.CpuCount, 1, 64) : 1;
+        b.Append("cpu  0 0 0 ").Append((idle * cpus).ToString(CultureInfo.InvariantCulture)).Append(" 0 0 0 0 0 0\n");
+        for (int n = 0; n < cpus; n++)
+        {
+            b.Append("cpu").Append(n.ToString(CultureInfo.InvariantCulture)).Append(" 0 0 0 ").Append(i).Append(" 0 0 0 0 0 0\n");
+        }
+
         b.Append("intr 0\nctxt 0\n");
         b.Append("btime ").Append(btime.ToString(CultureInfo.InvariantCulture)).Append('\n');
         b.Append("processes ").Append(procs.ToString(CultureInfo.InvariantCulture)).Append('\n');
@@ -674,32 +680,43 @@ internal static class LinuxProcFiles
     }
 
     /// <summary>
-    /// /proc/cpuinfo: ein Prozessor (wie sched_getaffinity). Die Flags nennen nur, was jede x86-64-CPU hat; Programme, die mehr brauchen,
-    /// fragen CPUID selbst (Skia, musl tun das).
+    /// /proc/cpuinfo: ein Block je CPU des Laufs (wie sched_getaffinity, N4-S2), jede als eigener Kern. Die Flags nennen nur, was jede
+    /// x86-64-CPU hat; Programme, die mehr brauchen, fragen CPUID selbst (Skia, musl tun das).
     /// </summary>
-    internal static string CpuInfo() =>
-        "processor\t: 0\n" +
-        "vendor_id\t: ZehOS\n" +
-        "cpu family\t: 6\n" +
-        "model\t\t: 0\n" +
-        "model name\t: ZehOS x86-64 CPU\n" +
-        "stepping\t: 0\n" +
-        "cpu MHz\t\t: 1000.000\n" +
-        "physical id\t: 0\n" +
-        "siblings\t: 1\n" +
-        "core id\t\t: 0\n" +
-        "cpu cores\t: 1\n" +
-        "apicid\t\t: 0\n" +
-        "fpu\t\t: yes\n" +
-        "fpu_exception\t: yes\n" +
-        "cpuid level\t: 1\n" +
-        "wp\t\t: yes\n" +
-        "flags\t\t: fpu tsc cx8 cmov mmx fxsr sse sse2 syscall nx lm\n" +
-        "bogomips\t: 2000.00\n" +
-        "clflush size\t: 64\n" +
-        "cache_alignment\t: 64\n" +
-        "address sizes\t: 48 bits physical, 48 bits virtual\n" +
-        "power management:\n\n";
+    internal static string CpuInfo(int cpus = 1)
+    {
+        cpus = Math.Clamp(cpus, 1, 64);
+        string count = cpus.ToString(CultureInfo.InvariantCulture);
+        var b = new StringBuilder(800 * cpus);
+        for (int n = 0; n < cpus; n++)
+        {
+            string id = n.ToString(CultureInfo.InvariantCulture);
+            b.Append("processor\t: ").Append(id).Append('\n')
+                .Append("vendor_id\t: ZehOS\n" +
+                    "cpu family\t: 6\n" +
+                    "model\t\t: 0\n" +
+                    "model name\t: ZehOS x86-64 CPU\n" +
+                    "stepping\t: 0\n" +
+                    "cpu MHz\t\t: 1000.000\n" +
+                    "physical id\t: 0\n")
+                .Append("siblings\t: ").Append(count).Append('\n')
+                .Append("core id\t\t: ").Append(id).Append('\n')
+                .Append("cpu cores\t: ").Append(count).Append('\n')
+                .Append("apicid\t\t: ").Append(id).Append('\n')
+                .Append("fpu\t\t: yes\n" +
+                    "fpu_exception\t: yes\n" +
+                    "cpuid level\t: 1\n" +
+                    "wp\t\t: yes\n" +
+                    "flags\t\t: fpu tsc cx8 cmov mmx fxsr sse sse2 syscall nx lm\n" +
+                    "bogomips\t: 2000.00\n" +
+                    "clflush size\t: 64\n" +
+                    "cache_alignment\t: 64\n" +
+                    "address sizes\t: 48 bits physical, 48 bits virtual\n" +
+                    "power management:\n\n");
+        }
+
+        return b.ToString();
+    }
 
     /// <summary>-ESRCH für Dateien eines inzwischen abgeholten Prozesses.</summary>
     internal static long Gone => -ESrch;

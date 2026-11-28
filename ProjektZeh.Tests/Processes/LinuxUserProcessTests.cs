@@ -21,7 +21,7 @@ public sealed class LinuxUserProcessTests
     private const ulong NotPresentRead = 0x4, NotPresentWrite = 0x6, NotPresentFetch = 0x14, PresentWrite = 0x7;
 
     /// <summary>Seitentabelle als Wörterbuch; zählt, was der Prozess abbildet und freigibt.</summary>
-    private sealed class FakePages : IUserPages, IUserPagesQuery
+    private sealed class FakePages : IUserPages, IUserPagesQuery, IUserPagesRange
     {
         public readonly Dictionary<ulong, byte[]> Frames = new();
         public readonly Dictionary<ulong, (ulong Frame, MapAccess Access)> Mapped = new();
@@ -71,6 +71,39 @@ public sealed class LinuxUserProcessTests
         {
             Mapped.Clear();
             Events.Add("table");
+        }
+
+        // N4-S2: Länge jedes Bereichsaufrufs (ein Abschuss je Aufruf).
+        public readonly List<int> UnmapRanges = new();
+        public readonly List<int> ProtectRanges = new();
+
+        public void UnmapRange(ulong start, int count, Span<bool> gone)
+        {
+            Assert.IsTrue(count >= 1 && count <= gone.Length, "Länge");
+            UnmapRanges.Add(count);
+            for (int i = 0; i < count; i++)
+            {
+                gone[i] = Unmap(start + (ulong)i * Page);
+            }
+        }
+
+        public bool ProtectRange(ulong start, int count, MapAccess access)
+        {
+            Assert.AreNotEqual(MapAccess.None, access);
+            ProtectRanges.Add(count);
+            if (RefuseUnmap || RefuseMap) return false; // abgelehnt: der Prozess fällt auf Seite für Seite zurück
+            for (int i = 0; i < count; i++)
+            {
+                if (!Mapped.ContainsKey(start + (ulong)i * Page)) return false;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                ulong page = start + (ulong)i * Page;
+                Mapped[page] = (Mapped[page].Frame, access);
+            }
+
+            return true;
         }
     }
 
@@ -351,6 +384,78 @@ public sealed class LinuxUserProcessTests
         Assert.IsFalse(process.Discard(ElfLoader.UserEnd, Page));
     }
 
+    private static readonly int[] ExpectedUnmapRuns = { 64, 64, 1, 1 };
+    private static readonly int[] SinglePageRun = { 1 };
+
+    [TestMethod]
+    public void UnmapCollectsContiguousPages()
+    {
+        // N4-S2: ein Bereichsaufruf je Folge zusammenhängender Seiten mit Frame, höchstens 64 Seiten je Aufruf.
+        var (process, pages, _, _) = Start();
+        ulong a = process.MapAnonymous(200 * Page, 3);
+        for (int i = 0; i < 130; i++)
+        {
+            Assert.IsTrue(process.TryWrite(a + (ulong)i * Page, new byte[] { 1 }));
+        }
+
+        Assert.IsTrue(process.TryWrite(a + 140 * Page, new byte[] { 1 }));
+        int frames = process.FrameCount;
+        Assert.IsTrue(process.Unmap(a + Page, 199 * Page));
+        CollectionAssert.AreEquivalent(ExpectedUnmapRuns, pages.UnmapRanges);
+        Assert.AreEqual(frames - 130, process.FrameCount);
+        Assert.IsTrue(pages.Mapped.ContainsKey(a), "Seite vor dem Bereich bleibt");
+        Assert.AreEqual(0, process.RefusedUnmaps);
+
+        // madvise(DONTNEED) nimmt denselben Weg; der Bereich bleibt, der nächste Zugriff liest Nullen.
+        pages.UnmapRanges.Clear();
+        Assert.IsTrue(process.Discard(a, Page));
+        CollectionAssert.AreEqual(SinglePageRun, pages.UnmapRanges);
+        byte[] b = new byte[1];
+        Assert.IsTrue(process.TryRead(a, b));
+        Assert.AreEqual(0, b[0]);
+        process.Destroy();
+        Assert.AreEqual(0, pages.Frames.Count);
+    }
+
+    private static readonly int[] ThreePageRun = { 3 };
+    private static readonly int[] ThreePageRunTwice = { 3, 3 };
+
+    [TestMethod]
+    public void ProtectChangesRangeInPlace()
+    {
+        // N4-S2: mprotect ändert die Rechte abgebildeter Seiten in einem Bereichsaufruf, ohne Aufheben; Frames und Inhalt bleiben.
+        var (process, pages, _, _) = Start();
+        ulong a = process.MapAnonymous(3 * Page, 3);
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.IsTrue(process.TryWrite(a + (ulong)i * Page, new byte[] { (byte)(i + 1) }));
+        }
+
+        ulong frame = pages.Mapped[a].Frame;
+        Assert.IsTrue(process.Protect(a, 3 * Page, 1));
+        CollectionAssert.AreEqual(ThreePageRun, pages.ProtectRanges);
+        Assert.AreEqual(0, pages.UnmapRanges.Count, "nicht aufgehoben");
+        Assert.AreEqual(MapAccess.Read, pages.Mapped[a + 2 * Page].Access);
+        Assert.AreEqual(frame, pages.Mapped[a].Frame);
+
+        // PROT_NONE hebt in einem Bereichsaufruf auf, die Frames bleiben beim Prozess.
+        int frames = process.FrameCount;
+        Assert.IsTrue(process.Protect(a, 3 * Page, 0));
+        CollectionAssert.AreEqual(ThreePageRun, pages.UnmapRanges);
+        Assert.AreEqual(0, pages.Mapped.Count(m => m.Key >= a && m.Key < a + 3 * Page));
+        Assert.AreEqual(frames, process.FrameCount);
+
+        // Zurück auf RW: die Tabelle lehnt den Bereich ab (nichts abgebildet), der Prozess bildet Seite für Seite neu ab.
+        Assert.IsTrue(process.Protect(a, 3 * Page, 3));
+        CollectionAssert.AreEqual(ThreePageRunTwice, pages.ProtectRanges);
+        Assert.AreEqual(MapAccess.ReadWrite, pages.Mapped[a + Page].Access);
+        byte[] b = new byte[1];
+        Assert.IsTrue(process.TryRead(a + 2 * Page, b));
+        Assert.AreEqual(3, b[0], "Inhalt über die Schutzwechsel erhalten");
+        process.Destroy();
+        Assert.AreEqual(0, pages.Frames.Count);
+    }
+
     [TestMethod]
     public void RefusedUnmapKeepsTheFrame()
     {
@@ -361,6 +466,7 @@ public sealed class LinuxUserProcessTests
         int frames = process.FrameCount;
         Assert.IsTrue(process.Unmap(a, Page));
         Assert.AreEqual(frames, process.FrameCount, "abgebildet: nicht frei");
+        Assert.AreEqual(1, process.RefusedUnmaps, "N4-S2: gezählt");
 
         // Die Seite bleibt gesperrt: kein neuer Bereich mit dem alten Frame, kein Kernelzugriff, Fehler brechen ab.
         ulong b = process.MapAnonymous(Page, 3);

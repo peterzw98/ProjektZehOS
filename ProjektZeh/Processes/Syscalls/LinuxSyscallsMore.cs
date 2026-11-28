@@ -33,6 +33,21 @@ internal interface ILinuxSystemInfo
     bool TryGetMemory(out ulong totalBytes, out ulong freeBytes);
 }
 
+/// <summary>
+/// N4-S2: CPUs des Laufs für sched_getaffinity, getcpu, /proc/stat und /proc/cpuinfo. Gezählt wird dicht ab 0: Ein Lauf auf den
+/// Kernel-CPUs 1 bis 3 meldet die CPUs 0 bis 2 (Abweichung von Linux, das die echten Nummern nennt). musl leitet
+/// sysconf(_SC_NPROCESSORS_CONF) und _ONLN aus der Maske ab, Programme indizieren mit getcpu Tabellen dieser Größe. Ohne die
+/// Schnittstelle gilt eine CPU (Nummer 0).
+/// </summary>
+internal interface ILinuxCpus
+{
+    /// <summary>Zahl der CPUs des Laufs, 1 bis 64.</summary>
+    int CpuCount { get; }
+
+    /// <summary>Dichte Nummer der CPU, auf der der Aufrufer gerade läuft (0 bis <see cref="CpuCount"/> - 1); kann schon beim Lesen veraltet sein.</summary>
+    int CurrentCpu { get; }
+}
+
 /// <summary>Zustand der Signale eines Prozesses (Handler, Maske, Alternativstack); zugestellt wird seit V18 (LinuxSignals.cs).</summary>
 internal sealed class LinuxSignalState
 {
