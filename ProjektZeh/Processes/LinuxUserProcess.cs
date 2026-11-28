@@ -56,7 +56,7 @@ internal interface IUserPagesQuery
 /// </para>
 /// </summary>
 internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, IUserMemory, ILinuxHost, ILinuxFiles, ILinuxAddressSpace, ILinuxThreads, ILinuxAbort, ILinuxExe,
-    ILinuxSystemInfo, ILinuxSpawn, ILinuxFdFlags, ILinuxOpenFileCount, ILinuxWait, ILinuxInFlight, ILinuxFileLocking
+    ILinuxSystemInfo, ILinuxCpus, ILinuxSpawn, ILinuxFdFlags, ILinuxOpenFileCount, ILinuxWait, ILinuxInFlight, ILinuxFileLocking
 {
     /// <summary>
     /// Größe der Deskriptortabelle; gleich der Grenze, bis zu der der Verteiler bei close nach weiteren Nummern derselben Datei sucht
@@ -685,6 +685,11 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         freeBytes = 0;
         return false;
     }
+
+    // ILinuxCpus (N4-S2): die CPU-Menge kennt nur der Host des Kernels; ohne ihn eine CPU wie vor S2.
+    public int CpuCount => _host is ILinuxCpus cpus ? Math.Clamp(cpus.CpuCount, 1, 64) : 1;
+
+    public int CurrentCpu => _host is ILinuxCpus cpus ? cpus.CurrentCpu : 0;
 
     /// <summary>Abbruch des Programms (über <see cref="LinuxFutexTable.Abort"/>, das Strg+C, Zeitlimit und exit_group auslösen).</summary>
     public bool IsAborted => Futexes.IsAborted;

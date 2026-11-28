@@ -150,6 +150,12 @@ internal static unsafe class CosmosLinuxRun
         /// <summary>Kernelthreads des Programms, die noch laufen; der Hauptthread räumt erst auf, wenn er der letzte ist.</summary>
         public int KernelThreads;
 
+        /// <summary>
+        /// N4-S2: CPU-Menge des Laufs, festgehalten beim Start des Programmthreads (vor dem ersten Linux-Aufruf, danach nur gelesen).
+        /// Kindthreads, fork- und execve-Prozesse erben sie als Affinität; sched_getaffinity, getcpu und /proc melden sie.
+        /// </summary>
+        public Cosmos.Kernel.System.Threading.CpuSet Cpus = Cosmos.Kernel.System.Threading.CpuSet.Single(0);
+
         public Running(TerminalDescriptor terminal) => Terminal = terminal;
     }
 
@@ -917,13 +923,17 @@ internal static unsafe class CosmosLinuxRun
         bool bound = false;
         try
         {
-            // Alle Threads eines Programms auf einer CPU: UserPageTable kennt noch keinen TLB-Shootdown (N4) und lehnt Unmap und
-            // Protect ab, solange eine andere CPU auf der Tabelle läuft. Kindthreads erben die Menge ihres Erzeugers.
+            // N4-S2: Seit dem Cosmos-Patch tlb-shootdown (N4-S1) wirken Unmap und Protect auf allen CPUs, bevor ein Frame frei wird;
+            // die Threads eines Programms dürfen deshalb auf der ganzen Menge laufen. Bis die Prüfung S5 bestanden ist, nur mit
+            // zehos.linuxsmp=1; sonst wie bisher alle Threads auf einer CPU. Kindthreads erben die Menge ihres Erzeugers.
             var cpus = Cosmos.Kernel.System.Threading.ThreadAffinity.Current;
-            if (cpus.Count > 1)
+            if (cpus.Count > 1 && !CosmosBootOptions.Current.LinuxSmp)
             {
-                Cosmos.Kernel.System.Threading.ThreadAffinity.Current = Cosmos.Kernel.System.Threading.CpuSet.Single(cpus.First);
+                cpus = Cosmos.Kernel.System.Threading.CpuSet.Single(cpus.First);
+                Cosmos.Kernel.System.Threading.ThreadAffinity.Current = cpus;
             }
+
+            run.Cpus = cpus;
 
             ResultErr loaded = process.Load(image, elf);
             if (!loaded.IsOK())
@@ -1784,8 +1794,37 @@ internal static unsafe class CosmosLinuxRun
     private static readonly CosmosLinuxHost Host = new();
 
     /// <summary>Zeit, Zufall, Schlafen und Speicher für die Aufrufe aus V2b (clock_gettime, getrandom, poll mit Frist) und V13 (sysinfo).</summary>
-    private sealed class CosmosLinuxHost : ILinuxHost, ILinuxSystemInfo
+    private sealed class CosmosLinuxHost : ILinuxHost, ILinuxSystemInfo, ILinuxCpus
     {
+        /// <summary>N4-S2: Größe der Laufmenge (<see cref="Running.Cpus"/>); ohne Lauf des Aufrufers eine CPU.</summary>
+        public int CpuCount => Current() is Running run ? Math.Min(run.Cpus.Count, 64) : 1;
+
+        /// <summary>Platz der aktuellen CPU in der Laufmenge, gezählt dicht ab 0; ohne Allokation, ohne Sperre.</summary>
+        public int CurrentCpu
+        {
+            get
+            {
+                if (Current() is not Running run)
+                {
+                    return 0;
+                }
+
+                // Der Thread kann gleich danach umziehen; getcpu verspricht auch unter Linux nur einen Augenblickswert.
+                uint here = Cosmos.Kernel.System.Threading.KernelCpus.Current;
+                var cpus = run.Cpus;
+                int index = 0;
+                for (uint cpu = 0; cpu < here && index < 63; cpu++)
+                {
+                    if (cpus.Contains(cpu))
+                    {
+                        index++;
+                    }
+                }
+
+                return cpus.Contains(here) ? index : 0;
+            }
+        }
+
         /// <summary>sysinfo (V13): dieselbe Quelle wie <c>CosmosSystemInfo.MemoryText</c> und die Speicherzeilen der Proben.</summary>
         public bool TryGetMemory(out ulong totalBytes, out ulong freeBytes)
         {

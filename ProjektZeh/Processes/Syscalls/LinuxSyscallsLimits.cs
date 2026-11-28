@@ -20,7 +20,7 @@ internal interface ILinuxAddressSpace
 /// </summary>
 internal static partial class LinuxSyscalls
 {
-    public const long Mremap = 25, Getrlimit = 97, Prctl = 157, Setrlimit = 160, SchedGetaffinity = 204, Prlimit64 = 302;
+    public const long Mremap = 25, Getrlimit = 97, Prctl = 157, Setrlimit = 160, SchedGetaffinity = 204, Prlimit64 = 302, Getcpu = 309;
 
     private const ulong RlimInfinity = ulong.MaxValue;
     private const int RlimitStack = 3, RlimitCore = 4, RlimitNofile = 7, RlimitCount = 16;
@@ -39,6 +39,7 @@ internal static partial class LinuxSyscalls
             case Setrlimit: return a.A1 == 0 ? -EFAULT : DoPrlimit(p, 0, (int)a.A0, a.A1, 0);
             case SchedGetaffinity: return DoSchedGetaffinity(p, (long)a.A0, a.A1, a.A2);
             case Prctl: return DoPrctl(p, (int)a.A0, a.A1);
+            case Getcpu: return DoGetcpu(p, a.A0, a.A1);
             default: return -ENOSYS;
         }
     }
@@ -154,7 +155,10 @@ internal static partial class LinuxSyscalls
         return 0;
     }
 
-    /// <summary>Eine CPU (der Prozess hat einen Thread); Rückgabe wie Linux die geschriebene Länge (8 Bytes).</summary>
+    /// <summary>
+    /// N4-S2: die CPUs des Laufs (<see cref="ILinuxCpus"/>, dicht ab 0; ohne sie eine CPU); Rückgabe wie Linux die geschriebene Länge (8 Bytes).
+    /// Jeder Thread des Laufs hat dieselbe Menge, deshalb gilt die Antwort auch für die eigenen Thread-IDs nur als Prozessmenge (pid 0 oder eigene).
+    /// </summary>
     private static long DoSchedGetaffinity(ILinuxProcess p, long pid, ulong len, ulong maskPtr)
     {
         if (pid != 0 && pid != p.Pid)
@@ -167,9 +171,40 @@ internal static partial class LinuxSyscalls
             return -EINVAL;
         }
 
+        int count = p is ILinuxCpus cpus ? Math.Clamp(cpus.CpuCount, 1, 64) : 1;
+        ulong bits = count == 64 ? ulong.MaxValue : (1UL << count) - 1;
         Span<byte> mask = stackalloc byte[8];
-        mask[0] = 1;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(mask, bits);
         return p.Memory.TryWrite(maskPtr, mask) ? 8 : -EFAULT;
+    }
+
+    /// <summary>
+    /// N4-S2 getcpu(cpu, node, tcache): dichte Nummer der aktuellen CPU (<see cref="ILinuxCpus"/>), Knoten immer 0; beide Zeiger optional,
+    /// der dritte Parameter ist seit Linux 2.6.24 unbenutzt.
+    /// </summary>
+    private static long DoGetcpu(ILinuxProcess p, ulong cpuPtr, ulong nodePtr)
+    {
+        uint cpu = p is ILinuxCpus cpus ? (uint)Math.Max(0, cpus.CurrentCpu) : 0;
+        Span<byte> value = stackalloc byte[4];
+        if (cpuPtr != 0)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(value, cpu);
+            if (!p.Memory.TryWrite(cpuPtr, value))
+            {
+                return -EFAULT;
+            }
+        }
+
+        if (nodePtr != 0)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(value, 0);
+            if (!p.Memory.TryWrite(nodePtr, value))
+            {
+                return -EFAULT;
+            }
+        }
+
+        return 0;
     }
 
     /// <summary>

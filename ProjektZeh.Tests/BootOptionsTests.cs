@@ -29,4 +29,27 @@ public sealed class BootOptionsTests
 
     [TestMethod]
     public void Parse_SmtWholeWordOnly() => Assert.IsFalse(BootOptions.Parse("xzehos.smt=off").SmtOff);
+
+    [TestMethod]
+    public void Parse_LinuxSmp_DefaultOff() => Assert.IsFalse(BootOptions.Parse("zehos.cpus=4").LinuxSmp);
+
+    [TestMethod]
+    [DataRow("zehos.linuxsmp=1", true)]
+    [DataRow("zehos.linuxsmp=0", false)]
+    [DataRow("zehos.linuxsmp=yes", false)]
+    [DataRow("zehos.linuxsmp=1 zehos.linuxsmp=0", false)]
+    [DataRow("zehos.linuxsmp=0 zehos.linuxsmp=1", true)]
+    [DataRow("xzehos.linuxsmp=1", false)]
+    public void Parse_LinuxSmp(string line, bool expected) => Assert.AreEqual(expected, BootOptions.Parse(line).LinuxSmp);
+
+    [TestMethod]
+    [DataRow("zehos.tlbtimeout=0", 0)]
+    [DataRow("zehos.tlbtimeout=20000", 20000)]
+    public void Parse_TlbTimeout(string line, int expected) => Assert.AreEqual(expected, BootOptions.Parse(line).TlbTimeoutMs);
+
+    [TestMethod]
+    [DataRow("zehos.tlbtimeout=-1")]
+    [DataRow("zehos.tlbtimeout=")]
+    [DataRow("zehos.tlbtimeout=5s")]
+    public void Parse_InvalidTlbTimeout_IsNull(string line) => Assert.IsNull(BootOptions.Parse(line).TlbTimeoutMs);
 }
