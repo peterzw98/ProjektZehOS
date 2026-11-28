@@ -54,6 +54,28 @@ public sealed partial class PackageIndex2Tests
     }
 
     [TestMethod]
+    public void BusyRunReleasesTheHandedOverBinding()
+    {
+        // Review B2, P2: Run kehrt bei belegtem Lauf vor seinem try zurueck; die abgegebene Bindung darf dort nicht liegen bleiben.
+        var (_, service) = Installed();
+        var lease = service.Bind().Value!;
+        int busy = 1;
+        Assert.IsFalse(LinuxRunGate.TryEnter(ref busy, lease));
+        Assert.AreEqual(1, busy);
+        Assert.IsTrue(lease.Released);
+        Assert.AreEqual(0, service.BoundUsers().Length);
+
+        // Freier Lauf: die Bindung gehoert danach dem Lauf und bleibt bestehen.
+        var held = service.Bind().Value!;
+        busy = 0;
+        Assert.IsTrue(LinuxRunGate.TryEnter(ref busy, held));
+        Assert.AreEqual(1, busy);
+        Assert.IsFalse(held.Released);
+        Assert.AreEqual(1, service.BoundUsers().Single().Users);
+        held.Dispose();
+    }
+
+    [TestMethod]
     public void BoundStartKeepsItsIndexAcrossUpgradeUntilReleased()
     {
         var (_, service) = Installed();
