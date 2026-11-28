@@ -730,7 +730,11 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     {
         lock (_threadGate)
         {
-            TerminatedBySignal ??= signal;
+            // Wie Terminate (P3-9): Endete der Prozess schon mit exit_group, bleibt dessen Code; der Fehler eines Geschwisters danach ändert ihn nicht.
+            if (ExitCode == null)
+            {
+                TerminatedBySignal ??= signal;
+            }
         }
     }
 
