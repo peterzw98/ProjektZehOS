@@ -215,9 +215,9 @@ er ersetzt keinen Kernel-/Gasttest.
 - Das Startmenü erkennt ein bereits offenes Fenster am Anzeigenamen; Paketnamen sollten deshalb eindeutig sein.
 - Veränderte Paketdateien sperren den Start; `pkg install <id>` derselben Version repariert sie.
 
-## Format 2 (noch nicht angeschlossen)
+## Format 2 (über `pkg native`, noch ohne Programmstart)
 
-Vorarbeit für native Pakete (Laufzeit `linux-x64-v1`, [Plan](superpowers/plans/2026-11-24-ladybird-p-paketdienst-vorarbeit.md), [Entwurf, Abschnitt 7](superpowers/specs/2026-11-24-native-pakete-design.md#7-paketdienst-v2)). Nichts davon ist an `pkg`, Kernelstart oder Server angeschlossen; `pkg` liest und schreibt weiter nur Version 1. Vertrauen und Signatur sind dieselben wie bei Version 1 (`PackageTrust`).
+Vorarbeit für native Pakete (Laufzeit `linux-x64-v1`, [Plan](superpowers/plans/2026-11-24-ladybird-p-paketdienst-vorarbeit.md), [Entwurf, Abschnitt 7](superpowers/specs/2026-11-24-native-pakete-design.md#7-paketdienst-v2)). Seit N3-B1 erreicht die Shell den Dienst über `pkg native` (Abschnitt „Dienst und Index“); Programmstart (N3-E) und Server (N3-G) sind noch nicht angeschlossen. Alle übrigen `pkg`-Befehle lesen und schreiben weiter nur Version 1. Vertrauen und Signatur sind dieselben wie bei Version 1 (`PackageTrust`).
 
 ### Manifest
 
@@ -309,9 +309,28 @@ end
 - **Abbruchsicherheit:** Hosttests brechen nach jedem Dateischritt von Stufen, Aktivieren und Aufräumen ab (Kopie des Zustands im Moment des Abbruchs) und prüfen nach Neustart und Aufräumen: alte oder neue Menge, nie eine Mischung, nur aktive Versionen auf der Platte, Version 1 byteweise gleich, Wiederholung gelingt. Wie bei Version 1 garantiert FAT32 keine atomaren Schritte; das ist kein Stromausfallschutz.
 - **Grenzen:** Fehlt `active2` samt `.old` und `.new`, ist der Bestand leer (so beauftragt), und das Aufräumen löscht alle Versionen: „nie aktiviert“ und „Datei verloren“ (FAT-Schaden, versehentlich gelöscht) sind nicht unterscheidbar; später etwa über einen Marker „v2 eingerichtet“. Ob `depends` und `provides` von Katalog und Manifest übereinstimmen, prüft nicht der Bestand (`CatalogEntry2Key` trägt nur Kennung, Version und Hash), sondern die Auflösung beim Aufrufer. `ReadActive` nimmt keine Schreibsperre und kann neben einem gleichzeitigen Aufräumen derselben Instanz fälschlich „beschädigt“ melden. Schreibende Operationen einer Instanz schließen sich aus. Es gibt noch keine Belegung laufender Versionen; deshalb entfernt nur das Aufräumen beim Einbinden alte Versionen. Die Pfadmenge im Manifestparser hasht ohne Salt (gezielte Kollisionen verlangsamen ihn); weil jede Signatur vorher geprüft wird, erreicht das nur der Herausgeber.
 
+### Dienst und Index
+
+`PackageService2` (N3-A) verbindet Katalog, Auflösung und Bestand; `PackageIndex2` (N3-B1) ist der Pfadindex der aktiven Menge. Shell (Administratoren für ändernde Befehle, die laufen im Hintergrund wie `pkg install`):
+
+```text
+pkg native list                                      aktive Menge (angefordert/automatisch, Update), Katalog v2
+pkg native resolve <pfad>                            Pfad im Index: Paket, Version, Größe, ausführbar
+pkg native update  [--from <Verzeichnis>]            catalog2 + catalog2.sig laden
+pkg native install [--from <Verzeichnis>] <id>...    Zielmenge samt Abhängigkeiten, ein Wechsel von active2
+pkg native upgrade [--from <Verzeichnis>]            alle neueren Katalogversionen in einem Wechsel
+pkg native remove <id> | --unused                    Entfernen, Abhängigkeiten geschützt
+```
+
+Ohne `--from` gilt die HTTPS-Quelle von Version 1 (`pkg source`), `catalog2` liegt dort neben `catalog`. Mit `--from` ist die Quelle ein lokales Verzeichnis im Layout von `scripts/package2.py`. Vertraut wird in beiden Fällen nur die Signatur.
+
+- **Index:** entsteht nur aus `ReadActive` (Signatur vor Parse, Manifest-Hash, Mengenregeln) und ist danach unveränderlich. Er bildet Datei- und Linkpfade auf die Datei unter `v2/<id>/<version>-r<release>/files/` ab; Links und Ordner sind nur Einträge des Index. Aufgelöst werden Datei- und Ordnerlinks, auch mitten im Pfad, höchstens 40 hintereinander, ohne Groß-/Kleinschreibung (ASCII, wie FAT32). Nur kanonische Pfade werden angenommen (optional führendes `/`, keine leeren, `.`- oder `..`-Komponenten); `..` wird abgewiesen statt textuell gekürzt, damit kein Pfad über einen Link aus dem Paketbaum führt. Den Inhalt prüft erst `PackageIndex2.Verify` (Größe und SHA-256 gegen das Manifest), bevor ein Start ihm vertraut.
+- **Wechsel:** Nach jedem erfolgreichen `Activate` und beim Einbinden (nach `Reconcile`) baut der Dienst einen neuen Index; scheitert ein Auftrag vorher, bleibt der alte. Wer einen Stand hält, behält ihn: der Wechsel ersetzt nur einen Verweis. Ist `active2` beschädigt, gilt kein Index (Fehler, nie leer). Nach einem Neustart entsteht er aus dem gültigen `active2` neu.
+- **Grenzen (B1):** Kein Prozess bindet einen Index bis zu seinem Ende (N3-B2), es gibt keine Nutzungszählung (N3-B3). Weil noch kein Programm aus Paketen v2 startet, darf das volle `Reconcile` beim Einbinden alte Versionen löschen. Sperrreihenfolge: Der Dienst nimmt seine eigene Sperre nur für Zustandsfelder, nie um Plattenzugriffe; `StorageLock` nimmt jeder Dateischritt einzeln.
+
 ### Werkzeug
 
-`scripts/package2.py` schreibt Version und Katalog des Formats 2 in einen lokalen Repository-Ordner; Schlüssel und Signatur kommen unverändert aus `scripts/build-package.py` (OpenSSL, Ed25519), dessen Befehle für Version 1 gleich bleiben. Nichts davon geht in den Branch `packages`, solange Format 2 nicht angeschlossen ist.
+`scripts/package2.py` schreibt Version und Katalog des Formats 2 in einen lokalen Repository-Ordner; Schlüssel und Signatur kommen unverändert aus `scripts/build-package.py` (OpenSSL, Ed25519), dessen Befehle für Version 1 gleich bleiben. Nichts davon geht in den Branch `packages`, solange der Server Format 2 nicht ausliefert (N3-G). Gastprobe mit lokalem Testrepo: `scripts/test-package2-guest.py`.
 
 ```sh
 python3 scripts/package2.py package --key <privater-Schlüssel.pem> --repo <ordner> --spec <paket>.toml <datei>=<pfad> ...

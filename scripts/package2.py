@@ -8,7 +8,7 @@ SPEC.toml enthaelt die Manifestfelder ohne Dateizeilen (Beispiel und Regeln in d
 ausfuehrbar sind, nennt die Liste exec (nur Pfade); Hash und Groesse rechnet das Werkzeug aus. Schluessel und Signatur
 kommen unveraendert aus scripts/build-package.py (OpenSSL, Ed25519); dessen Befehle fuer Version 1 bleiben gleich.
 
-Format 2 ist noch nicht an pkg, Kernel oder Server angeschlossen. Das Werkzeug fuehrt keine Paketinhalte aus, ruft keine
+Format 2 erreicht die Shell ueber "pkg native" (Server noch nicht). Das Werkzeug fuehrt keine Paketinhalte aus, ruft keine
 Shell auf und gibt Text aus Spec, Argumenten oder Repository nur gefiltert (druckbares ASCII, hoechstens 64 Zeichen) wieder.
 """
 

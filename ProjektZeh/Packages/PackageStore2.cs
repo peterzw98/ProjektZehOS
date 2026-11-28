@@ -356,13 +356,9 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
             byte[] buffer = new byte[BufferBytes];
             foreach (var file in package.Manifest.Files)
             {
-                bool intact;
                 string path = Path.Combine(package.FilesDirectory, file.Path.Replace('/', Path.DirectorySeparatorChar));
-                // Grosse Dateien nicht unter einer einzigen Sperre hashen: Oeffnen, jeder Leseblock und Schliessen sperren einzeln.
-                var stream = StorageLock.Run(() => new FileStream(path, FileMode.Open, FileAccess.Read));
-                try { intact = Matches(stream, file, buffer, cancellation); }
-                finally { StorageLock.Run(() => stream.Dispose()); }
-                if (!intact) return ResultErr.CreateFailure(ResultCode.Failure, $"Paketdatei {file.Path} wurde veraendert; Start gesperrt.");
+                if (!Intact(path, file, buffer, cancellation))
+                    return ResultErr.CreateFailure(ResultCode.Failure, $"Paketdatei {file.Path} wurde veraendert; Start gesperrt.");
             }
             return ResultErr.CreateSuccess();
         }
@@ -370,6 +366,28 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
         {
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketdateien nicht lesbar: " + exception.Message);
         }
+    }
+
+    /// <summary>Prueft eine einzelne Paketdatei an <paramref name="path"/> gegen ihre Manifestzeile (Paketindex, N3-B).</summary>
+    internal static ResultErr VerifyFile(string path, PackageFile2 file, CancellationToken cancellation)
+    {
+        try
+        {
+            return Intact(path, file, new byte[BufferBytes], cancellation) ? ResultErr.CreateSuccess()
+                : ResultErr.CreateFailure(ResultCode.Failure, $"Paketdatei {file.Path} wurde veraendert; Start gesperrt.");
+        }
+        catch (Exception exception) when (FileErrors.IsFileError(exception))
+        {
+            return ResultErr.CreateFailure(ResultCode.Failure, $"Paketdatei {file.Path} nicht lesbar: " + exception.Message);
+        }
+    }
+
+    // Grosse Dateien nicht unter einer einzigen Sperre hashen: Oeffnen, jeder Leseblock und Schliessen sperren einzeln.
+    private static bool Intact(string path, PackageFile2 file, byte[] buffer, CancellationToken cancellation)
+    {
+        var stream = StorageLock.Run(() => new FileStream(path, FileMode.Open, FileAccess.Read));
+        try { return Matches(stream, file, buffer, cancellation); }
+        finally { StorageLock.Run(() => stream.Dispose()); }
     }
 
     private static bool Matches(FileStream stream, PackageFile2 file, byte[] buffer, CancellationToken cancellation)

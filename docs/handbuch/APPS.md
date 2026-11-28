@@ -23,6 +23,8 @@ pkg install doom
 
 Ändernde `pkg`-Befehle sind Administratoren vorbehalten und laufen im Hintergrund; das Ergebnis erscheint automatisch im aufrufenden Terminal. `pkg list` und `pkg remove doom` zeigen beziehungsweise entfernen Pakete. Ein laufendes Paket lässt sich weder entfernen noch aktualisieren. Beim ersten Start nach jedem Neustart werden alle Paketdateien erneut gegen das signierte Manifest geprüft.
 
+Native Pakete (Format 2) verwaltet `pkg native` (`list`, `resolve`, `update`, `install`, `upgrade`, `remove`, `remove --unused`); starten lassen sie sich noch nicht. Befehle und Regeln: [Paketformat](../PACKAGE_FORMAT.md#dienst-und-index).
+
 Standardquelle ist `https://packages.pjoter.de/`; eine mit `pkg source <https-URL>` gespeicherte eigene Quelle bleibt erhalten. `pkg install` und `pkg upgrade` laden die signierte Paketliste automatisch vor dem Auftrag. `pkg update` bleibt als freiwilliger Katalogabruf verfügbar. Installierte Apps werden nur mit `pkg upgrade` aktualisiert.
 
 Während des Auftrags zeigt dieselbe Shell eine laufend ersetzte Statuszeile: Katalog-/Signaturphase, Paket und Datei, Downloadbalken, Prozent und übertragene/Gesamtbytes. Eine abgeschlossene Übertragung ist noch keine abgeschlossene Installation: Erst nach Hashprüfung und Veröffentlichung folgt das Ergebnis. `pkg cancel` bricht ab. Der Fortschritt bleibt an die Sitzung gebunden; andere Terminals erhalten ihn nicht.

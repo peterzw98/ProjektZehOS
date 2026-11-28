@@ -82,6 +82,9 @@ public sealed class Kernel : Sys.Kernel
     private RootPowerSequence? rootPower;
 #endif
     private PackageStore packages = null!;
+    // Paketbestand v2 (N3-B1) im selben Ordner unter v2/; eine Instanz fuer alle Shells, damit Auftraege sich ausschliessen.
+    private PackageStore2 packageStore2 = null!;
+    private PackageService2 packages2 = null!;
     private static bool SecurityRecovery =>
 #if ZEHOS_SECURITY_RECOVERY
         true;
@@ -143,7 +146,15 @@ public sealed class Kernel : Sys.Kernel
         // Die Ersteinrichtung setzt ein tatsaechlich eingebundenes /data voraus (nicht nur eine fehlende Datei).
         accounts.IsDataMounted = () => StorageLock.Run(() => VfsManager.TryGetMount(systemPaths.AdminRoot, out _));
         // Unter einem .zehos-Verzeichnis, das der normale Dateidienst nicht freigibt; nur PackageStore schreibt dort.
-        packages = new(systemPaths.PackagesDirectory, PackageTrust.FromBuild(), CurrentVersion, PackageWrites);
+        var packageTrust = PackageTrust.FromBuild();
+        packages = new(systemPaths.PackagesDirectory, packageTrust, CurrentVersion, PackageWrites);
+        packageStore2 = new(systemPaths.PackagesDirectory, packageTrust, CurrentVersion, PackageWrites);
+        string packageRoot = systemPaths.PackagesDirectory;
+        packages2 = new(packageRoot, packageStore2, packageTrust, () =>
+        {
+            var space = CosmosSystemInfo.DiskSpace(packageRoot);
+            return space.IsOK() ? ResultObjectFactory.CreateSuccess(space.Value.AvailableBytes) : ResultObjectFactory.CreateFailure<long>(space.Status);
+        }, PackageWrites);
         desktopIdentity = accounts.CreateSession();
 #if ZEHOS_WASM
         // Etappe 13.4: App-Speicher mit demselben Waechter wie die Kontendatei.
@@ -248,6 +259,12 @@ public sealed class Kernel : Sys.Kernel
     {
         var reconciled = packages.Reconcile();
         if (!reconciled.IsOK()) systemLog.Error("Packages", reconciled.Message);
+        // v2: Es gibt noch keine Paketprozesse (Start mit N3-E, Nutzungszaehlung N3-B3), das volle Reconcile ist also sicher.
+        // Danach den Index aus dem gueltigen active2 neu bilden; ohne Daten-/Rootlaufwerk ist der Bestand leer.
+        var reconciled2 = packageStore2.Reconcile();
+        if (!reconciled2.IsOK()) systemLog.Error("Packages", reconciled2.Message);
+        var indexed = packages2.RefreshIndex();
+        if (!indexed.IsOK()) systemLog.Error("Packages", indexed.Message);
     }
 
     private static string VersionText =>
@@ -263,7 +280,7 @@ public sealed class Kernel : Sys.Kernel
         var packageCommands = new PackageShellCommands(packages, url => new CosmosHttpsPackageSource(url), path => files.IsVirtualPath(path)
                 ? ResultObjectFactory.CreateFailure<string>(ResultCode.InvalidArgument, "cause='VirtualSource' message='Pakete nur aus normalen Verzeichnissen installieren.'")
                 : files.ResolvePath(path), tasks,
-            () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation);
+            () => accounts.IsAdmin(identity), text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("PKG " + text + "\n"), () => identity.Generation, packages2);
 #if ZEHOS_ROOT_MIGRATION
         var migration = new MigrationShellCommands(new CosmosMigrationService(storage), tasks, () => accounts.IsAdmin(identity),
             () => systemPaths.Profile == PathProfile.Legacy, () => identity.Generation, text => Cosmos.Kernel.System.Diagnostics.Log.WriteString("MIGRATE " + text + "\n"));
