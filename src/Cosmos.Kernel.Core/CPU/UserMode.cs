@@ -259,6 +259,17 @@ public static unsafe class UserMode
     internal static int TestWorkStaged;
 #endif
 
+    // ZehOS patch user-return-work, see PATCHES.md
+    // Called by the architecture for a ramp from a staged switch. Counts only in the test build,
+    // here in Core: the architecture's assembly of a test kernel may be built without the test
+    // symbols, so a counter there would stay 0. Otherwise nothing.
+    internal static void TestNoteWorkStaged()
+    {
+#if COSMOS_TEST_HOOKS
+        Interlocked.Increment(ref TestWorkStaged);
+#endif
+    }
+
 #if COSMOS_TEST_HOOKS
     // ZehOS patch user-leave-kick, see PATCHES.md
     // Only in the test build (COSMOS_TEST_DEFINES=COSMOS_TEST_HOOKS): Kick sends nothing, so a

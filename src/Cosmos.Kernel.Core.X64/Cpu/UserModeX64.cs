@@ -193,12 +193,11 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
             frame->rflags = Fixed;
             frame->rsp = (ulong)frame - ThreadContext.FpuAreaSize;
             frame->ss = Gdt.KernelDataSelector;
-#if COSMOS_TEST_HOOKS
             if (staged != 0)
             {
-                System.Threading.Interlocked.Increment(ref UserMode.TestWorkStaged);
+                // Counts only in Core's test build; this assembly may come without its symbols.
+                UserMode.TestNoteWorkStaged();
             }
-#endif
         }
     }
 
