@@ -1,5 +1,17 @@
 ARCH       ?= x64
-TIMEOUT    ?= 30
+# Runner limit per kernel run. Under TCG (no usable KVM, or COSMOS_NO_KVM=1) the
+# guest is ~10x slower: the Threading suite needs ~120 s there but 30 s on KVM.
+# An explicit TIMEOUT=... always wins. arm64 runs under TCG on an x64 host too.
+ifeq ($(COSMOS_NO_KVM),1)
+  TIMEOUT_DEFAULT := 300
+else ifeq ($(ARCH),arm64)
+  TIMEOUT_DEFAULT := 300
+else ifeq ($(shell test -w /dev/kvm && echo kvm),kvm)
+  TIMEOUT_DEFAULT := 30
+else
+  TIMEOUT_DEFAULT := 300
+endif
+TIMEOUT    ?= $(TIMEOUT_DEFAULT)
 KERNEL     ?= HelloWorld
 
 OUTPUT     := ./output-$(ARCH)
