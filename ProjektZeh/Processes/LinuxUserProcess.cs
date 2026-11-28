@@ -670,20 +670,10 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
         Signals.Handler[signal] == 1 || (Signals.Handler[signal] == 0 && signal is 17 or 18 or 20 or 21 or 22 or 23 or 28);
 
     // Standardaktion "beenden": den ganzen Prozess, wie bei Linux (Status "signal <n>").
-    private void Terminate(int signal)
-    {
-        // P3-9 (Risiko-Review 2): Signal und Status unter derselben Sperre wie ExitCode in Exit. Kam exit_group eines anderen Threads
-        // zuvor, gilt dessen Code allein; sonst meldete Describe "signal n" zu ExitCode 0. Auf mehreren CPUs ist das Fenster breit.
-        lock (_threadGate)
-        {
-            if (ExitCode == null)
-            {
-                TerminatedBySignal ??= signal;
-            }
-        }
-
-        Exit(128 + signal);
-    }
+    // P3-9 (Risiko-Review 2) und S3-Review P3-1: Signal und ExitCode entstehen in einem Sperrabschnitt (ExitCore). Kam exit_group eines
+    // anderen Threads zuvor, gilt dessen Code allein; getrennte Abschnitte ließen dazwischen ExitCode 0 zu "signal n" zu, und auf mehreren
+    // CPUs ist dieses Fenster offen.
+    private void Terminate(int signal) => ExitCore(128 + signal, signal);
 
     /// <summary>
     /// sigaction (<see cref="ILinuxThreads.ExchangeSignalAction"/>): unter <c>_threadGate</c>, wie TakeSignal, TakeFaultSignal und
@@ -874,11 +864,23 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// zurück und verlassen den Ring 3. Ein Schreiben hätte keinen Leser und würde in den Speicher eines sterbenden Prozesses fallen,
     /// während andere Threads ihn noch auf ihrer CPU benutzen.
     /// </remarks>
-    public void Exit(int code)
+    public void Exit(int code) => ExitCore(code, 0);
+
+    // Gemeinsamer Weg von Exit und Terminate: Status (Code und gegebenenfalls Signal) einmal unter _threadGate setzen; der erste
+    // Abschluss gewinnt. Ein Signal aus RecordFault vor dem Ende bleibt stehen (??=).
+    private void ExitCore(int code, int signal)
     {
         lock (_threadGate)
         {
-            ExitCode ??= code;
+            if (ExitCode == null)
+            {
+                if (signal != 0)
+                {
+                    TerminatedBySignal ??= signal;
+                }
+
+                ExitCode = code;
+            }
         }
 
         Futexes.Abort();

@@ -592,6 +592,84 @@ public sealed class LinuxProcessWaitTests
     }
 
     [TestMethod]
+    public void ExitGroupGegenSignalGleichzeitigErgibtEinenStatus()
+    {
+        // S3-Review P3-1: exit_group(0) und ein Signal mit Standardaktion auf zwei Threads gleichzeitig. Gewinnt einer, gilt sein Status ganz:
+        // ExitCode 0 ohne Signal oder 143 mit Signal 15, nie ExitCode 0 zu "signal 15" (getrennte Sperrabschnitte in Terminate und Exit).
+        int exitWon = 0, signalWon = 0;
+        for (int round = 0; round < 300; round++)
+        {
+            var r = new Root();
+            using var start = new Barrier(2);
+            Task exit = Task.Run(() =>
+            {
+                start.SignalAndWait();
+                r.P.Exit(0);
+            });
+            Task kill = Task.Run(() =>
+            {
+                start.SignalAndWait();
+                Sys(r.P, KillNr, RootPid, 15);
+            });
+            Task.WaitAll(exit, kill);
+            if (r.P.TerminatedBySignal == null)
+            {
+                Assert.AreEqual(0, r.P.ExitCode, $"Runde {round}");
+                exitWon++;
+            }
+            else
+            {
+                Assert.AreEqual(15, r.P.TerminatedBySignal, $"Runde {round}");
+                Assert.AreEqual(143, r.P.ExitCode, $"Runde {round}: Signal ohne seinen Code");
+                signalWon++;
+            }
+        }
+
+        Assert.AreEqual(300, exitWon + signalWon);
+    }
+
+    [TestMethod]
+    public void SigactionTauschGleichzeitigLiestNieEineHalbeAktion()
+    {
+        // S3-Review P3-2: ExchangeSignalAction tauscht Handler, Flags, Restorer und Maske unter _threadGate. Ein Leser auf einem anderen
+        // Thread sieht immer alle vier Werte einer Aktion, nie eine Mischung aus alter und neuer.
+        var r = new Root();
+        const int Rounds = 100_000;
+        using var start = new Barrier(2);
+        Task writer = Task.Run(() =>
+        {
+            Span<ulong> action = stackalloc ulong[4];
+            start.SignalAndWait();
+            for (int i = 0; i < Rounds; i++)
+            {
+                ulong v = (ulong)(i & 1) + 0x1000;
+                action[0] = v;
+                action[1] = v;
+                action[2] = v;
+                action[3] = v;
+                r.P.ExchangeSignalAction(10, set: true, action);
+            }
+        });
+        int torn = 0;
+        Task reader = Task.Run(() =>
+        {
+            Span<ulong> action = stackalloc ulong[4];
+            start.SignalAndWait();
+            for (int i = 0; i < Rounds; i++)
+            {
+                r.P.ExchangeSignalAction(10, set: false, action);
+                if (action[0] != action[1] || action[1] != action[2] || action[2] != action[3])
+                {
+                    torn++;
+                }
+            }
+        });
+        Task.WaitAll(writer, reader);
+        Assert.AreEqual(0, torn, "halb geschriebene Aktion gelesen");
+        Assert.AreEqual(0x1001UL, r.P.Signals.Handler[10]);
+    }
+
+    [TestMethod]
     public void KillNachExecveBeendetDasKindVonAussen()
     {
         var r = new Root();
