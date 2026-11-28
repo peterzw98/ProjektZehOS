@@ -1,0 +1,9 @@
+--- a/ProjektZeh/Runtime/CosmosLinuxRun.cs
++++ b/ProjektZeh/Runtime/CosmosLinuxRun.cs
+@@ -1601,4 +1601,6 @@
+         public bool TryGetMemory(out ulong totalBytes, out ulong freeBytes)
+         {
++            // MESSBAU (nicht committen): jedes sysinfo erzwingt eine Sammlung, damit MemFree vor/nach einer Messreihe vergleichbar ist.
++            GC.Collect();
+             var memory = CosmosSystemInfo.PhysicalMemory();
+             totalBytes = memory.Total;

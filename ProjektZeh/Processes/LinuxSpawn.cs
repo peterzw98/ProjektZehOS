@@ -265,6 +265,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
     private long CloneVforkProcess(ulong flags, ulong stack)
     {
+        long ap = GC.GetTotalAllocatedBytes();
         // Nur das Austrittssignal (SIGCHLD) neben CLONE_VM|CLONE_VFORK; geteilte Dateien, Handler oder TLS im neuen Prozess gibt es nicht.
         if ((flags & ~(CloneVm | CloneVfork | 0xffUL)) != 0)
         {
@@ -278,6 +279,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
         var child = new LinuxUserProcess(this);
         var entry = new LinuxChild(child.Pid, child);
+        AllocProbe.Add(0, ap);
         lock (_ids.GroupGate)
         {
             // V35: Gruppe erben und sichtbar werden in einem Schritt, damit ein gleichzeitiges setpgid des Elternprozesses nicht verloren geht.
@@ -288,7 +290,10 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             }
         }
 
-        if (!StartVfork(child, stack))
+        long ap2 = GC.GetTotalAllocatedBytes();
+        bool vfOk = StartVfork(child, stack);
+        AllocProbe.Add(1, ap2);
+        if (!vfOk)
         {
             lock (_children)
             {
@@ -323,7 +328,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         }
 
         // V30: Vom Programm nur der Kopfteil; die Segmente liest der neue Prozess beim Zugriff über source (eigener Verweis je Segment).
+        long a0 = GC.GetTotalAllocatedBytes();
         long read = ReadProgram(path, true, out byte[] elf, out long fileLength, out ILinuxPageSource? source);
+        AllocProbe.Add(2, a0); AllocProbe.Count(0);
         try
         {
             return ExecRead(path, argv, envp, inVfork, read, elf, fileLength, ref source);
@@ -360,6 +367,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             return -LinuxSyscalls.EAGAIN;
         }
 
+        long a1 = GC.GetTotalAllocatedBytes();
         UserImage image;
         try
         {
@@ -386,6 +394,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             };
         }
 
+        AllocProbe.Add(3, a1); long a2 = GC.GetTotalAllocatedBytes();
         IUserPages? pages = CreatePages?.Invoke(); // Exec hat CreatePages geprüft
         if (pages == null)
         {
@@ -400,7 +409,10 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             // execve auf argv[0] fälschlich das ursprüngliche Programm statt ENOENT starten).
             StartPath = startsSelf ? StartPath : null,
         };
-        if (!(source != null ? next.Load(image, elf, source) : next.Load(image, elf)).IsOK())
+        AllocProbe.Add(4, a2); long a3 = GC.GetTotalAllocatedBytes();
+        bool loadOk = (source != null ? next.Load(image, elf, source) : next.Load(image, elf)).IsOK();
+        AllocProbe.Add(5, a3);
+        if (!loadOk)
         {
             next.DestroyMemory();
             return -LinuxSyscalls.ENOMEM;
@@ -415,7 +427,10 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
         Parent!.ReplaceChild(Pid, next);
         ulong killed = HandOverKill(next); // kill während vfork (LinuxWait.cs)
-        if (!StartExec!(next, image))
+        long a4 = GC.GetTotalAllocatedBytes();
+        bool seOk = StartExec!(next, image);
+        AllocProbe.Add(6, a4);
+        if (!seOk)
         {
             next.ReportEnd(9);
             next.Destroy();
@@ -442,7 +457,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         source = null;
         lock (_fileGate)
         {
+            long b0 = GC.GetTotalAllocatedBytes();
             long r = FileSystem.Open(path, ORdOnly, 0, out ILinuxFile? file);
+            AllocProbe.Add(8, b0);
             if (r < 0 || file == null)
             {
                 return r < 0 ? r : -LinuxErrno.ENOENT;
@@ -450,7 +467,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
             try
             {
+                b0 = GC.GetTotalAllocatedBytes();
                 r = file.Stat(out LinuxStat st);
+                AllocProbe.Add(9, b0);
                 if (r < 0)
                 {
                     return r;
@@ -476,6 +495,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 // N2-Z: Kopf, Programmtabelle und der Rückgabepuffer des Kopfteils liegen meist in den ersten Bytes. Jeder Lesevorgang der Platte
                 // kostet im Kern Puffer (FAT liest je Aufruf Clustergröße): ein Lesevorgang am Anfang statt drei je Start.
                 ILinuxFile f = file;
+                b0 = GC.GetTotalAllocatedBytes();
                 byte[] prefix = new byte[(int)Math.Min(st.Size, ExecPrefixBytes)];
                 long prefixLength = 0;
                 if (prefix.Length > 0 && f.Seek(0, 0) >= 0)
@@ -483,6 +503,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                     long got = f.Read(prefix);
                     prefixLength = got > 0 ? got : 0;
                 }
+                AllocProbe.Add(10, b0);
 
                 long ReadAt(long offset, Span<byte> dst)
                 {
@@ -499,19 +520,23 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
                 ILinuxPageSourceFile? sourceFile = lazy ? file as ILinuxPageSourceFile : null;
                 long needed;
+                b0 = GC.GetTotalAllocatedBytes();
                 r = sourceFile != null ? ElfFile.HeadLength(st.Size, ReadAt, out needed) : ElfFile.LoadedLength(st.Size, ReadAt, out needed);
                 if (r < 0)
                 {
                     return r;
                 }
 
+                AllocProbe.Add(11, b0);
                 if (needed > MaxExecFileSize)
                 {
                     return -LinuxSyscalls.ENOMEM;
                 }
 
+                b0 = GC.GetTotalAllocatedBytes();
                 byte[] bytes = new byte[needed];
                 r = ElfFile.ReadFull(ReadAt, 0, bytes);
+                AllocProbe.Add(12, b0);
                 if (r < 0)
                 {
                     return r;
@@ -519,7 +544,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
                 elf = r == bytes.Length ? bytes : bytes.AsSpan(0, (int)r).ToArray();
                 fileLength = st.Size;
+                b0 = GC.GetTotalAllocatedBytes();
                 source = sourceFile?.OpenPageSource();
+                AllocProbe.Add(13, b0);
                 return 0;
             }
             finally
@@ -885,5 +912,38 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 child.Process = next;
             }
         }
+    }
+}
+
+/// <summary>MESSBAU (nicht committen): Allokationssummen je Phase in Exec/vfork (GC.GetTotalAllocatedBytes-Differenzen).</summary>
+internal static class AllocProbe
+{
+    public static readonly long[] Sum = new long[32];
+    public static readonly long[] N = new long[8];
+    public static long T() => GC.GetAllocatedBytesForCurrentThread();
+    public static void AddT(int slot, long before) => System.Threading.Interlocked.Add(ref Sum[slot], GC.GetAllocatedBytesForCurrentThread() - before);
+    [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.StaticMethod, Name = "get_RatAddress")]
+    private static extern ulong RatAddr([System.Runtime.CompilerServices.UnsafeAccessorType("Cosmos.Kernel.Core.Memory.PageAllocator, Cosmos.Kernel.Core")] object? owner);
+    /// <summary>Freie Seiten und groesster freier Lauf (RAT-Byte 0 = frei).</summary>
+    public static unsafe string Pages()
+    {
+        ulong total = Cosmos.Kernel.System.Diagnostics.MemoryDiagnostics.TotalPages, free = Cosmos.Kernel.System.Diagnostics.MemoryDiagnostics.FreePages;
+        byte* rat = (byte*)RatAddr(null);
+        ulong run = 0, best = 0, runs = 0;
+        for (ulong i = 0; i < total; i++)
+        {
+            if (rat[i] == 0) { run++; if (run > best) best = run; if (run == 1) runs++; } else { run = 0; }
+        }
+        return "freepages=" + free + " bestrun=" + best + " runs=" + runs;
+    }
+    public static void Add(int slot, long before) => System.Threading.Interlocked.Add(ref Sum[slot], GC.GetTotalAllocatedBytes() - before);
+    public static void Count(int i) => System.Threading.Interlocked.Increment(ref N[i]);
+    public static string Text()
+    {
+        string t = "n_open=" + N[1] + " n_storeopen=" + N[2] + " n_dir=" + N[3] + " n_exec=" + N[0] + " total=" + GC.GetTotalAllocatedBytes();
+        string[] names = { "vf_newchild", "vf_startvfork", "ex_read", "ex_elfload", "ex_createpages+newproc", "ex_load", "ex_startexec", "body_destroy", "rd_open", "rd_stat", "rd_prefix", "rd_headlen", "rd_bytes", "rd_pagesrc", "se_thread_start", "se_wire_slot", "se_thread_start_T", "body_T", "", "", "open_resolve_T", "open_store_T", "dir_kind_T", "dir_filestream_T", "dir_attach_T", "", "", "", "", "", "", "" };
+        for (int i = 0; i < names.Length; i++) { t += " " + names[i] + "=" + Sum[i]; }
+        t += " fat_calls=" + Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.Calls + " fat_read=" + Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.ReadBytes + " fat_parse=" + Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.ParseBytes + " fat_match=" + Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.MatchBytes + " fat_datalen=" + Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.DataLength;
+        return t;
     }
 }

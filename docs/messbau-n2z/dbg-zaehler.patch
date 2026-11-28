@@ -1,0 +1,111 @@
+diff --git a/ProjektZeh/Processes/LinuxSpawn.cs b/ProjektZeh/Processes/LinuxSpawn.cs
+index 9b43d7531..4b08b85fa 100644
+--- a/ProjektZeh/Processes/LinuxSpawn.cs
++++ b/ProjektZeh/Processes/LinuxSpawn.cs
+@@ -303,6 +303,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
+         return 0;
+     }
+ 
++    public static long DbgRead, DbgLoad, DbgNew, DbgLd, DbgN;
+     public long Exec(string path, string[] argv, string[] envp)
+     {
+         ArgumentNullException.ThrowIfNull(path);
+@@ -320,7 +321,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
+         }
+ 
+         // V30: Vom Programm nur der Kopfteil; die Segmente liest der neue Prozess beim Zugriff über source (eigener Verweis je Segment).
++        long a0 = GC.GetTotalAllocatedBytes();
+         long read = ReadProgram(path, true, out byte[] elf, out long fileLength, out ILinuxPageSource? source);
++        DbgRead += GC.GetTotalAllocatedBytes() - a0; DbgN++;
+         try
+         {
+             return ExecRead(path, argv, envp, inVfork, read, elf, fileLength, ref source);
+@@ -357,6 +360,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
+             return -LinuxSyscalls.EAGAIN;
+         }
+ 
++        long a1 = GC.GetTotalAllocatedBytes();
+         UserImage image;
+         try
+         {
+@@ -383,6 +387,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
+             };
+         }
+ 
++        DbgLoad += GC.GetTotalAllocatedBytes() - a1; long a2 = GC.GetTotalAllocatedBytes();
+         IUserPages? pages = CreatePages?.Invoke(); // Exec hat CreatePages geprüft
+         if (pages == null)
+         {
+@@ -397,7 +402,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
+             // execve auf argv[0] fälschlich das ursprüngliche Programm statt ENOENT starten).
+             StartPath = startsSelf ? StartPath : null,
+         };
+-        if (!(source != null ? next.Load(image, elf, source) : next.Load(image, elf)).IsOK())
++        DbgNew += GC.GetTotalAllocatedBytes() - a2; long a3 = GC.GetTotalAllocatedBytes();
++        bool loadOk = (source != null ? next.Load(image, elf, source) : next.Load(image, elf)).IsOK(); DbgLd += GC.GetTotalAllocatedBytes() - a3;
++        if (!loadOk)
+         {
+             next.DestroyMemory();
+             return -LinuxSyscalls.ENOMEM;
+diff --git a/ProjektZeh/Runtime/CosmosLinuxRun.cs b/ProjektZeh/Runtime/CosmosLinuxRun.cs
+index c0266f6f7..3fb1d9dbc 100644
+--- a/ProjektZeh/Runtime/CosmosLinuxRun.cs
++++ b/ProjektZeh/Runtime/CosmosLinuxRun.cs
+@@ -548,6 +548,12 @@ internal static unsafe class CosmosLinuxRun
+             + (UserPageTable.TotalPages * AddressSpaceMap.PageSize >> 20).ToString() + " MiB");
+     }
+ 
++    private static int dbgTables, dbgDisposed, dbgAlloc, dbgFree, dbgBodies;
++    private static void DbgPages()
++    {
++        GCMemoryInfo i = GC.GetGCMemoryInfo();
++        Serial("DBG2 heapsize=" + i.HeapSizeBytes + " frag=" + i.FragmentedBytes + " commit=" + i.TotalCommittedBytes + " pinned=" + i.PinnedObjectsCount + " promoted=" + i.PromotedBytes + " allocbytes=" + GC.GetTotalAllocatedBytes() + " gcs=" + GC.CollectionCount(0) + " exec(n=" + LinuxUserProcess.DbgN + ") read=" + LinuxUserProcess.DbgRead + " elfload=" + LinuxUserProcess.DbgLoad + " newproc=" + LinuxUserProcess.DbgNew + " load=" + LinuxUserProcess.DbgLd);
++    }
+     private static void Serial(string text) => Cosmos.Kernel.System.Diagnostics.Log.WriteString(text + "\n");
+ 
+     /// <summary>Lädt und startet das Programm und wartet auf sein Ende, höchstens <paramref name="timeoutSeconds"/> Sekunden.</summary>
+@@ -1207,6 +1213,7 @@ internal static unsafe class CosmosLinuxRun
+         process.CreatePages = () =>
+         {
+             UserPageTable? created = UserPageTable.TryCreate();
++            if (created != null) { System.Threading.Interlocked.Increment(ref dbgTables); }
+             return created == null ? null : new CosmosUserPages(created);
+         };
+         process.StartExec = (next, image) => StartExec(run, next, image);
+@@ -1345,6 +1352,7 @@ internal static unsafe class CosmosLinuxRun
+         child.CreatePages = () =>
+         {
+             UserPageTable? created = UserPageTable.TryCreate();
++            if (created != null) { System.Threading.Interlocked.Increment(ref dbgTables); }
+             return created == null ? null : new CosmosUserPages(created);
+         };
+         child.StartExec = (next, image) => StartExec(run, next, image);
+@@ -1452,6 +1460,7 @@ internal static unsafe class CosmosLinuxRun
+             process.ReportEnd(process.WaitStatusOf(9));
+             process.Destroy();
+             ReleaseSlot(run, b);
++            if (System.Threading.Interlocked.Increment(ref dbgBodies) % 500 == 0) { GC.Collect(); Serial("DBG bodies=" + dbgBodies + " tables=" + dbgTables + " disposed=" + dbgDisposed + " alloc=" + dbgAlloc + " free=" + dbgFree + " freepages=" + UserPageTable.FreePages + " heap=" + GC.GetTotalMemory(false)); DbgPages(); }
+             if (FrameReclaim.ShouldCollectAtExit(UserPageTable.FreePages, UserPageTable.TotalPages, UserPageTable.ReservedPages))
+             {
+                 GC.Collect();
+@@ -1663,9 +1672,9 @@ internal static unsafe class CosmosLinuxRun
+         public UserPageTable Table => _table;
+ 
+         // V47: Sammeln vor ENOMEM geschieht nicht hier (der Aufrufer hält _memGate, _gate oder StorageLock), sondern im Aufrufer ohne Sperre.
+-        public ulong AllocateFrame() => UserPageTable.AllocateFrame();
++        public ulong AllocateFrame() { System.Threading.Interlocked.Increment(ref dbgAlloc); return UserPageTable.AllocateFrame(); }
+ 
+-        public void FreeFrame(ulong frame) => UserPageTable.FreeFrame(frame);
++        public void FreeFrame(ulong frame) { System.Threading.Interlocked.Increment(ref dbgFree); UserPageTable.FreeFrame(frame); }
+ 
+         public Span<byte> Frame(ulong frame) => new((void*)(frame + hhdm), (int)AddressSpaceMap.PageSize);
+ 
+@@ -1677,7 +1686,7 @@ internal static unsafe class CosmosLinuxRun
+         public bool MapsTo(ulong page, ulong frame, bool write) =>
+             _table.TryTranslate(page, write, out ulong physical) && (physical & ~(AddressSpaceMap.PageSize - 1)) == frame;
+ 
+-        public void DestroyTable() => _table.Dispose();
++        public void DestroyTable() { System.Threading.Interlocked.Increment(ref dbgDisposed); _table.Dispose(); }
+     }
+ }
+ #endif

@@ -1538,6 +1538,7 @@ internal static unsafe class CosmosLinuxRun
             return false;
         }
 
+        long w0 = GC.GetTotalAllocatedBytes();
         me.Resume = true;
         var table = ((CosmosUserPages)next.Pages).Table;
         Wire(run, table, next);
@@ -1553,9 +1554,12 @@ internal static unsafe class CosmosLinuxRun
             return false;
         }
 
+        AllocProbe.Add(15, w0);
         try
         {
+            long t0 = GC.GetTotalAllocatedBytes(); long tt = AllocProbe.T();
             new Thread(() => ProcessBody(run, table, next, b, image.Entry, image.StackPointer, 0)).Start();
+            AllocProbe.Add(14, t0); AllocProbe.AddT(16, tt);
             return true;
         }
         catch (Exception)
@@ -1571,6 +1575,7 @@ internal static unsafe class CosmosLinuxRun
     /// </summary>
     private static void ProcessBody(Running run, UserPageTable table, LinuxUserProcess process, Bridge b, ulong entry, ulong stack, ulong fsBase)
     {
+        long bt = AllocProbe.T();
         bool bound = false;
         try
         {
@@ -1623,6 +1628,7 @@ internal static unsafe class CosmosLinuxRun
             }
             finally
             {
+                long ad = GC.GetTotalAllocatedBytes();
                 // V50 P3: Ende melden, Ids und Slot freigeben, auch wenn das Schließen einer Datei geworfen hat.
                 try
                 {
@@ -1638,6 +1644,7 @@ internal static unsafe class CosmosLinuxRun
                 finally
                 {
                     ReleaseSlot(run, b);
+                    AllocProbe.Add(7, ad); AllocProbe.AddT(17, bt);
                 }
             }
 
@@ -1789,6 +1796,9 @@ internal static unsafe class CosmosLinuxRun
         /// <summary>sysinfo (V13): dieselbe Quelle wie <c>CosmosSystemInfo.MemoryText</c> und die Speicherzeilen der Proben.</summary>
         public bool TryGetMemory(out ulong totalBytes, out ulong freeBytes)
         {
+            // MESSBAU (nicht committen): jedes sysinfo erzwingt eine Sammlung, damit MemFree vor/nach einer Messreihe vergleichbar ist.
+            GC.Collect();
+            Serial("ALLOC " + AllocProbe.Text() + " gcs=" + GC.CollectionCount(0) + " " + AllocProbe.Pages());
             var memory = CosmosSystemInfo.PhysicalMemory();
             totalBytes = memory.Total;
             freeBytes = memory.Free;

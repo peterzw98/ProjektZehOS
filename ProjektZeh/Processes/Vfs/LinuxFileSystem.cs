@@ -144,7 +144,9 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
         }
 
         bool follow = (flags & ONoFollow) == 0 && !exclusive;
+        long tq = AllocProbe.T();
         long r = Resolve(path, follow, out Loc loc);
+        AllocProbe.AddT(20, tq); AllocProbe.Count(1);
         if (r < 0)
         {
             return r;
@@ -252,7 +254,9 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
             return -LinuxErrno.EACCES;
         }
 
+        long tq = AllocProbe.T();
         long r = _store.OpenFile(loc.Path, write, out ILinuxStoreFile? opened);
+        AllocProbe.AddT(21, tq); AllocProbe.Count(2);
         if (r < 0)
         {
             return r;

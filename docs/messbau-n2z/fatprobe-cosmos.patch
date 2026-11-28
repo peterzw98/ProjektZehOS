@@ -1,0 +1,62 @@
+diff --git a/src/Cosmos.Kernel.System/FileSystem/Fat/FatInodeOperations.cs b/src/Cosmos.Kernel.System/FileSystem/Fat/FatInodeOperations.cs
+index 4f64c4815..fb68f1b57 100644
+--- a/src/Cosmos.Kernel.System/FileSystem/Fat/FatInodeOperations.cs
++++ b/src/Cosmos.Kernel.System/FileSystem/Fat/FatInodeOperations.cs
+@@ -6,6 +6,21 @@ using System.Diagnostics.CodeAnalysis;
+ 
+ namespace Cosmos.Kernel.System.FileSystem.Fat;
+ 
++/// <summary>Messzaehler (nur Messbau).</summary>
++public static class FatLookupProbe
++{
++    /// <summary>Anzahl Lookups mit Verzeichnisscan.</summary>
++    public static long Calls;
++    /// <summary>Allokation ReadDirectoryData (Thread-Zaehler, Bytes).</summary>
++    public static long ReadBytes;
++    /// <summary>Allokation Parse.</summary>
++    public static long ParseBytes;
++    /// <summary>Allokation Treffer (GetOrCreateInode).</summary>
++    public static long MatchBytes;
++    /// <summary>Summe der gelesenen Verzeichnisbytes.</summary>
++    public static long DataLength;
++}
++
+ internal sealed class FatInodeOperations : IInodeOperations
+ {
+     /// <summary>Byte offset of the '.' entry — the first slot of a new directory's cluster (fatgen103 §6).</summary>
+@@ -57,8 +72,13 @@ internal sealed class FatInodeOperations : IInodeOperations
+             return true;
+         }
+ 
++        // MESSBAU (nicht committen): Zaehler je Lookup, Allokation je Lookup und Teil (Thread-Zaehler).
++        long p0 = global::System.GC.GetAllocatedBytesForCurrentThread();
+         byte[] data = _superblock.ReadDirectoryData(parent);
++        long p1 = global::System.GC.GetAllocatedBytesForCurrentThread();
+         List<FatDirEntry> entries = FatDirectory.Parse(data, _superblock.Boot.Type == FatType.Fat32);
++        long p2 = global::System.GC.GetAllocatedBytesForCurrentThread();
++        FatLookupProbe.Calls++; FatLookupProbe.ReadBytes += p1 - p0; FatLookupProbe.ParseBytes += p2 - p1; FatLookupProbe.DataLength += data.Length;
+ 
+         for (int i = 0; i < entries.Count; i++)
+         {
+@@ -71,6 +91,7 @@ internal sealed class FatInodeOperations : IInodeOperations
+             if (FatDirectory.NameEqualsIgnoreCase(entry.Name, targetName) || FatDirectory.NameEqualsIgnoreCase(entry.ShortName, targetName))
+             {
+                 child = _superblock.GetOrCreateInode(parent, entry);
++                FatLookupProbe.MatchBytes += global::System.GC.GetAllocatedBytesForCurrentThread() - p2;
+                 return true;
+             }
+         }
+diff --git a/src/Cosmos.Kernel.System/PublicAPI.Unshipped.txt b/src/Cosmos.Kernel.System/PublicAPI.Unshipped.txt
+index 0c2bf44c4..7e6fe4654 100644
+--- a/src/Cosmos.Kernel.System/PublicAPI.Unshipped.txt
++++ b/src/Cosmos.Kernel.System/PublicAPI.Unshipped.txt
+@@ -1450,3 +1450,9 @@ virtual Cosmos.Kernel.System.Sessions.ConsoleSession.OnWritten(char value, bool
+ [COSMOS0002]static Cosmos.Kernel.System.Network.NetworkStack.Send(Cosmos.Kernel.System.Network.Protocols.InternetPacket! packet) -> bool
+ [COSMOS0003]Cosmos.Kernel.System.Graphics.Rendering3D.ICanvas3DFactory
+ [COSMOS0003]Cosmos.Kernel.System.Graphics.Rendering3D.ICanvas3DFactory.CreateCanvas3D(Cosmos.Kernel.System.Graphics.DisplayDevice! display) -> Cosmos.Kernel.System.Graphics.Rendering3D.Canvas3D!
++Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe
++static Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.Calls -> long
++static Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.ReadBytes -> long
++static Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.ParseBytes -> long
++static Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.MatchBytes -> long
++static Cosmos.Kernel.System.FileSystem.Fat.FatLookupProbe.DataLength -> long

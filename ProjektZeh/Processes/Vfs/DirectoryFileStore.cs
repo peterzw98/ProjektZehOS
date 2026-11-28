@@ -425,15 +425,21 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
             using (StorageLock.Enter())
             {
                 // Erneut ohne Folgen prüfen: zwischen Auflösung und Öffnen könnte ein anderer Weg einen Symlink hingelegt haben.
-                if (KindStorageLocked(path) != LinuxNodeKind.File)
+                long tq = AllocProbe.T();
+                bool notFile = KindStorageLocked(path) != LinuxNodeKind.File;
+                AllocProbe.AddT(22, tq); AllocProbe.Count(3);
+                if (notFile)
                 {
                     return -LinuxErrno.ENOENT;
                 }
 
+                tq = AllocProbe.T();
                 // Ohne Puffer (1 Byte): Schreibfehler zeigen sich beim write, nicht erst beim Schließen, das keinen Fehler melden kann.
                 var stream = new FileStream(Full(path), System.IO.FileMode.Open, write ? FileAccess.ReadWrite : FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete, 1);
+                AllocProbe.AddT(23, tq); tq = AllocProbe.T();
                 file = new DiskFile(this, stream, AttachStorageLocked(path));
+                AllocProbe.AddT(24, tq);
                 return 0;
             }
         }
