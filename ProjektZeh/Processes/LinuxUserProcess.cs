@@ -1350,8 +1350,20 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// <summary>Gibt Tabelle und Frames frei; ein vfork-Kind besitzt keinen eigenen Speicher (er gehört dem Elternprozess).</summary>
     private void DestroyMemory()
     {
-        if (_vforkOf == null && !_memoryDestroyed)
+        if (_vforkOf != null)
         {
+            return;
+        }
+
+        // V50 P3: unter _memGate wie jeder andere Zugriff auf Tabelle und Frames; ein /proc-Leser auf einer anderen CPU
+        // (Copy, Seitenfehler) sieht sonst halb freigegebene Tabellen. Die Sperre ist wiederholbar, DropFrame darf sie erneut nehmen.
+        lock (_memGate)
+        {
+            if (_memoryDestroyed)
+            {
+                return;
+            }
+
             _memoryDestroyed = true;
             // Erst die Tabelle: Solange sie besteht, könnte eine CPU über sie noch einen Frame erreichen.
             _pages.DestroyTable();
