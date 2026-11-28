@@ -17,8 +17,8 @@ namespace Cosmos.Kernel.Tests.Threading;
 /// </summary>
 internal static class MonitorCrossCpuCells
 {
-    // 10^5 Runden je Arbeiter wie im Entwurf; unter TCG ist das langsam, Join-Grenze entsprechend weit.
-    private const int Rounds = 100_000;
+    // 2·10^4 Runden je Arbeiter: unter TCG smp4 gemessen 10^5 Runden = 4,5 s je Wake-Zelle (KVM 0,5 s); so bleibt die Zelle klein gegen das Runner-Limit. Join-Grenze weit, damit ein Hänger mit Zählerstand gemeldet wird.
+    private const int Rounds = 20_000;
     private const int JoinMs = 600_000;
     private const int WaitMs = 5_000;
 
@@ -31,7 +31,7 @@ internal static class MonitorCrossCpuCells
     private static volatile bool s_failed;
     private static int s_ready;
     private static volatile bool s_go;
-    private const int ContendedRounds = 1_000_000;
+    private const int ContendedRounds = 300_000;
 
     private sealed record PingPongArgs(int Me, uint Cpu, bool PulseAll);
 
@@ -141,7 +141,7 @@ internal static class MonitorCrossCpuCells
     {
         uint cpu = ((CpuArg)state!).Cpu;
         Pin(cpu);
-        // Startschranke: ohne sie ist der erste Arbeiter fertig, bevor der zweite läuft (Gegenprobe ohne lock blieb grün).
+        // Startschranke: ohne sie ist der erste Arbeiter fertig, bevor der zweite läuft (eine Vorstufe ohne Schranke blieb auch ohne lock grün; Gegenprobe mit Schranke siehe PR/Review).
         Interlocked.Increment(ref s_ready);
         while (!s_go)
         {
@@ -161,7 +161,7 @@ internal static class MonitorCrossCpuCells
         Interlocked.Increment(ref s_progress);
     }
 
-    /// <summary>Drei Arbeiter auf CPU 1 bis 3 zählen je 10^6 Mal unter derselben Sperre; die Summe muss stimmen.</summary>
+    /// <summary>Drei Arbeiter auf CPU 1 bis 3 zählen je 3·10^5 Mal unter derselben Sperre; die Summe muss stimmen.</summary>
     public static void EnterExitContendedAcrossCpus()
     {
         Reset();
@@ -185,6 +185,6 @@ internal static class MonitorCrossCpuCells
         }
 
         Assert.True(all, "all three workers finish (done " + s_progress + " of 3)");
-        Assert.Equal(3 * ContendedRounds, s_counterPlain, "the plain counter lost no increment: Monitor excludes across CPUs");
+        Assert.Equal(3 * ContendedRounds, s_counterPlain, "the plain counter lost no increment: Monitor excludes across CPUs (sum " + s_counterPlain + " of " + 3 * ContendedRounds + ")");
     }
 }
