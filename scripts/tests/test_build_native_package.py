@@ -97,6 +97,22 @@ class BuildNativePackageTests(unittest.TestCase):
         run.assert_not_called()
         self.assertFalse(output.exists())
 
+    def test_total_download_budget_stops_second_source(self):
+        self.write_recipe()
+        recipe_file = self.recipe / 'package.toml'
+        contents = recipe_file.read_text(encoding='utf-8')
+        recipe_file.write_text(contents + contents[contents.index('[[source]]'):].replace('hello.tar.gz', 'second.tar.gz'),
+                               encoding='utf-8')
+        output = self.root / 'output'
+        with mock.patch.object(native, 'MAX_SOURCE_BYTES', len(SOURCE) * 2 - 1), \
+                mock.patch.object(native, 'open_source', side_effect=lambda url: io.BytesIO(SOURCE)), \
+                mock.patch.object(native.subprocess, 'run', side_effect=self.run_container) as run:
+            with self.assertRaisesRegex(native.package2.PackageError, 'Downloadgrenze'):
+                native.build(self.recipe, output, 'podman')
+        run.assert_not_called()
+        self.assertFalse(output.exists())
+        self.assertFalse(list(self.root.glob('.native-*')))
+
     def test_failed_build_leaves_no_output_and_existing_output_is_preserved(self):
         self.write_recipe()
         output = self.root / 'output'

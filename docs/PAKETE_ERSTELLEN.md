@@ -265,7 +265,7 @@ vorhandenes Container-Image per vollständigem Digest. Für jede externe
 Quelle enthält es einen `[[source]]`-Abschnitt mit `name`, öffentlicher
 HTTPS-`url` und `sha256`. Der Bau erhält nur die drei Rezeptdateien,
 `patches/*.patch` und ausdrücklich unter `local = ["datei"]` benannte
-Dateien aus dem Rezeptordner.
+Dateien aus dem Rezeptordner. Für alle Downloads zusammen gilt 1 GiB.
 
 `build.sh` läuft unter `/bin/sh` ohne Netzwerk. `/recipe` und die vorab
 geprüften Downloads in `/sources` sind nur lesbar. Zwischenprodukte gehören
@@ -283,7 +283,9 @@ python3 scripts/package2.py package --key /sicher/test-key.pem --repo out/test-r
 
 Der erste Befehl verwendet standardmäßig Rootless-Podman mit der Identität
 des aufrufenden Benutzers. Alternativ ist `--runtime docker` mit einem lokalen
-Docker-Dienst ohne Umabbildung der Benutzerkennungen möglich. Verwende pro
+Docker-Dienst ohne Umabbildung der Benutzerkennungen möglich. Rootless-Docker
+und automatische SELinux-Relabels für eingehängte Pfade sind nicht eingerichtet.
+Verwende pro
 gleichzeitigem Bau ein eigenes Ausgabeverzeichnis. Die Umbenennung folgt dem
 [Verhalten des Paketwerkzeugs](PACKAGE_FORMAT.md#werkzeug).
 Die neue Ausgabe enthält `files/`, `manifest.toml` und `build-info.json`

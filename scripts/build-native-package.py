@@ -23,6 +23,7 @@ import package2
 SHA256 = re.compile(r'[a-f0-9]{64}')
 IMAGE = re.compile(r'[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}')
 SOURCE_NAME = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9._+-]*')
+MAX_SOURCE_BYTES = package2.MAX_CONTENT
 
 
 def require_https(url: str) -> None:
@@ -73,14 +74,18 @@ def read_recipe(path: Path) -> tuple[str, list[dict[str, str]], list[str]]:
     return image, sources, local
 
 
-def download_source(source: dict[str, str], directory: Path) -> None:
+def download_source(source: dict[str, str], directory: Path, remaining: int) -> int:
     digest = hashlib.sha256()
     with open_source(source['url']) as reader, (directory / source['name']).open('xb') as writer:
-        while chunk := reader.read(package2.CHUNK):
+        while chunk := reader.read(min(package2.CHUNK, remaining + 1)):
+            if len(chunk) > remaining:
+                raise package2.PackageError('Downloadgrenze von 1 GiB für alle Quellen überschritten.')
+            remaining -= len(chunk)
             digest.update(chunk)
             writer.write(chunk)
     if digest.hexdigest() != source['sha256']:
         raise package2.PackageError(f"SHA-256 stimmt für {source['name']} nicht überein.")
+    return remaining
 
 
 def collect_files(path: Path, spec: dict) -> dict[str, str]:
@@ -142,8 +147,9 @@ def build(recipe: Path, output: Path, runtime: str) -> None:
             raise package2.PackageError('Nur native Pakete mit runtime=linux-x64-v1 werden gebaut.')
         source_directory.mkdir()
         (stage / 'files').mkdir(parents=True)
+        remaining = MAX_SOURCE_BYTES
         for source in sources:
-            download_source(source, source_directory)
+            remaining = download_source(source, source_directory, remaining)
 
         container = f'zehos-native-{uuid4().hex}'
         command = [runtime, 'run', '--name', container, '--rm', '--pull=never', '--network=none', '--read-only',
