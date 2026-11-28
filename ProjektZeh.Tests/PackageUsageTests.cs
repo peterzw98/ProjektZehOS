@@ -122,4 +122,58 @@ public sealed partial class PackageIndex2Tests
         CollectionAssert.AreEqual(new[] { "1.2.5-r2" }, MuslVersions());
         Assert.AreEqual(0, service.BoundUsers().Length);
     }
+
+    [TestMethod]
+    public void FailedIndexRebuildReleasesPublishedStandButKeepsBoundOne()
+    {
+        var (store, service) = Installed();
+        string manifest = Path.Combine(Root, "v2", "app", "1.0.0-r1", "manifest");
+        byte[] intact = File.ReadAllBytes(manifest);
+        Assert.AreEqual(1, store.Users("musl", MuslR1Version));
+
+        // Ohne Lauf: Der Fehlbau veroeffentlicht keinen Index und gibt den alten Stand sofort frei (kein Leck ueber die Zaehlung).
+        File.AppendAllText(manifest, "x");
+        Assert.IsFalse(service.RefreshIndex().IsOK());
+        Assert.AreEqual(0, store.Users("musl", MuslR1Version));
+        Assert.AreEqual(0, store.Users("app", Version("1.0.0-r1")));
+        Assert.IsFalse(service.Bind().IsOK(), "Ohne Index startet nichts.");
+        File.WriteAllBytes(manifest, intact);
+        Assert.IsTrue(service.RefreshIndex().IsOK());
+        Assert.AreEqual(1, store.Users("musl", MuslR1Version), "Der neu gebaute Stand zaehlt wieder genau einmal.");
+
+        // Mit Lauf: Der gebundene Stand bleibt gezaehlt, bis der Lauf freigibt, auch wenn kein Index mehr gilt.
+        var lease = service.Bind().Value!;
+        File.AppendAllText(manifest, "x");
+        Assert.IsFalse(service.RefreshIndex().IsOK());
+        Assert.AreEqual(1, store.Users("musl", MuslR1Version));
+        Assert.AreEqual("musl r1", ReadAll(RootOf(lease.Index, out _), "/usr/lib64/libc.so"));
+        lease.Dispose();
+        lease.Dispose();
+        Assert.AreEqual(0, store.Users("musl", MuslR1Version));
+        Assert.AreEqual(0, service.BoundUsers().Length);
+    }
+
+    [TestMethod]
+    public void DoubleDisposeOfOneLeaseDoesNotReleaseTheOtherRunningProgram()
+    {
+        var (store, service) = Installed();
+        var first = service.Bind().Value!;
+        var second = service.Bind().Value!;
+        UpgradeMusl(service);
+
+        // Doppelte Freigabe des ersten Laufs (Absturzpfad und normales Ende) darf den Stand des zweiten nicht mitfreigeben.
+        first.Dispose();
+        first.Dispose();
+        Assert.AreEqual(1, store.Users("musl", MuslR1Version));
+        Assert.IsFalse(service.CollectPending);
+        Assert.IsTrue(service.CollectUnused().IsOK());
+        Assert.IsTrue(service.Reconcile().IsOK());
+        CollectionAssert.AreEqual(new[] { "1.2.5-r1", "1.2.5-r2" }, MuslVersions());
+        Assert.AreEqual("musl r1", ReadAll(RootOf(second.Index, out _), "/usr/lib64/libc.so"));
+
+        second.Dispose();
+        Assert.AreEqual(0, store.Users("musl", MuslR1Version));
+        Assert.IsTrue(service.CollectUnused().IsOK());
+        CollectionAssert.AreEqual(new[] { "1.2.5-r2" }, MuslVersions());
+    }
 }
