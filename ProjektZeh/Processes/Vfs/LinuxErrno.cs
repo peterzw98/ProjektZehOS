@@ -6,7 +6,7 @@ namespace ProjektZeh.Processes.Vfs;
 /// </summary>
 internal static class LinuxErrno
 {
-    public const long EPERM = 1, ENOENT = 2, EIO = 5, EBADF = 9, ENOMEM = 12, EACCES = 13, EBUSY = 16, EEXIST = 17, EXDEV = 18,
+    public const long EPERM = 1, ENOENT = 2, EIO = 5, EBADF = 9, EACCES = 13, EBUSY = 16, EEXIST = 17, EXDEV = 18,
         ENOTDIR = 20, EISDIR = 21, EINVAL = 22, EMFILE = 24, EFBIG = 27, ENOSPC = 28, ESPIPE = 29, EROFS = 30,
         ENAMETOOLONG = 36, ENOTEMPTY = 39, ELOOP = 40, EOVERFLOW = 75, EOPNOTSUPP = 95;
 }
@@ -20,9 +20,3 @@ internal static class LinuxMode
 
     public const byte DtChar = 2, DtDirectory = 4, DtRegular = 8, DtSymlink = 10;
 }
-
-/// <summary>
-/// Der Speicher reichte für eine Dateisystemabfrage nicht (Cosmos meldet das nur als false, etwa <c>Lookup</c>). Von <see cref="System.IO.IOException"/>
-/// abgeleitet, damit die Dateifehler-Filter sie fangen; <see cref="DirectoryFileStore.Errno"/> macht daraus -ENOMEM statt -ENOENT/-EIO.
-/// </summary>
-internal sealed class LinuxOutOfMemoryException(string message) : System.IO.IOException(message);

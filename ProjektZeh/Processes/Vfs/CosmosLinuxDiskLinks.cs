@@ -2,9 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Cosmos.Kernel.System.FileSystem;
-using ProjektZeh.Processes;
 using ProjektZeh.Security;
-using ProjektZeh.Storage;
 
 namespace ProjektZeh.Processes.Vfs;
 
@@ -39,19 +37,16 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
 
         using IVfsDirectoryHandle directory = OpenDirectoryStorageLocked(parent);
         IVfsInode inode = directory.Inode;
-        IVfsInode? child = null;
-        if (!inode.InodeOperations.Lookup(inode, name, out child))
+        if (!inode.InodeOperations.Lookup(inode, name, out IVfsInode? child))
         {
             return LinuxNodeKind.Missing;
         }
 
         // FAT findet auch über den 8.3-Kurznamen (FatInodeOperations.Lookup): den geführten Namen melden, DirectoryFileStore vergleicht.
-        found = child!.Name;
+        found = child.Name;
 
         // Unlesbare Attribute: ablehnen statt einen Symlink zu übersehen.
-        VfsStat stat = default;
-        IVfsInode attrNode = child!;
-        if (!attrNode.InodeOperations.GetAttr(attrNode, out stat))
+        if (!child.InodeOperations.GetAttr(child, out VfsStat stat))
         {
             throw new IOException("Attribute nicht lesbar.");
         }
@@ -91,8 +86,7 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
 
     private static IVfsDirectoryHandle OpenDirectoryStorageLocked(string parent)
     {
-        IVfsDirectoryHandle? directory = null;
-        if (!VfsManager.TryOpenDirectory(parent, out directory) || directory is null)
+        if (!VfsManager.TryOpenDirectory(parent, out IVfsDirectoryHandle? directory))
         {
             throw new DirectoryNotFoundException("Elternverzeichnis nicht lesbar.");
         }

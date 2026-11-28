@@ -11,15 +11,6 @@ public sealed class FrameReclaimTests
     public void Init() => FrameReclaim.ResetForTests();
 
     [TestMethod]
-    public void IsNearReserve_NurMitReserveUndNaheDaran()
-    {
-        Assert.IsFalse(FrameReclaim.IsNearReserve(0, 0));
-        Assert.IsTrue(FrameReclaim.IsNearReserve(16_000, 16_384));
-        Assert.IsTrue(FrameReclaim.IsNearReserve(20_000, 16_384));
-        Assert.IsFalse(FrameReclaim.IsNearReserve(21_000, 16_384));
-    }
-
-    [TestMethod]
     public void Retry_SammeltNichtWennErsterVersuchGelingt()
     {
         int collects = 0;

@@ -849,7 +849,6 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
         // 0x8007xxxx). Cosmos (Pin 5790fa74) setzt ConvertErrorPalToPlatform als Identität ein (Cosmos.Kernel.Plugs/System/IO/
         // InteropSysFilePlug.cs:336), der HResult ist dort also der PAL-Wert selbst: PalError.ENOSPC = 0x10034 und EFBIG = 0x10016
         // (Interop.Error.cs:37 und :23), gemeldet von FileDescriptorTable.cs:248. Unbekannte Werte bleiben -EIO.
-        LinuxOutOfMemoryException => -LinuxErrno.ENOMEM,
         IOException { HResult: 0x10034 or unchecked((int)0x80070070) or unchecked((int)0x80070027) } => -LinuxErrno.ENOSPC,
         IOException { HResult: 0x10016 } => -LinuxErrno.EFBIG,
         // Nackte Codes je nach Wirt: Windows-Fehlernummern nur unter Windows (unter Linux ist 0x27 = 39 ENOTEMPTY), errno nur sonst.
