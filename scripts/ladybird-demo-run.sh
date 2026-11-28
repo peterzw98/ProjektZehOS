@@ -50,7 +50,7 @@ fi
 mkdir -p "$OUT" || exit 2; LOG=$OUT/run.log; : > "$LOG"; : > "$OUT/times.txt"
 T0=$(date +%s)
 step() { echo "[$(date +%H:%M:%S) +$(( $(date +%s)-T0 ))s] $*" | tee -a "$LOG"; }
-timed() { local n=$1; shift; local s=$(date +%s); step "BEGIN $n"; "$@" >> "$LOG" 2>&1; local rc=$?
+timed() { local n=$1; shift; local s; s=$(date +%s); step "BEGIN $n"; "$@" >> "$LOG" 2>&1; local rc=$?
   echo "$n $(( $(date +%s)-s )) s rc=$rc" | tee -a "$OUT/times.txt"; step "END $n rc=$rc"; return $rc; }
 die() { step "FEHLER: $*"; echo "Log: $LOG"; exit 1; }
 [ -z "$DISK" ] && { [ -f "$BUNDLE" ] || die "Buendel fehlt (-b)"; }

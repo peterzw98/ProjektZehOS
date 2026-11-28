@@ -255,3 +255,41 @@ python scripts/build-package.py package --key <privater-Schlüssel.pem> --repo <
 ```
 
 Die Belegdatei `<app.aot>.json` muss neben `<app.aot>` mit auf die Signiermaschine; ist das `.wasm` in Schritt 2 ein anderes als in Schritt 1, bricht `package` ab.
+
+## Natives Paket auf dem Host bauen
+
+N3-C baut unter Linux oder WSL. Ein Rezeptordner wie `pkgs/hello/` enthält
+`package.toml`, `manifest.toml` und `build.sh`. Für `manifest.toml` gilt
+[Paketformat 2](PACKAGE_FORMAT.md). `package.toml` nennt ein bereits lokal
+vorhandenes Container-Image per vollständigem Digest. Für jede externe
+Quelle enthält es einen `[[source]]`-Abschnitt mit `name`, öffentlicher
+HTTPS-`url` und `sha256`. Der Bau erhält nur die drei Rezeptdateien,
+`patches/*.patch` und ausdrücklich unter `local = ["datei"]` benannte
+Dateien aus dem Rezeptordner. Für alle Downloads zusammen gilt 1 GiB.
+
+`build.sh` läuft unter `/bin/sh` ohne Netzwerk. `/recipe` und die vorab
+geprüften Downloads in `/sources` sind nur lesbar. Zwischenprodukte gehören
+nach `/tmp`, reguläre Paketdateien unter `usr/`, `lib/` oder `etc/` nach
+`/output/files`. Virtuelle Links stehen im Manifest. Lizenztexte werden
+zum Beispiel unter `/output/files/usr/share/licenses/hello/` abgelegt.
+Ein Signaturschlüssel gehört außerhalb des Rezeptordners.
+
+```bash
+python3 scripts/build-native-package.py pkgs/hello --output out/hello
+python3 scripts/package2.py package --key /sicher/test-key.pem --repo out/test-repo \
+  --spec out/hello/manifest.toml out/hello/files/usr/bin/hello=usr/bin/hello \
+  out/hello/files/usr/share/licenses/hello/LICENSE=usr/share/licenses/hello/LICENSE
+```
+
+Der erste Befehl verwendet standardmäßig Rootless-Podman mit der Identität
+des aufrufenden Benutzers. Alternativ ist `--runtime docker` mit einem lokalen
+Docker-Dienst ohne Umabbildung der Benutzerkennungen möglich. Rootless-Docker
+und automatische SELinux-Relabels für eingehängte Pfade sind nicht eingerichtet.
+Verwende pro
+gleichzeitigem Bau ein eigenes Ausgabeverzeichnis. Die Umbenennung folgt dem
+[Verhalten des Paketwerkzeugs](PACKAGE_FORMAT.md#werkzeug).
+Die neue Ausgabe enthält `files/`, `manifest.toml` und `build-info.json`
+mit Image-Digest, Lizenz, Quellen und Prüfsummen der Eingaben und Produkte.
+Der zweite Befehl signiert
+das Paket für das angegebene lokale Repository. Toolchain-Freigabe,
+Gastabnahme und Veröffentlichung folgen in eigenen Arbeitsschritten.
