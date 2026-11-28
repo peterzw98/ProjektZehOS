@@ -82,6 +82,15 @@ public static unsafe class UserMode
     /// </summary>
     public static delegate* unmanaged<UserFrame*, ulong, ulong, ulong, int> FaultHandler;
 
+    // ZehOS patch user-return-work, see PATCHES.md
+    /// <summary>
+    /// Runs on the way back to ring 3 after <see cref="RequestWork"/>, before the program goes on,
+    /// with interrupts enabled on the thread's kernel stack like <see cref="SyscallHandler"/>. The
+    /// frame holds every register of the program and may be changed. Set it before the first
+    /// <see cref="RequestWork"/>; without it a request waits.
+    /// </summary>
+    public static delegate* unmanaged<UserFrame*, void> ReturnHandler;
+
     /// <summary>Whether ring 3 can be entered: after <see cref="Initialize"/>, never on ARM64.</summary>
     public static bool IsSupported => Volatile.Read(ref s_initialized);
 
@@ -207,6 +216,39 @@ public static unsafe class UserMode
         }
     }
 
+    // ZehOS patch user-return-work, see PATCHES.md
+    /// <summary>
+    /// From any thread: <see cref="ReturnHandler"/> runs once for <paramref name="thread"/>
+    /// before its next return to ring 3, a return from an interrupt included, so also for a
+    /// program that computes without calls. Requests before that run are one. Only a request
+    /// that sets the mark interrupts the thread's CPU (<see cref="Kick"/>); a thread outside of
+    /// <see cref="Enter"/> keeps it until its first interrupt or call there. Allocation-free, no
+    /// lock; any context, also masked.
+    /// </summary>
+    public static void RequestWork(SchedulerThread thread)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+
+        // Interlocked: a full barrier, so what the caller wrote before is visible to the handler
+        // that clears the mark. A mark still set is not yet taken, its run reads that too.
+        if (Interlocked.Exchange(ref thread._userWork, 1) == 0)
+        {
+#if COSMOS_TEST_HOOKS
+            Interlocked.Increment(ref TestWorkKicks);
+#endif
+            Kick(thread);
+        }
+    }
+
+#if COSMOS_TEST_HOOKS
+    // ZehOS patch user-return-work, see PATCHES.md
+    // Only in the test build: how often RequestWork set the mark, and a switch that makes the
+    // work ramp lose the program's FPU state and RBX, as a ramp without the saved image would.
+    // The suite's counter-check shows with it that its cell sees such a loss.
+    internal static int TestWorkKicks;
+    internal static bool TestWorkLoseState;
+#endif
+
 #if COSMOS_TEST_HOOKS
     // ZehOS patch user-leave-kick, see PATCHES.md
     // Only in the test build (COSMOS_TEST_DEFINES=COSMOS_TEST_HOOKS): Kick sends nothing, so a
@@ -260,6 +302,53 @@ public static unsafe class UserMode
         return 0;
     }
 
+    // ZehOS patch user-return-work, see PATCHES.md
+    /// <summary>
+    /// For a return from an interrupt that <see cref="Prepare"/> let go to ring 3: when work is
+    /// due, keeps the frame's ring 3 words at the thread, so that the architecture can turn the
+    /// frame to its work ramp. Masked, allocation-free.
+    /// </summary>
+    internal static bool TakeReturnFrame(UserFrame* frame)
+    {
+        SchedulerThread? thread = SchedulerManager.CurrentCpuState?.CurrentThread;
+        if (thread is null || ReturnHandler == null || Volatile.Read(ref thread._userWork) == 0)
+        {
+            return false;
+        }
+
+        // One return to ring 3 at a time per thread, and the ramp takes the words back masked
+        // before anything can interrupt it: the fields are never overwritten while in use.
+        thread._userWorkRip = frame->Rip;
+        thread._userWorkCs = frame->Cs;
+        thread._userWorkRflags = frame->Rflags;
+        thread._userWorkRsp = frame->Rsp;
+        thread._userWorkSs = frame->Ss;
+        return true;
+    }
+
+    /// <summary>
+    /// The handler for every request that is due, then <see cref="Prepare"/>. Called masked on
+    /// the thread's kernel stack, below the frame; returns masked.
+    /// </summary>
+    private static ulong RunWork(UserFrame* frame)
+    {
+        delegate* unmanaged<UserFrame*, void> handler = ReturnHandler;
+        SchedulerThread? thread = SchedulerManager.CurrentCpuState?.CurrentThread;
+        if (handler != null && thread is not null)
+        {
+            // A request during the handler runs it again before the return; one after the last
+            // check here comes with its kick, or on this CPU with the next interrupt.
+            while (Interlocked.Exchange(ref thread._userWork, 0) != 0)
+            {
+                InternalCpu.EnableInterrupts();
+                handler(frame);
+                InternalCpu.DisableInterrupts();
+            }
+        }
+
+        return Prepare(frame);
+    }
+
     /// <summary>A fault in ring 3: called masked on the thread's kernel stack, returns masked.</summary>
     internal static void HandleFault(UserFrame* frame, ulong vector, ulong errorCode, ulong address)
     {
@@ -296,6 +385,39 @@ public static unsafe class UserMode
             InternalCpu.DisableInterrupts();
         }
 
-        return Prepare(frame);
+        // ZehOS patch user-return-work, see PATCHES.md
+        // Work requested during the call runs before its return, not only with the next interrupt.
+        return RunWork(frame);
+    }
+
+    // ZehOS patch user-return-work, see PATCHES.md
+    // The work ramp: masked, on the thread's kernel stack right below the frame and its FPU image,
+    // the kernel's GS. The frame's ring 3 words come back first; the ramp then returns through
+    // the syscall exit's iretq, with every register and the FPU image of the frame.
+    [UnmanagedCallersOnly(EntryPoint = "__managed__user_work")]
+    private static ulong WorkEntry(UserFrame* frame)
+    {
+        SchedulerThread? thread = SchedulerManager.CurrentCpuState?.CurrentThread;
+        if (thread is null)
+        {
+            Panic.Halt("The work ramp on a CPU without a thread.");
+            return 0;
+        }
+
+        frame->Rip = thread._userWorkRip;
+        frame->Cs = thread._userWorkCs;
+        frame->Rflags = thread._userWorkRflags;
+        frame->Rsp = thread._userWorkRsp;
+        frame->Ss = thread._userWorkSs;
+        ulong result = RunWork(frame);
+#if COSMOS_TEST_HOOKS
+        if (Volatile.Read(ref TestWorkLoseState))
+        {
+            // The XMM registers of the fxsave64 image below the frame (bytes 160 to 415), and RBX.
+            new Span<byte>((byte*)frame - 512 + 160, 256).Clear();
+            frame->Rbx = 0;
+        }
+#endif
+        return result;
     }
 }

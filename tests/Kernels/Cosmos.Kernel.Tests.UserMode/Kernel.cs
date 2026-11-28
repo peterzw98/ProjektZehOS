@@ -28,7 +28,7 @@ namespace Cosmos.Kernel.Tests.UserMode;
 /// </summary>
 public unsafe partial class Kernel : Sys.Kernel
 {
-    private const int ExpectedTestCount = 24;
+    private const int ExpectedTestCount = 25;
     private const string NoRing3 = "no ring 3 on this architecture";
 
     protected override void BeforeRun()
@@ -60,6 +60,7 @@ public unsafe partial class Kernel : Sys.Kernel
         TR.Run("TickHook_NeverSeesRing3", TestTickHook);
         TR.RunIf(KernelCpus.Count >= 4, "Nmi_InRing3_Returns", TestNmi, "needs four CPUs");
         TR.RunIf(KernelCpus.Count >= 2, "RequestLeave_OtherCpu_BeforeTick", TestRequestLeaveKick, "needs two CPUs");
+        TR.Run("ReturnWork_InterruptReturn_KeepsRegisters", TestReturnWork);
 #else
         TR.Run("Initialize_NotSupported", () => Assert.True(!Core.CPU.UserMode.Initialize() && !Core.CPU.UserMode.IsSupported, "not supported"));
         for (int i = 1; i < ExpectedTestCount; i++)
@@ -89,7 +90,7 @@ public unsafe partial class Kernel : Sys.Kernel
     private const ulong PageNoExecute = 1UL << 63;
     private const ulong AddressMask = 0x000F_FFFF_FFFF_F000;
     private const int ProgramSize = 512;
-    private const int CodePages = 2;
+    private const int CodePages = 3;
     private const int DataPages = 4;
     private const int WaitMs = 10_000;
     private const byte NmiVector = 2;
@@ -169,6 +170,7 @@ public unsafe partial class Kernel : Sys.Kernel
 
         Core.CPU.UserMode.SyscallHandler = &OnSyscall;
         Core.CPU.UserMode.FaultHandler = &OnFault;
+        Core.CPU.UserMode.ReturnHandler = &OnReturnWork;
         return s_pml4Index < 256 && size <= CodePages * PageSize && Core.CPU.UserMode.Initialize() && Core.CPU.UserMode.IsSupported;
     }
 
@@ -428,6 +430,88 @@ public unsafe partial class Kernel : Sys.Kernel
             Core.CPU.UserMode.RequestLeave(runner.Scheduler, 0x4000 + (ulong)round);
             Equal(0x4000 + (ulong)round, runner.Wait());
         }
+    }
+
+    // ZehOS patch user-return-work, see PATCHES.md
+    private const int WorkRounds = 64;  // Asm/Programs.s WORK_ROUNDS
+    private const int WorkPage = 1;
+    private static int s_workRuns;
+
+    [LibraryImport("*", EntryPoint = "cosmos_test_user_clobber_fpu")]
+    [SuppressGCTransition]
+    private static partial void ClobberFpu();
+
+    // The program's count of handler runs is the word above its counter.
+    private static ref ulong WorkSlot => ref *(ulong*)(s_data[WorkPage] + 2048 + 8);
+
+    [UnmanagedCallersOnly]
+    private static void OnReturnWork(UserFrame* frame)
+    {
+        // Leaves the FPU and SSE registers as kernel code may: the ramp must give the program
+        // its own back from the frame's image.
+        ClobberFpu();
+        Interlocked.Increment(ref s_workRuns);
+        Volatile.Write(ref WorkSlot, Volatile.Read(ref WorkSlot) + 1);
+    }
+
+    // A program computes without calls; each RequestWork must run the handler on a return from
+    // an interrupt (the kick on another CPU, a tick or a switch on the same) and the program
+    // must find every register as it set it. The counter-check loses the image on purpose.
+    private static void TestReturnWork()
+    {
+#if COSMOS_TEST_HOOKS
+        Volatile.Write(ref Core.CPU.UserMode.TestWorkLoseState, true);
+        ulong lost;
+        try
+        {
+            lost = WorkRun(out _, out _);
+        }
+        finally
+        {
+            Volatile.Write(ref Core.CPU.UserMode.TestWorkLoseState, false);
+        }
+
+        Log.WriteString($"[UserMode] work, state lost on purpose: result 0x{lost:X}\n");
+        Assert.True(lost != 0, "a ramp that loses the state is seen (counter-probe)");
+        int kicksBefore = Volatile.Read(ref Core.CPU.UserMode.TestWorkKicks);
+#endif
+        ulong result = WorkRun(out int runs, out long worst);
+        Log.WriteString($"[UserMode] work: result 0x{result:X}, {runs} runs for {WorkRounds} requests, worst {worst * 1_000_000 / Stopwatch.Frequency} us, {KernelCpus.Count} CPUs\n");
+        Equal(0, result);
+        Assert.True(runs >= WorkRounds, "every request ran the handler");
+#if COSMOS_TEST_HOOKS
+        int kicks = Volatile.Read(ref Core.CPU.UserMode.TestWorkKicks) - kicksBefore;
+        Log.WriteString($"[UserMode] work: {kicks} marks set\n");
+        Assert.True(kicks == runs, "only a request that sets the mark kicks");
+#endif
+    }
+
+    private static ulong WorkRun(out int runs, out long worst)
+    {
+        Slot(WorkPage) = 0;
+        WorkSlot = 0;
+        Volatile.Write(ref s_workRuns, 0);
+        worst = 0;
+        Runner runner = new(13, WorkPage);
+        WaitProgress(WorkPage);
+        WaitProgress(WorkPage);
+        Equal(0, Volatile.Read(ref WorkSlot));
+        for (int round = 1; round <= WorkRounds; round++)
+        {
+            long sent = Stopwatch.GetTimestamp();
+            Core.CPU.UserMode.RequestWork(runner.Scheduler);
+            WaitFor(() => Volatile.Read(ref WorkSlot) >= (ulong)round, "the handler ran");
+            worst = Math.Max(worst, Stopwatch.GetTimestamp() - sent);
+            if (round < WorkRounds)
+            {
+                // The program runs between two requests, so they are separate.
+                WaitProgress(WorkPage);
+            }
+        }
+
+        ulong result = runner.Wait();
+        runs = Volatile.Read(ref s_workRuns);
+        return result;
     }
 
     private const int KickRounds = 200;

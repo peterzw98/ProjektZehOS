@@ -164,6 +164,13 @@ public sealed unsafe class SchedulerThread : SchedulerExtensible
     /// <summary>The value of the request, valid at state 2.</summary>
     internal ulong _userLeaveValue;
 
+    // ZehOS patch user-return-work, see PATCHES.md
+    /// <summary>1 while <see cref="CPU.UserMode.ReturnHandler"/> is due on the next return to ring 3. Any thread.</summary>
+    internal int _userWork;
+
+    /// <summary>The ring 3 words of a frame turned to the work ramp; the thread's own, written and read masked.</summary>
+    internal ulong _userWorkRip, _userWorkCs, _userWorkRflags, _userWorkRsp, _userWorkSs;
+
     // ===== Context (architecture-specific values) =====
 
     private nuint _stackPointer;

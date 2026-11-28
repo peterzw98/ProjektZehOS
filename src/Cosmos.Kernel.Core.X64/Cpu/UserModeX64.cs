@@ -50,6 +50,9 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
     private static ulong s_syscallAddress;
     private static ulong s_leaveAddress;
 
+    // ZehOS patch user-return-work, see PATCHES.md
+    private static ulong s_workAddress;
+
     public override bool IsAvailable
     {
         get
@@ -74,6 +77,7 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
             }
 
             s_leaveAddress = LeaveAddress();
+            s_workAddress = WorkAddress();
             s_syscallAddress = SyscallAddress();
             return true;
         }
@@ -178,6 +182,18 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
             frame->rsp = leaveRsp;
             frame->ss = Gdt.KernelDataSelector;
         }
+        else if (UserMode.TakeReturnFrame((UserFrame*)frame))
+        {
+            // ZehOS patch user-return-work, see PATCHES.md
+            // Work is due: to the ramp in ring 0, masked, on the stack right below the frame's
+            // FPU image, the lowest thing of the thread's kernel stack that still lives. CS is the
+            // kernel's, so the stub's exit does no swapgs; the ramp's own exit does.
+            frame->rip = s_workAddress;
+            frame->cs = Gdt.KernelCodeSelector;
+            frame->rflags = Fixed;
+            frame->rsp = (ulong)frame - ThreadContext.FpuAreaSize;
+            frame->ss = Gdt.KernelDataSelector;
+        }
     }
 
     private static void SetUpCurrentCpu()
@@ -206,6 +222,11 @@ internal sealed unsafe partial class UserModeX64 : UserModeArch
     [LibraryImport("*", EntryPoint = "_native_x64_user_leave_address")]
     [SuppressGCTransition]
     private static partial ulong LeaveAddress();
+
+    // ZehOS patch user-return-work, see PATCHES.md
+    [LibraryImport("*", EntryPoint = "_native_x64_user_work_address")]
+    [SuppressGCTransition]
+    private static partial ulong WorkAddress();
 
     [LibraryImport("*", EntryPoint = "_native_x64_user_wrmsr")]
     [SuppressGCTransition]

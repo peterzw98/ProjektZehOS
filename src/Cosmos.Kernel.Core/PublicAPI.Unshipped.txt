@@ -187,3 +187,5 @@
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.SetFsBase(ulong address) -> void
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.SyscallHandler -> delegate* unmanaged<Cosmos.Kernel.Core.CPU.UserFrame*, void>
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.FaultHandler -> delegate* unmanaged<Cosmos.Kernel.Core.CPU.UserFrame*, ulong, ulong, ulong, int>
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.RequestWork(Cosmos.Kernel.Core.Scheduler.SchedulerThread! thread) -> void
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.ReturnHandler -> delegate* unmanaged<Cosmos.Kernel.Core.CPU.UserFrame*, void>

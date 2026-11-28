@@ -210,6 +210,29 @@ _native_x64_user_syscall:
     swapgs
     iretq
 
+// ZehOS patch user-return-work, see PATCHES.md
+// The work ramp: the iretq of an interrupt whose frame UserModeX64.PrepareReturn turned here,
+// masked, the kernel's GS, RSP at the frame's fxsave64 image, the frame above it: the layout of
+// the syscall entry. The program's FPU state is in the registers and in the image; the kernel
+// must not run with its control words.
+.balign 16
+_native_x64_user_work:
+    cld
+    fninit
+    ldmxcsr dword ptr [rip + .Luser_kernel_mxcsr]
+    xor     ebp, ebp
+    lea     rdi, [rsp + FPU_SIZE]
+    call    __managed__user_work    // the ring 3 words back, handler with interrupts, returns masked
+    test    rax, rax
+    jnz     .Luser_leave_rax
+    jmp     .Luser_syscall_iretq
+
+// uint64_t _native_x64_user_work_address()
+.global _native_x64_user_work_address
+_native_x64_user_work_address:
+    lea     rax, [rip + _native_x64_user_work]
+    ret
+
 // uint64_t _native_x64_user_syscall_address()
 .global _native_x64_user_syscall_address
 _native_x64_user_syscall_address:
