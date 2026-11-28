@@ -530,17 +530,10 @@ public sealed unsafe class UserPageTable : IDisposable
         // ZehOS patch tlb-shootdown, see PATCHES.md
         // Set before the write, cleared after the next one: a shootdown
         // never misses a CPU that may hold a translation of the table.
-        if (table is not null)
-        {
-            table._active.Set(state.CpuId);
-        }
-
+        table?._active.Set(state.CpuId);
         LoadAndCount(state, table is null ? state._kernelRoot : table._root);
         state._loadedTable = table;
-        if (old is not null)
-        {
-            old._active.Clear(state.CpuId);
-        }
+        old?._active.Clear(state.CpuId);
     }
 
     // ZehOS patch tlb-shootdown, see PATCHES.md
