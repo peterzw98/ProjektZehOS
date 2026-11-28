@@ -610,16 +610,15 @@ internal static unsafe class CosmosLinuxRun
             CosmosSaltSource.Fill(random);
             // N3-E: Mit einem Speicher kommt der Interpreter aus demselben Dateisystem, das der Prozess danach bekommt (bei run --pkg der
             // gebundene Indexstand, Links und Inhaltspruefung inklusive); ohne gab es fuer dynamische Paketprogramme keinen Leser (ENOENT).
-            // Rechte wie fuer den Prozess: die Nutzerkennung der Ladeoptionen (der Lader ruft den Leser erst, wenn sie feststeht).
-            ElfLoadOptions? options = null;
-            options = new ElfLoadOptions
-            {
-                Random = random,
-                HwCap = (uint)X86Base.CpuId(1, 0).Edx,
-                ReadInterpreter = store != null
-                    ? (string path, out byte[] content) => LinuxInterpreterFile.Read(store, path, (uint)options!.Uid, (uint)options.Gid, out content)
-                    : root == null ? null : (string path, out byte[] content) => ReadFromRoot(root, path, out content),
-            };
+            uint hwCap = (uint)X86Base.CpuId(1, 0).Edx;
+            ElfLoadOptions options = store != null
+                ? LinuxInterpreterFile.LoadOptions(store, random, hwCap)
+                : new ElfLoadOptions
+                {
+                    Random = random,
+                    HwCap = hwCap,
+                    ReadInterpreter = root == null ? null : (string path, out byte[] content) => ReadFromRoot(root, path, out content),
+                };
             image = ElfLoader.Load(elf, argv, envp, options);
             return true;
         }
