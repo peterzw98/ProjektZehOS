@@ -16,14 +16,18 @@ internal sealed record PackageChange2(CatalogEntry2[] Staged, string[] Removed, 
 /// <see cref="PackageTrust"/> mit <see cref="PackageResolver"/> und <see cref="PackageStore2"/>. Jeder aendernde Auftrag berechnet
 /// zuerst die vollstaendige Zielmenge, prueft den Platz, stuft alle neuen Versionen und wechselt dann genau einmal mit
 /// <see cref="PackageStore2.Activate"/>. Scheitert oder endet ein Auftrag vorher, gilt der bisherige Bestand unveraendert; gestufte
-/// Reste entfernt <see cref="PackageStore2.Reconcile"/> beim naechsten Einbinden. Noch nicht an <c>pkg</c> und den Startpfad
-/// angeschlossen (Gastanschluss mit N3-B); der Bestand v1 bleibt davon unberuehrt.
+/// Reste entfernt <see cref="PackageStore2.Reconcile"/> beim naechsten Einbinden. Die Shell erreicht den Dienst ueber
+/// <c>pkg native</c> (N3-B1); der Bestand v1 bleibt davon unberuehrt.
 /// </summary>
 /// <remarks>
 /// Entfernte Versionen bleiben als Ordner liegen, bis <see cref="PackageStore2.Reconcile"/> laeuft: Erst N3-B zaehlt laufende Nutzer,
 /// vorher darf nur das Einbinden vor dem ersten Paketstart aufraeumen. Die Platzpruefung ist eine Vorabschaetzung (Inhalt plus
 /// Verwaltungsaufschlag je Paket); den tatsaechlich vollen Datentraeger erkennt <see cref="PackageStore2.Stage"/> an der
 /// gespeicherten Laenge.
+/// <para>Paketindex (N3-B1): Nach jedem erfolgreichen <see cref="PackageStore2.Activate"/> und nach <see cref="RefreshIndex"/>
+/// (Einbinden, Neustart) gilt ein neuer, unveraenderlicher <see cref="PackageIndex2"/> aus dem dann gueltigen active2. Wer
+/// <see cref="CurrentIndex"/> einmal geholt hat, behaelt diesen Stand; das Binden an einen Prozess bis zum Ende seiner Nutzer
+/// folgt mit N3-B2. Der Wechsel ist ein einzelner Verweis unter <c>gate</c>, ohne Plattenzugriff in der Sperre.</para>
 /// </remarks>
 internal sealed class PackageService2(string root, PackageStore2 store, PackageTrust? trust, Func<ResultObject<long>>? freeBytes = null,
     Func<IDisposable?>? tryBeginWrite = null)
@@ -33,6 +37,12 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     private const string CatalogName = "catalog2";
     private readonly object gate = new();
     private bool busy;
+    // Unter gate: aktueller Index oder der Grund, warum keiner gilt. indexGeneration zaehlt jeden Bauversuch (Interlocked).
+    private PackageIndex2? index;
+    private string? indexError;
+    private bool indexBuilt;
+    private long indexGeneration;
+    private long publishedGeneration;
 
     private const int FloorMaximumBytes = 512;
 
@@ -43,6 +53,53 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
 
     /// <summary>Testnaht: wird vor jedem Paketschritt aufgerufen (Abbruch zwischen Stufen und vor Activate).</summary>
     internal Action<string>? ServiceStep { get; init; }
+
+    /// <summary>
+    /// Index der aktiven Menge fuer neue Starts. Wurde noch keiner gebaut, entsteht er jetzt aus active2. Ist active2 beschaedigt,
+    /// gilt kein Index (Fehler statt eines leeren Bestands), bis ein erfolgreicher Wechsel oder <see cref="RefreshIndex"/> folgt.
+    /// </summary>
+    public ResultObject<PackageIndex2> CurrentIndex()
+    {
+        lock (gate)
+        {
+            if (indexBuilt)
+                return index != null ? ResultObjectFactory.CreateSuccess(index) : ResultObjectFactory.CreateFailure<PackageIndex2>(ResultCode.Failure, indexError!);
+        }
+        var refreshed = RefreshIndex();
+        if (!refreshed.IsOK()) return ResultObjectFactory.CreateFailure<PackageIndex2>(refreshed);
+        lock (gate) return index != null ? ResultObjectFactory.CreateSuccess(index) : ResultObjectFactory.CreateFailure<PackageIndex2>(ResultCode.Failure, indexError!);
+    }
+
+    /// <summary>
+    /// Baut den Index aus dem gueltigen active2 neu (Einbinden, Neustart, nach Reconcile). Liest die Manifeste ausserhalb von
+    /// <c>gate</c>; nur der Wechsel des Verweises liegt darin. Laufen zwei Aufrufe gleichzeitig, gewinnt der spaeter gebaute Stand.
+    /// </summary>
+    public ResultErr RefreshIndex()
+    {
+        // Nummer vor dem Lesen: Ein Aufruf, der spaeter begann, hat den neueren Plattenstand gesehen.
+        long generation = Interlocked.Increment(ref indexGeneration);
+        if (trust == null) return Publish(generation, null, NoTrust().Message);
+        var active = store.ReadActive();
+        if (!active.IsOK()) return Publish(generation, null, "Kein Paketindex v2: " + active.Status.Message);
+        var built = PackageIndex2.Build(active.Value!, generation);
+        return built.IsOK() ? Publish(generation, built.Value, null) : Publish(generation, null, "Kein Paketindex v2: " + built.Status.Message);
+    }
+
+    private ResultErr Publish(long generation, PackageIndex2? value, string? error)
+    {
+        lock (gate)
+        {
+            // Ein frueher begonnener Bau ueberschreibt keinen spaeteren (zwei RefreshIndex gleichzeitig, etwa Einbinden und Auftragsende).
+            if (generation > publishedGeneration)
+            {
+                publishedGeneration = generation;
+                index = value;
+                indexError = error;
+                indexBuilt = true;
+            }
+        }
+        return error == null ? ResultErr.CreateSuccess() : ResultErr.CreateFailure(ResultCode.Failure, error);
+    }
 
     /// <summary>
     /// Liest den gespeicherten catalog2; Signatur vor dem Parsen. Kein Katalog ist Erfolg mit null; ein beschaedigter ist ein Fehler.
@@ -313,6 +370,8 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
         progress?.Invoke(new PackageProgress("Bestand wechseln", "active2", 0, 0));
         var activated = store.Activate(ToSet(target), cancellation);
         if (!activated.IsOK()) return ResultObjectFactory.CreateFailure<PackageChange2>(activated);
+        // Neue Starts sehen ab hier den neuen Stand; scheitert der Neubau, gilt kein Index statt des alten (active2 ist schon neu).
+        RefreshIndex();
         return ResultObjectFactory.CreateSuccess(new PackageChange2(entries, [], true));
     }
 
@@ -338,6 +397,7 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
             // Ein einziger Wechsel entfernt die ganze Auswahl; Activate prueft die Abhaengigkeiten der Restmenge noch einmal.
             var activated = store.Activate(ToSet(target), cancellation);
             if (!activated.IsOK()) return ResultObjectFactory.CreateFailure<PackageChange2>(activated);
+            RefreshIndex();
             string[] names = [.. removed];
             Array.Sort(names, StringComparer.Ordinal);
             return ResultObjectFactory.CreateSuccess(new PackageChange2([], names, true));
