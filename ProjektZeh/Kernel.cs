@@ -320,8 +320,8 @@ public sealed class Kernel : Sys.Kernel
 #endif
 #if ZEHOS_LINUX_RUN
             // Nur Testbau (-p:ZehOSLinuxRun=true, Ladybird V3): startet ein statisches Linux-Programm im Ring 3.
-            new ShellCommand("run", "run [NAME=WERT...] <datei> [argumente...]", "Testbau: startet ein statisches Linux-Programm (x86-64, musl), NAME=WERT davor setzt die Umgebung; legt /tmp und /.cache in der Prozesswurzel an (nur bei Standardwerten); Enter-Zeilen sind seine Eingabe, Strg+C/Esc bricht ab.", true,
-                (arguments, output) => CosmosLinuxRun.RunFile(files, arguments, output, shell)),
+            new ShellCommand("run", "run [--pkg] [NAME=WERT...] <datei> [argumente...]", "Testbau: startet ein statisches Linux-Programm (x86-64, musl), NAME=WERT davor setzt die Umgebung; --pkg startet eine Paketdatei v2 aus dem Paketindex (Wurzel schreibgeschuetzt, Rest im Arbeitsspeicher); legt /tmp und /.cache in der Prozesswurzel an (nur bei Standardwerten); Enter-Zeilen sind seine Eingabe, Strg+C/Esc bricht ab.", true,
+                (arguments, output) => CosmosLinuxRun.RunFile(files, arguments, output, shell, packages2)),
 #endif
 #if ZEHOS_POWER_FAULT_PROBE
             // Nur P4-Testbuild: schaltet genau einen Fehlerpunkt der naechsten Energieaktion scharf.

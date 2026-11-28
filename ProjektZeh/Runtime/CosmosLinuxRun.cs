@@ -94,6 +94,13 @@ internal static unsafe class CosmosLinuxRun
         /// <summary>Prozesswurzel auf der Datenplatte (Kernelpfad) oder null für ein leeres Dateisystem im Arbeitsspeicher (V8).</summary>
         public string? Root;
 
+        /// <summary>
+        /// N3-B2: Prozesswurzel aus dem Paketindex (statt <see cref="Root"/>) und die Bindung an diesen Indexstand. Die Bindung gilt
+        /// fuer alle Prozesse des Laufs (Kinder teilen das Dateisystem) und endet mit <see cref="Release"/> des letzten Beteiligten.
+        /// </summary>
+        public ILinuxFileStore? Store;
+        public IDisposable? Lease;
+
         /// <summary>V37: Umgebung des Programms; ihre Standardordner legt <see cref="Execute"/> vor dem Start an.</summary>
         public string[] Envp = [];
 
@@ -214,11 +221,17 @@ internal static unsafe class CosmosLinuxRun
     /// (etwa <c>cd /data/s1</c>, dann <c>run files</c>); in "/" oder direkt auf einem Laufwerk bekommt es ein leeres Dateisystem im Arbeitsspeicher.
     /// Eine Wurzel auf der Platte braucht Schreib- und Verwaltungsrecht des angemeldeten Nutzers (<see cref="FileService.AuthorizeProcessRoot"/>).
     /// </summary>
-    public static ResultErr RunFile(FileService files, string[] words, ITextOutput output, ShellService? shell)
+    public static ResultErr RunFile(FileService files, string[] words, ITextOutput output, ShellService? shell,
+        ProjektZeh.Packages.PackageService2? packages = null)
     {
         if (words.Length == 0)
         {
-            return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: run [NAME=WERT...] <datei> [argumente...]");
+            return ResultErr.CreateFailure(ResultCode.InvalidArgument, "Verwendung: run [--pkg] [NAME=WERT...] <datei> [argumente...]");
+        }
+
+        if (words[0] == "--pkg")
+        {
+            return RunPackage(packages, words[1..], output, shell);
         }
 
         // V37: führende NAME=WERT-Wörter setzen die Umgebung wie env; der Rest ist der Programmaufruf.
@@ -266,6 +279,127 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>
+    /// N3-B2: <c>run --pkg [NAME=WERT...] /usr/bin/x [argumente...]</c> startet eine Paketdatei v2 in einer Wurzel aus dem gebundenen
+    /// Paketindex (schreibgeschuetzt) und einem Speicher im Arbeitsspeicher (<c>/tmp</c>, <c>/.cache</c>). Der Pfad gilt im
+    /// Paketbestand, nicht im Verzeichnis der Shell. Die Datei wird beim Lesen gegen das Manifest geprueft; ein Upgrade waehrend des
+    /// Laufs gilt erst fuer den naechsten Start.
+    /// </summary>
+    private static ResultErr RunPackage(ProjektZeh.Packages.PackageService2? packages, string[] words, ITextOutput output, ShellService? shell)
+    {
+        if (packages == null)
+        {
+            return ResultErr.CreateFailure(ResultCode.Failure, "run --pkg: kein Paketdienst v2");
+        }
+
+        if (!LinuxRunEnvironment.Split(words, out string[] envp, out string[] arguments, out string envError))
+        {
+            return ResultErr.CreateFailure(ResultCode.InvalidArgument, "run --pkg: " + envError);
+        }
+
+        if (arguments[0].Length == 0)
+        {
+            return ResultErr.CreateFailure(ResultCode.InvalidArgument, "run --pkg: Programmpfad fehlt");
+        }
+
+        // Pfade gelten im Paketbestand; ".." kuerzt Normalize innerhalb der Wurzel, der Index nimmt danach nur kanonische Pfade.
+        string path = LinuxPath.Normalize(arguments[0][0] == '/' ? arguments[0] : "/" + arguments[0]);
+        ResultObject<ProjektZeh.Packages.PackageIndexLease> bound = packages.Bind();
+        if (!bound.IsOK())
+        {
+            return ResultErr.CreateFailure(ResultCode.Failure, "run --pkg: " + bound.Status.Message);
+        }
+
+        ProjektZeh.Packages.PackageIndexLease? lease = bound.Value!;
+        try
+        {
+            var resolved = lease.Index.Resolve(path);
+            if (!resolved.IsOK())
+            {
+                return ResultErr.CreateFailure(resolved.Status.Code, "run --pkg: " + resolved.Status.Message);
+            }
+
+            if (resolved.Value!.Kind != ProjektZeh.Packages.PackageIndexKind.File || !resolved.Value.Executable)
+            {
+                return ResultErr.CreateFailure(ResultCode.Failure, "run --pkg: " + resolved.Value.Path + " ist keine ausfuehrbare Paketdatei");
+            }
+
+            var store = new PackageRootStore(lease.Index, new MemoryFileStore());
+            ResultObject<byte[]> elf = ReadPackageFile(store, resolved.Value.Path);
+            if (!elf.IsOK())
+            {
+                return elf.Status;
+            }
+
+            string exe = "/" + resolved.Value.Path;
+            string[] argv = [path, .. arguments[1..]];
+            if (shell != null)
+            {
+                ResultErr started = StartForeground(elf.Value!, argv, envp, shell, null, exe, store, lease);
+                if (started.IsOK())
+                {
+                    lease = null; // gehoert jetzt dem Lauf
+                }
+
+                return started;
+            }
+
+            Serial("LINUXRUN BEGIN " + path);
+            Outcome outcome = Run(elf.Value!, argv, envp, output, 120, data => Serial("LINUXRUN OUT " + Convert.ToHexString(data)),
+                exePath: exe, store: store, lease: lease);
+            lease = null;
+            Serial("LINUXRUN END " + (outcome.Ran ? outcome.Status : "notrun " + outcome.Detail));
+            if (!outcome.Ran)
+            {
+                return ResultErr.CreateFailure(ResultCode.Failure, "run --pkg: " + outcome.Detail);
+            }
+
+            output.WriteLine("[" + outcome.Status + (outcome.Detail.Length > 0 ? ", " + outcome.Detail : string.Empty) + "]");
+            return ResultErr.CreateSuccess();
+        }
+        finally
+        {
+            lease?.Dispose();
+        }
+    }
+
+    /// <summary>Liest eine Paketdatei ueber die Prozesswurzel (geprueft gegen das Manifest), hoechstens <see cref="MaxFileSize"/>.</summary>
+    private static ResultObject<byte[]> ReadPackageFile(PackageRootStore store, string path)
+    {
+        long opened = store.OpenFile(path, false, out ILinuxStoreFile? file);
+        if (opened < 0)
+        {
+            return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, "run --pkg: " + path + " nicht lesbar (errno " + (-opened) + ")");
+        }
+
+        try
+        {
+            long length = file!.Length();
+            if (length > MaxFileSize)
+            {
+                return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, "run --pkg: " + path + " ist zu gross");
+            }
+
+            var bytes = new byte[length];
+            for (long at = 0; at < length;)
+            {
+                long read = file.ReadAt(at, bytes.AsSpan((int)at));
+                if (read <= 0)
+                {
+                    return ResultObjectFactory.CreateFailure<byte[]>(ResultCode.Failure, "run --pkg: " + path + " nicht lesbar");
+                }
+
+                at += read;
+            }
+
+            return ResultObjectFactory.CreateSuccess(bytes);
+        }
+        finally
+        {
+            file!.Close();
+        }
+    }
+
+    /// <summary>
     /// Prozesswurzel für <c>run</c> aus dem Verzeichnis der Shell; null (Arbeitsspeicher) für "/" und für einen Einhängepunkt selbst.
     /// "/" nimmt <see cref="DirectoryFileStore"/> nicht an, und ein ganzes Laufwerk (etwa <c>/data</c>) gäbe dem Programm die
     /// Systemdateien darauf (Konten, Pakete); erst ein Unterordner wie <c>/data/s1</c> wird Wurzel.
@@ -308,7 +442,8 @@ internal static unsafe class CosmosLinuxRun
         return LinuxPath.Normalize(argv[0][0] == '/' ? argv[0] : (cwd ?? "/") + "/" + argv[0]);
     }
 
-    private static ResultErr StartForeground(byte[] elf, string[] arguments, string[] envp, ShellService shell, string? root, string? exePath)
+    private static ResultErr StartForeground(byte[] elf, string[] arguments, string[] envp, ShellService shell, string? root, string? exePath,
+        ILinuxFileStore? store = null, IDisposable? lease = null)
     {
         if (shell.HasForeground)
         {
@@ -337,6 +472,8 @@ internal static unsafe class CosmosLinuxRun
             {
                 Session = session,
                 Root = root,
+                Store = store,
+                Lease = lease,
                 Envp = envp,
                 ExePath = exePath,
                 StartPath = StartPathOf(arguments, null, exePath),
@@ -554,7 +691,7 @@ internal static unsafe class CosmosLinuxRun
     /// <param name="root">Prozesswurzel (Kernelpfad, wird bei Bedarf angelegt) oder null für ein leeres Dateisystem im Arbeitsspeicher.</param>
     /// <param name="cwd">Arbeitsverzeichnis im Prozess (absolut, wird angelegt) oder null für "/".</param>
     public static Outcome Run(byte[] elf, string[] argv, string[] envp, ITextOutput output, int timeoutSeconds, ByteSink? mirror = null,
-        string? root = null, string? cwd = null, string? exePath = null)
+        string? root = null, string? cwd = null, string? exePath = null, ILinuxFileStore? store = null, IDisposable? lease = null)
     {
         if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
         {
@@ -570,7 +707,7 @@ internal static unsafe class CosmosLinuxRun
                 return new Outcome(false, string.Empty, why);
             }
 
-            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, Envp = envp, StartCwd = cwd, ExePath = exePath, StartPath = StartPathOf(argv, cwd, exePath) };
+            var started = new Running(new TerminalDescriptor(output) { Mirror = mirror }) { Root = root, Store = store, Lease = lease, Envp = envp, StartCwd = cwd, ExePath = exePath, StartPath = StartPathOf(argv, cwd, exePath) };
             var thread = new Thread(() => Body(started, image!, elf));
             thread.Start();
             run = started;
@@ -595,6 +732,12 @@ internal static unsafe class CosmosLinuxRun
         finally
         {
             Release(run);
+
+            // Ohne Lauf (Prepare gescheitert, schon belegt) gibt niemand sonst die Bindung frei.
+            if (run == null)
+            {
+                lease?.Dispose();
+            }
         }
     }
 
@@ -603,6 +746,8 @@ internal static unsafe class CosmosLinuxRun
     {
         if (run == null || Interlocked.Decrement(ref run.Owners) == 0)
         {
+            // Erst nach dem Ende aller Threads und Destroy: kein Prozess des Laufs liest danach noch Paketdateien dieses Stands.
+            run?.Lease?.Dispose();
             Volatile.Write(ref busy, 0);
         }
     }
@@ -679,7 +824,11 @@ internal static unsafe class CosmosLinuxRun
     {
         Volatile.Write(ref run.Thread, FaultIsolation.CurrentSchedulerThread());
         ILinuxFileSystem? fileSystem = null;
-        if (run.Root != null)
+        if (run.Store != null)
+        {
+            fileSystem = new LinuxFileSystem(run.Store, run.Terminal, uid: (uint)image.Uid, gid: (uint)image.Gid);
+        }
+        else if (run.Root != null)
         {
             // Datenplatte FAT: Namen ohne Groß-/Kleinschreibung. Fehlt die Wurzel oder lässt sie sich nicht anlegen, startet das
             // Programm nicht, statt still ohne Dateien zu laufen.
