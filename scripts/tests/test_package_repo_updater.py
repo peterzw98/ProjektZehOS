@@ -60,6 +60,18 @@ class PackageRepoUpdaterTests(unittest.TestCase):
         self.assertEqual((self.current / 'catalog2.sig').read_text(), 'Signatur')
         self.assertEqual((self.root / 'releases' / legacy / 'catalog').read_text(), 'Legacy')
 
+        orphan = self.root / '.publish.orphan'
+        orphan.mkdir()
+        (orphan / 'archive.tar').touch()
+        self.git('rm', 'catalog2', 'catalog2.sig')
+        downgrade = self.commit(catalog='Fallback')
+        failure = self.update()
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn('reinen v1-Stand', failure.stderr)
+        self.assertEqual(self.current.readlink(), Path('releases') / complete)
+        self.assertFalse((self.root / 'releases' / downgrade).exists())
+        self.assertFalse(orphan.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

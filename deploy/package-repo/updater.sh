@@ -35,6 +35,9 @@ publish_release() (
             echo 'catalog2 und catalog2.sig muessen als nichtleeres Dateipaar vorliegen.' >&2
             exit 1
         fi
+    elif [ -e "$root/current/catalog2" ] || [ -e "$root/current/catalog2.sig" ]; then
+        echo 'Ein aktiver v2-Katalog darf nicht durch einen reinen v1-Stand ersetzt werden.' >&2
+        exit 1
     fi
     target=$releases/$commit
     [ -d "$target" ] || mv -T "$staging/release" "$target" || exit 1
@@ -50,6 +53,11 @@ publish_release() (
 )
 
 sync_release() {
+    # Je Repository laeuft ein Updater. SIGKILL kann den Trap des vorigen Versuchs umgehen.
+    for orphan in "$root"/.publish.*; do
+        [ -d "$orphan" ] && [ ! -L "$orphan" ] || continue
+        rm -rf -- "$orphan" || return 1
+    done
     if [ ! -d "$clone/.git" ]; then
         rm -rf "$clone"
         git clone -q --branch "$branch" --depth 1 "$PACKAGES_GIT_URL" "$clone" || return 1
