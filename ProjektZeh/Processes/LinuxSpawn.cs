@@ -110,6 +110,9 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     /// wie <c>CosmosLinuxRun.MaxFileSize</c>). Der Teil liegt beim Laden zweimal im Speicher (Puffer und Seiten).</summary>
     public const int MaxExecFileSize = 128 << 20;
 
+    /// <summary>N2-Z: Anfang der Programmdatei, den execve mit einem Lesevorgang holt (ELF-Kopf und Programmtabelle).</summary>
+    private const int ExecPrefixBytes = 4096;
+
     private const int ORdOnly = 0;
     private const long E2Big = 7, ENoExec = 8;
 
@@ -470,9 +473,26 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 }
 
                 // V28: nur Kopf, Programmköpfe und Segmente; die Grenze gilt für diesen Teil, nicht für Debugabschnitte dahinter.
+                // N2-Z: Kopf, Programmtabelle und der Rückgabepuffer des Kopfteils liegen meist in den ersten Bytes. Jeder Lesevorgang der Platte
+                // kostet im Kern Puffer (FAT liest je Aufruf Clustergröße): ein Lesevorgang am Anfang statt drei je Start.
                 ILinuxFile f = file;
+                byte[] prefix = new byte[(int)Math.Min(st.Size, ExecPrefixBytes)];
+                long prefixLength = 0;
+                if (prefix.Length > 0 && f.Seek(0, 0) >= 0)
+                {
+                    long got = f.Read(prefix);
+                    prefixLength = got > 0 ? got : 0;
+                }
+
                 long ReadAt(long offset, Span<byte> dst)
                 {
+                    if (offset >= 0 && offset < prefixLength)
+                    {
+                        int n = (int)Math.Min(dst.Length, prefixLength - offset);
+                        prefix.AsSpan((int)offset, n).CopyTo(dst);
+                        return n;
+                    }
+
                     long at = f.Seek(offset, 0);
                     return at < 0 ? at : f.Read(dst);
                 }
