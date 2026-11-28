@@ -479,6 +479,11 @@ public unsafe partial class Kernel : Sys.Kernel
         Log.WriteString($"[UserMode] work: result 0x{result:X}, {runs} runs for {WorkRounds} requests, worst {worst * 1_000_000 / Stopwatch.Frequency} us, {KernelCpus.Count} CPUs\n");
         Equal(0, result);
         Assert.True(runs >= WorkRounds, "every request ran the handler");
+        if (KernelCpus.Count >= 2)
+        {
+            // The kick: well below the 10 ms tick of the other CPU.
+            Assert.True(worst * 1000 / Stopwatch.Frequency < 2, "requests run before the other CPU's next tick");
+        }
 #if COSMOS_TEST_HOOKS
         int kicks = Volatile.Read(ref Core.CPU.UserMode.TestWorkKicks) - kicksBefore;
         Log.WriteString($"[UserMode] work: {kicks} marks set\n");
@@ -492,24 +497,74 @@ public unsafe partial class Kernel : Sys.Kernel
         WorkSlot = 0;
         Volatile.Write(ref s_workRuns, 0);
         worst = 0;
-        Runner runner = new(13, WorkPage);
-        WaitProgress(WorkPage);
-        WaitProgress(WorkPage);
-        Equal(0, Volatile.Read(ref WorkSlot));
-        for (int round = 1; round <= WorkRounds; round++)
+
+        // With two CPUs: main on CPU 0 waits actively, the program computes on CPU 1, so each
+        // request must arrive by the kick, not by CPU 1's next tick. With one: by a tick or switch.
+        bool two = KernelCpus.Count >= 2;
+        var mainSet = ThreadAffinity.Current;
+        SchedulerThread? scheduler = null;
+        ulong result = 0;
+        int done = 0;
+        try
         {
-            long sent = Stopwatch.GetTimestamp();
-            Core.CPU.UserMode.RequestWork(runner.Scheduler);
-            WaitFor(() => Volatile.Read(ref WorkSlot) >= (ulong)round, "the handler ran");
-            worst = Math.Max(worst, Stopwatch.GetTimestamp() - sent);
-            if (round < WorkRounds)
+            if (two)
             {
-                // The program runs between two requests, so they are separate.
-                WaitProgress(WorkPage);
+                ThreadAffinity.Current = Sys.Threading.CpuSet.Single(0);
             }
+
+            var thread = new SysThread(() =>
+            {
+                if (two)
+                {
+                    ThreadAffinity.Current = Sys.Threading.CpuSet.Single(1);
+                }
+
+                Volatile.Write(ref scheduler, SchedulerManager.CurrentThread);
+                result = Run(13, WorkPage);
+                Volatile.Write(ref done, 1);
+            });
+            thread.Start();
+            WaitProgress(WorkPage);
+            WaitProgress(WorkPage);
+            SchedulerThread target = Volatile.Read(ref scheduler)!;
+            if (two)
+            {
+                Equal(1, target.CpuId);
+            }
+
+            Equal(0, Volatile.Read(ref WorkSlot));
+            for (int round = 1; round <= WorkRounds; round++)
+            {
+                long sent = Stopwatch.GetTimestamp();
+                Core.CPU.UserMode.RequestWork(target);
+                if (two)
+                {
+                    while (Volatile.Read(ref WorkSlot) < (ulong)round)
+                    {
+                        Assert.True(Stopwatch.GetElapsedTime(sent).TotalMilliseconds < WaitMs, "the handler ran");
+                    }
+                }
+                else
+                {
+                    WaitFor(() => Volatile.Read(ref WorkSlot) >= (ulong)round, "the handler ran");
+                }
+
+                worst = Math.Max(worst, Stopwatch.GetTimestamp() - sent);
+                if (round < WorkRounds)
+                {
+                    // The program runs between two requests, so they are separate.
+                    WaitProgress(WorkPage);
+                }
+            }
+
+            WaitFor(() => Volatile.Read(ref done) != 0, "the program left");
+            thread.Join();
+        }
+        finally
+        {
+            ThreadAffinity.Current = mainSet;
         }
 
-        ulong result = runner.Wait();
         runs = Volatile.Read(ref s_workRuns);
         return result;
     }
