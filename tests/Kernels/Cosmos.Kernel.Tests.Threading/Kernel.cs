@@ -301,6 +301,11 @@ public class Kernel : Sys.Kernel
         // ZehOS patch smt-sibling-yield, see PATCHES.md
         TR.RunIf(smp, "VoluntaryMove_RunningThread_MovesAndKeepsSet", VoluntaryMoveCells.MovesRunningThreadAndKeepsSet, OneCpuCell);
         TR.RunIf(smp, "VoluntaryMove_BusyTarget_IsStale", VoluntaryMoveCells.BusyTargetIsStale, OneCpuCell);
+        // ZehOS N4-SMP S0: Monitor Enter/Exit und Wait/Pulse über CPUs, siehe MonitorCrossCpuCells.cs
+        TR.RunIf(smp, "Monitor_WaitPulseAll_PingPongAcrossCpus", MonitorCrossCpuCells.WaitPulseAllPingPong, OneCpuCell);
+        TR.RunIf(smp, "Monitor_WaitPulse_PingPongAcrossCpus", MonitorCrossCpuCells.WaitPulsePingPong, OneCpuCell);
+        TR.RunIf(smp, "Monitor_WaitPulse_PingPongOtherCpuPair", MonitorCrossCpuCells.WaitPulsePingPongOtherPair, OneCpuCell);
+        TR.RunIf(smp, "Monitor_EnterExit_ContendedAcrossCpus", MonitorCrossCpuCells.EnterExitContendedAcrossCpus, OneCpuCell);
         Sys.Threading.ThreadAffinity.Current = mainSet;
         // Main on a thread of its own (CosmosOS/Cosmos#3344, SMP phase 5b): its stack is not
         // the boot stack, it parks on a contended mutex and in CoreLib's waits, and the
