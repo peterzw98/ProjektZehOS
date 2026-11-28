@@ -1,8 +1,6 @@
-#pragma warning disable COSMOS0001 // UserPageTable gilt als Vorschau (wie in CosmosLinuxRun).
 using System;
 using System.Collections.Generic;
 using System.IO;
-using Cosmos.Kernel.Core.Memory;
 using Cosmos.Kernel.System.FileSystem;
 using ProjektZeh.Processes;
 using ProjektZeh.Security;
@@ -42,7 +40,7 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         using IVfsDirectoryHandle directory = OpenDirectoryStorageLocked(parent);
         IVfsInode inode = directory.Inode;
         IVfsInode? child = null;
-        if (!WithReclaim(() => inode.InodeOperations.Lookup(inode, name, out child)))
+        if (!inode.InodeOperations.Lookup(inode, name, out child))
         {
             return LinuxNodeKind.Missing;
         }
@@ -53,7 +51,7 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         // Unlesbare Attribute: ablehnen statt einen Symlink zu übersehen.
         VfsStat stat = default;
         IVfsInode attrNode = child!;
-        if (!WithReclaim(() => attrNode.InodeOperations.GetAttr(attrNode, out stat)))
+        if (!attrNode.InodeOperations.GetAttr(attrNode, out stat))
         {
             throw new IOException("Attribute nicht lesbar.");
         }
@@ -91,34 +89,10 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         return inode.InodeOperations.Symlink(inode, name, target, out _);
     }
 
-    /// <summary>
-    /// V51: Cosmos-FAT meldet einen Allokationsfehler nur als false (Ladybird 384M: "Spawn RequestServer ENOENT"). Scheitert ein Versuch bei
-    /// knappem Speicher, wird die Sperre kurz gelöst, einmal gesammelt (FrameReclaim.Retry, ohne Sperre, wie dessen Doku verlangt) und der
-    /// Versuch genau einmal unter der Sperre wiederholt; das Ergebnis dieses zweiten Versuchs zählt.
-    /// Keine Heuristik: eine wirklich fehlende Datei bleibt auch bei knappem Speicher -ENOENT. Gast belegt: siehe PR.
-    /// </summary>
-    private static bool WithReclaim(Func<bool> attempt)
-    {
-        if (attempt())
-        {
-            return true;
-        }
-
-        if (!FrameReclaim.IsNearReserve(UserPageTable.FreePages, UserPageTable.ReservedPages))
-        {
-            return false;
-        }
-
-        // Der erste Versuch lief schon; Retry bekommt deshalb einen leeren Versuch und liefert nur die gebremste Sammlung (Sturmbremse, Fehler geschluckt).
-        StorageLock.RunUnlocked(static () => FrameReclaim.Retry(static () => false, static () => GC.Collect(),
-            static () => System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency));
-        return attempt();
-    }
-
     private static IVfsDirectoryHandle OpenDirectoryStorageLocked(string parent)
     {
         IVfsDirectoryHandle? directory = null;
-        if (!WithReclaim(() => VfsManager.TryOpenDirectory(parent, out directory)) || directory is null)
+        if (!VfsManager.TryOpenDirectory(parent, out directory) || directory is null)
         {
             throw new DirectoryNotFoundException("Elternverzeichnis nicht lesbar.");
         }
