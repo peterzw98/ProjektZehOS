@@ -28,7 +28,7 @@ namespace Cosmos.Kernel.Tests.UserMode;
 /// </summary>
 public unsafe partial class Kernel : Sys.Kernel
 {
-    private const int ExpectedTestCount = 23;
+    private const int ExpectedTestCount = 24;
     private const string NoRing3 = "no ring 3 on this architecture";
 
     protected override void BeforeRun()
@@ -59,6 +59,7 @@ public unsafe partial class Kernel : Sys.Kernel
         TR.Run("RequestLeave_EndsLoop_WithCollections", TestRequestLeave);
         TR.Run("TickHook_NeverSeesRing3", TestTickHook);
         TR.RunIf(KernelCpus.Count >= 4, "Nmi_InRing3_Returns", TestNmi, "needs four CPUs");
+        TR.RunIf(KernelCpus.Count >= 2, "RequestLeave_OtherCpu_BeforeTick", TestRequestLeaveKick, "needs two CPUs");
 #else
         TR.Run("Initialize_NotSupported", () => Assert.True(!Core.CPU.UserMode.Initialize() && !Core.CPU.UserMode.IsSupported, "not supported"));
         for (int i = 1; i < ExpectedTestCount; i++)
@@ -427,6 +428,81 @@ public unsafe partial class Kernel : Sys.Kernel
             Core.CPU.UserMode.RequestLeave(runner.Scheduler, 0x4000 + (ulong)round);
             Equal(0x4000 + (ulong)round, runner.Wait());
         }
+    }
+
+    private const int KickRounds = 200;
+    private static long s_leftAt;
+
+    // ZehOS patch user-leave-kick: a request reaches a program in ring 3 on another CPU at once,
+    // not with that CPU's next tick. Without the interrupt the wait spreads over the tick
+    // period, so about half the rounds would take longer than half a tick.
+    private static void TestRequestLeaveKick()
+    {
+        ulong tickNs = SchedulerDiagnostics.TickPeriodNs;
+        Assert.True(tickNs > 0, "the timer ticks");
+        long halfTick = (long)(tickNs / 2) * Stopwatch.Frequency / 1_000_000_000;
+        Core.Scheduler.CpuSet mainSet = ThreadAffinity.Current;
+        try
+        {
+            ThreadAffinity.Current = Core.Scheduler.CpuSet.Single(0);
+#if COSMOS_TEST_HOOKS
+            Volatile.Write(ref Core.CPU.UserMode.TestSkipKick, true);
+            int slowSkipped = LeaveRounds(halfTick, out long worstSkipped);
+            Volatile.Write(ref Core.CPU.UserMode.TestSkipKick, false);
+            Log.WriteString($"[UserMode] without kick: tick {tickNs} ns, {slowSkipped}/{KickRounds} after half a tick, worst {worstSkipped * 1_000_000 / Stopwatch.Frequency} us\n");
+            Assert.True(slowSkipped > KickRounds / 10, "without the kick requests wait for the tick (counter-probe)");
+#endif
+            int slow = LeaveRounds(halfTick, out long worst);
+            Log.WriteString($"[UserMode] kick: tick {tickNs} ns, {slow}/{KickRounds} after half a tick, worst {worst * 1_000_000 / Stopwatch.Frequency} us\n");
+            Assert.True(slow <= KickRounds / 20, "requests end before the next tick");
+        }
+        finally
+        {
+#if COSMOS_TEST_HOOKS
+            Volatile.Write(ref Core.CPU.UserMode.TestSkipKick, false);
+#endif
+            ThreadAffinity.Current = mainSet;
+        }
+    }
+
+    // Main on CPU 0 asks a program spinning in ring 3 on CPU 1 to leave; counts the rounds
+    // whose leave took longer than the limit.
+    private static int LeaveRounds(long limit, out long worst)
+    {
+        int slow = 0;
+        worst = 0;
+        for (int round = 0; round < KickRounds; round++)
+        {
+            Slot(0) = 0;
+            SchedulerThread? scheduler = null;
+            ulong result = 0;
+            Volatile.Write(ref s_leftAt, 0);
+            var thread = new SysThread(() =>
+            {
+                ThreadAffinity.Current = Core.Scheduler.CpuSet.Single(1);
+                Volatile.Write(ref scheduler, SchedulerManager.CurrentThread);
+                result = Run(5, 0);
+                Volatile.Write(ref s_leftAt, Stopwatch.GetTimestamp());
+            });
+            thread.Start();
+            WaitProgress(0);
+            WaitProgress(0);
+            SchedulerThread target = Volatile.Read(ref scheduler)!;
+            Equal(1, target.CpuId);
+
+            long sent = Stopwatch.GetTimestamp();
+            Core.CPU.UserMode.RequestLeave(target, 0x5000 + (ulong)round);
+            thread.Join();
+            Equal(0x5000 + (ulong)round, result);
+            long took = Volatile.Read(ref s_leftAt) - sent;
+            worst = Math.Max(worst, took);
+            if (took > limit)
+            {
+                slow++;
+            }
+        }
+
+        return slow;
     }
 
     private static int s_hookCalls;

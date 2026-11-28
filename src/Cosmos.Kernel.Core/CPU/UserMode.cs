@@ -147,7 +147,8 @@ public static unsafe class UserMode
     /// From any thread: <see cref="Enter"/> of <paramref name="thread"/> returns
     /// <paramref name="exitValue"/>, at the latest with its next interrupt in ring 3. The first
     /// request counts until it is used up; one to a thread outside of <see cref="Enter"/> ends
-    /// its next one.
+    /// its next one. A thread in ring 3 on another CPU gets that interrupt right away
+    /// (<see cref="Kick"/>), not only with its CPU's next tick.
     /// </summary>
     public static void RequestLeave(SchedulerThread thread, ulong exitValue)
     {
@@ -155,9 +156,64 @@ public static unsafe class UserMode
         if (Interlocked.CompareExchange(ref thread._userLeaveState, 1, 0) == 0)
         {
             thread._userLeaveValue = exitValue;
-            Volatile.Write(ref thread._userLeaveState, 2);
+
+            // ZehOS patch user-leave-kick, see PATCHES.md
+            // Interlocked, not volatile: a full barrier, so the state is visible before Kick
+            // reads where the thread runs. A thread that moves meanwhile reads it in Prepare on
+            // its new CPU; without the barrier the store could still sit in this CPU's buffer.
+            Interlocked.Exchange(ref thread._userLeaveState, 2);
+            Kick(thread);
         }
     }
+
+    // ZehOS patch user-leave-kick, see PATCHES.md
+    /// <summary>
+    /// From any thread: interrupts the CPU <paramref name="thread"/> runs on, when that is
+    /// another CPU and the thread is inside <see cref="Enter"/>, so that its way back to ring 3
+    /// passes <see cref="Prepare"/> now. Nothing otherwise: a thread that does not run passes it
+    /// on its resume, the calling thread on its own way back. What the caller wrote before is
+    /// visible to that pass. Allocation-free, no lock; any context, also masked.
+    /// </summary>
+    public static void Kick(SchedulerThread thread)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+
+        // Pairs with the queue lock the resume takes: a write of the caller before this barrier
+        // is seen either by the CPU read below or by the one the thread is resumed on.
+        Interlocked.MemoryBarrier();
+        if (Volatile.Read(ref thread._userKernelRsp) == 0 || thread.State != SchedulerThreadState.Running)
+        {
+            return;
+        }
+
+        // A snapshot: a thread that moved meanwhile costs one needless reschedule on its old
+        // CPU, and its new one resumes it through Prepare.
+        uint cpu = thread.CpuId;
+        if (cpu == SchedulerManager.GetCurrentCpuId() || cpu >= SchedulerManager.CpuCount
+            || Volatile.Read(ref PerCpuBlock.At(cpu).Online) == 0)
+        {
+            return;
+        }
+
+#if COSMOS_TEST_HOOKS
+        if (Volatile.Read(ref TestSkipKick))
+        {
+            return;
+        }
+#endif
+        using (InternalCpu.DisableInterruptsScope())
+        {
+            InterruptManager.SendReschedule(PerCpuBlock.At(cpu).HardwareId);
+        }
+    }
+
+#if COSMOS_TEST_HOOKS
+    // ZehOS patch user-leave-kick, see PATCHES.md
+    // Only in the test build (COSMOS_TEST_DEFINES=COSMOS_TEST_HOOKS): Kick sends nothing, so a
+    // request waits for the target CPU's next tick as before. The suite's counter-check uses it
+    // to show that its cell sees the interrupt.
+    internal static bool TestSkipKick;
+#endif
 
     /// <summary>
     /// Sets the calling thread's FS base in ring 3, from the next return there on. A program that

@@ -181,6 +181,7 @@
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.Enter(ulong rip, ulong rsp) -> ulong
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.Initialize() -> bool
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.IsSupported.get -> bool
+[COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.Kick(Cosmos.Kernel.Core.Scheduler.SchedulerThread! thread) -> void
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.LeaveCurrent(ulong exitValue) -> void
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.RequestLeave(Cosmos.Kernel.Core.Scheduler.SchedulerThread! thread, ulong exitValue) -> void
 [COSMOS0001]static Cosmos.Kernel.Core.CPU.UserMode.SetFsBase(ulong address) -> void
