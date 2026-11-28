@@ -58,10 +58,10 @@ public sealed class LinuxSpawnTests
         public UserImage? Image;
         public readonly List<Pages> Created = new();
 
-        public Fixture()
+        public Fixture(Func<ILinuxFileStore, ILinuxFileStore>? wrap = null)
         {
             var term = new TerminalDescriptor(new Lines());
-            Parent = new LinuxUserProcess(new Pages(), term, Pid, 64 << 20, new Host(), new LinuxFileSystem(Store, term));
+            Parent = new LinuxUserProcess(new Pages(), term, Pid, 64 << 20, new Host(), new LinuxFileSystem(wrap?.Invoke(Store) ?? Store, term));
             Parent.StartThread = _ => true;
             Parent.StartVfork = (c, stack) =>
             {
@@ -167,6 +167,56 @@ public sealed class LinuxSpawnTests
         var ids = new HashSet<long> { Pid, t1, f.Child!.Pid, t2 };
         Assert.AreEqual(4, ids.Count, "PID " + f.Child.Pid + " TIDs " + t1 + "," + t2);
         Assert.AreEqual(Pid + 1, t1, "erste TID wie bisher PID + 1");
+    }
+
+    /// <summary>Zählt die Lesevorgänge (ReadAt) auf Dateien des Speichers, sonst reicht er alles durch.</summary>
+    private sealed class CountingStore(ILinuxFileStore inner) : ILinuxFileStore
+    {
+        public int Reads;
+
+        public StringComparison NameComparison => inner.NameComparison;
+        public long Lookup(string path, out LinuxStoreNode node) => inner.Lookup(path, out node);
+        public long ReadLink(string path, out string target) => inner.ReadLink(path, out target);
+        public long List(string path, out string[] names) => inner.List(path, out names);
+        public long OpenFile(string path, bool write, out ILinuxStoreFile? file)
+        {
+            long r = inner.OpenFile(path, write, out ILinuxStoreFile? f);
+            file = f == null ? null : new CountingFile(this, f);
+            return r;
+        }
+
+        public long CreateFile(string path, uint mode, out ILinuxStoreFile? file) => inner.CreateFile(path, mode, out file);
+        public long CreateDirectory(string path, uint mode) => inner.CreateDirectory(path, mode);
+        public long CreateSymlink(string path, string target) => inner.CreateSymlink(path, target);
+        public long DeleteFile(string path) => inner.DeleteFile(path);
+        public long DeleteDirectory(string path) => inner.DeleteDirectory(path);
+        public long Rename(string from, string to) => inner.Rename(from, to);
+    }
+
+    private sealed class CountingFile(CountingStore store, ILinuxStoreFile inner) : ILinuxStoreFile
+    {
+        public long Length() => inner.Length();
+        public long ReadAt(long offset, Span<byte> dst) { store.Reads++; return inner.ReadAt(offset, dst); }
+        public long WriteAt(long offset, ReadOnlySpan<byte> src) => inner.WriteAt(offset, src);
+        public long SetLength(long length) => inner.SetLength(length);
+        public long Close() => inner.Close();
+    }
+
+    [TestMethod]
+    public void ExecveLiestKopfDerDateiMitEinemLesevorgang()
+    {
+        // N2-Z: Jeder Lesevorgang der Platte kostet im Kern Puffer; Kopf und Programmtabelle kommen aus einem Lesevorgang am Anfang.
+        CountingStore? counting = null;
+        var f = new Fixture(store => counting = new CountingStore(store));
+        f.WriteFile("/hello", Elf());
+        ulong path = f.Strings(f.Mem + (2 * Page), "/hello") + 0x100;
+        ulong argv = f.Strings(f.Mem + (4 * Page), "/hello");
+        ulong envp = f.Strings(f.Mem + (6 * Page), "A=1");
+        Fixture.Call(f.Parent, LinuxSyscalls.Clone, Spawn, 0);
+        counting!.Reads = 0;
+        Assert.AreEqual(0, Fixture.Call(f.Child!, LinuxSyscalls.Execve, path, argv, envp));
+        Assert.AreEqual(1, counting.Reads, "Kopf, Programmtabelle und Rückgabepuffer aus einem Lesevorgang");
+        Assert.AreEqual(Code, f.Image!.Entry);
     }
 
     [TestMethod]
