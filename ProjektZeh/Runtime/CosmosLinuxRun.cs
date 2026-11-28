@@ -1626,6 +1626,13 @@ internal static unsafe class CosmosLinuxRun
             try
             {
                 process.ReleaseMemoryBeforeReport(); // V50: erst der Speicher, dann der Zombie (wie exit_mm vor exit_notify)
+
+                // N4-S2: Seit dem Cosmos-Abschuss sollte die Tabelle kein Aufheben mehr ablehnen; kommt es doch vor, steht es im Protokoll.
+                int refused = process.RefusedUnmaps;
+                if (refused > 0)
+                {
+                    Serial("[linux-run] pid " + process.Pid + " Tabelle lehnte Aufheben ab: " + refused + " Seiten");
+                }
             }
             catch (Exception exception)
             {
@@ -1882,7 +1889,7 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>Seiten über eine <see cref="UserPageTable"/>; Frames liest und schreibt der Kernel über das HHDM.</summary>
-    private sealed class CosmosUserPages : IUserPages, IUserPagesQuery
+    private sealed class CosmosUserPages : IUserPages, IUserPagesQuery, IUserPagesRange
     {
         private readonly UserPageTable _table;
 
@@ -1901,6 +1908,21 @@ internal static unsafe class CosmosLinuxRun
             access != MapAccess.None && _table.TryMap(page, frame, access == MapAccess.ReadWrite, access == MapAccess.ReadExecute);
 
         public bool Unmap(ulong page) => _table.Unmap(page) != 0 || !_table.TryTranslate(page, false, out _);
+
+        // N4-S2: ein Abschuss für alle Seiten (Cosmos tlb-shootdown). Frame 0 heißt "war nicht abgebildet"; abgelehnt ist eine Seite
+        // nur, wenn sie danach noch abgebildet ist (wie Unmap oben).
+        public void UnmapRange(ulong start, int count, Span<bool> gone)
+        {
+            Span<ulong> frames = stackalloc ulong[count];
+            _ = _table.UnmapRange(start, count, frames);
+            for (int i = 0; i < count; i++)
+            {
+                gone[i] = frames[i] != 0 || !_table.TryTranslate(start + (ulong)i * AddressSpaceMap.PageSize, false, out _);
+            }
+        }
+
+        public bool ProtectRange(ulong start, int count, MapAccess access) =>
+            access != MapAccess.None && _table.TryProtectRange(start, count, access == MapAccess.ReadWrite, access == MapAccess.ReadExecute);
 
         public bool MapsTo(ulong page, ulong frame, bool write) =>
             _table.TryTranslate(page, write, out ulong physical) && (physical & ~(AddressSpaceMap.PageSize - 1)) == frame;

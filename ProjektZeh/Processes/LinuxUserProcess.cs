@@ -43,6 +43,20 @@ internal interface IUserPagesQuery
 }
 
 /// <summary>
+/// N4-S2, optional neben <see cref="IUserPages"/>: zusammenhängende Seiten mit einem TLB-Abschuss für alle statt einem je Seite. Auf
+/// mehreren CPUs wartet jeder Abschuss auf die Bestätigung jeder CPU, die die Tabelle geladen hat; munmap über viele Seiten zahlte sonst
+/// diese Wartezeit je Seite. Bedeutung wie die Einzelaufrufe: Nach der Rückkehr erreicht keine CPU die Seite mehr über den alten Eintrag.
+/// </summary>
+internal interface IUserPagesRange
+{
+    /// <summary>Wie <see cref="IUserPages.Unmap"/> für <paramref name="count"/> Seiten ab <paramref name="start"/>; <paramref name="gone"/>[i]: Seite danach nicht (mehr) abgebildet.</summary>
+    void UnmapRange(ulong start, int count, Span<bool> gone);
+
+    /// <summary>Setzt den Zugriff (nicht <see cref="MapAccess.None"/>) aller Seiten; false ohne jede Änderung, wenn eine nicht abgebildet ist oder die Tabelle ablehnt.</summary>
+    bool ProtectRange(ulong start, int count, MapAccess access);
+}
+
+/// <summary>
 /// Ein Linux-Prozess mit einem Thread (V3 des Plans <c>2026-11-26-ladybird-vorstellung.md</c>): Speicher, brk, anonyme
 /// Abbildungen, Deskriptoren 0 bis 2 auf das Terminal und Dateien über ein <see cref="ILinuxFileSystem"/> (V8: Deskriptortabelle und
 /// Arbeitsverzeichnis, <see cref="ILinuxFiles"/>). Die Bereiche führt <see cref="AddressSpaceMap"/>; Frames kommen erst bei
@@ -1159,21 +1173,88 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
             return false;
         }
 
+        // Frame weg, Bereich bleibt: der nächste Zugriff füllt die Seite über den Seitenfehler mit Nullen.
+        return UnmapAndDrop(PagesWithFrames(addr, addr + len), addr, addr + len, stuck: null);
+    }
+
+    /// <summary>
+    /// Hebt die Seiten (mit Frame, in [start, end)) auf und gibt danach ihre Frames zurück (<see cref="DropFrame"/>); mit
+    /// <see cref="IUserPagesRange"/> ein Abschuss je Folge zusammenhängender Seiten. Eine Seite, die abgebildet bleibt, behält ihren
+    /// Frame und landet in <paramref name="stuck"/>; false, wenn es eine gab. Unter _memGate.
+    /// </summary>
+    private bool UnmapAndDrop(List<ulong> pages, ulong start, ulong end, List<ulong>? stuck)
+    {
         bool ok = true;
-        foreach (ulong page in PagesWithFrames(addr, addr + len))
+        if (_pages is IUserPagesRange range)
         {
-            // Frame weg, Bereich bleibt: der nächste Zugriff füllt die Seite über den Seitenfehler mit Nullen.
-            if (_pages.Unmap(page))
+            Span<bool> gone = stackalloc bool[RangeChunk];
+            foreach ((ulong first, int count) in FrameRuns(pages, start, end))
             {
-                DropFrame(page); // V17: geteilte Seiten geben nur ihren Verweis zurück, der Inhalt bleibt in der memfd
+                range.UnmapRange(first, count, gone);
+
+                // Erst nach dem Abschuss des ganzen Stücks frei: Vorher könnte eine andere CPU den Frame noch über ihren TLB erreichen.
+                for (int i = 0; i < count; i++)
+                {
+                    ok &= DropOrKeep(first + (ulong)i * Page, gone[i], stuck);
+                }
             }
-            else
-            {
-                ok = false;
-            }
+
+            return ok;
+        }
+
+        foreach (ulong page in pages)
+        {
+            ok &= DropOrKeep(page, _pages.Unmap(page), stuck);
         }
 
         return ok;
+    }
+
+    private bool DropOrKeep(ulong page, bool gone, List<ulong>? stuck)
+    {
+        if (gone)
+        {
+            DropFrame(page); // V17: geteilte Seiten geben nur ihren Verweis zurück, der Inhalt bleibt in der memfd
+            return true;
+        }
+
+        _refusedUnmaps++;
+        stuck?.Add(page);
+        return false;
+    }
+
+    /// <summary>
+    /// N4-S2: Die Seiten mit Frame als Folgen zusammenhängender Seiten in [start, end), je höchstens <see cref="RangeChunk"/> lang. Ohne
+    /// Sortieren: Eine Folge beginnt dort, wo die Seite davor keinen Frame hat oder vor <paramref name="start"/> liegt.
+    /// </summary>
+    private List<(ulong First, int Count)> FrameRuns(List<ulong> pages, ulong start, ulong end)
+    {
+        var runs = new List<(ulong First, int Count)>();
+        foreach (ulong page in pages)
+        {
+            if (page > start && _frames.ContainsKey(page - Page))
+            {
+                continue;
+            }
+
+            ulong first = page;
+            int count = 1;
+            for (ulong next = page + Page; next < end && _frames.ContainsKey(next); next += Page)
+            {
+                if (count == RangeChunk)
+                {
+                    runs.Add((first, count));
+                    first = next;
+                    count = 0;
+                }
+
+                count++;
+            }
+
+            runs.Add((first, count));
+        }
+
+        return runs;
     }
 
     public bool Unmap(ulong addr, ulong len)
@@ -1333,6 +1414,25 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     }
 
     private bool _memoryDestroyed;
+
+    // N4-S2: Seiten, deren Aufheben die Tabelle abgelehnt hat (Frame bleibt beim Prozess, Seite gesperrt). Sollte mit dem
+    // Cosmos-Abschuss nicht mehr vorkommen; der Lauf meldet die Zahl am Ende. Unter _memGate.
+    private int _refusedUnmaps;
+
+    /// <summary>N4-S2: Zahl der Seiten, deren Aufheben die Tabelle abgelehnt hat.</summary>
+    public int RefusedUnmaps
+    {
+        get
+        {
+            lock (_memGate)
+            {
+                return _refusedUnmaps;
+            }
+        }
+    }
+
+    /// <summary>N4-S2: Höchstzahl Seiten je Bereichsaufruf; begrenzt den Stack für die Ergebnisse (Cosmos braucht 8 Bytes je Seite).</summary>
+    private const int RangeChunk = 64;
 
     /// <summary>
     /// V50: Dateien schließen und Speicher freigeben, <b>bevor</b> das Ende dem Elternprozess gemeldet wird. Linux gibt den Adressraum in
@@ -1525,20 +1625,10 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// <summary>Gibt [start, end) frei; start und end ausgerichtet und im Adressraum der Karte.</summary>
     private bool Release(ulong start, ulong end)
     {
+        // Bleibt eine Seite abgebildet (die Tabelle lehnt ab), darf der Frame nicht frei werden: er bleibt beim Prozess,
+        // bis Destroy die Tabelle aufgelöst hat.
         List<ulong> stuck = new();
-        foreach (ulong page in PagesWithFrames(start, end))
-        {
-            // Bleibt die Seite abgebildet (die Tabelle lehnt ab), darf der Frame nicht frei werden: er bleibt beim Prozess,
-            // bis Destroy die Tabelle aufgelöst hat.
-            if (_pages.Unmap(page))
-            {
-                DropFrame(page);
-            }
-            else
-            {
-                stuck.Add(page);
-            }
-        }
+        _ = UnmapAndDrop(PagesWithFrames(start, end), start, end, stuck);
 
         if (!_map.Release(start, end - start).IsOK())
         {
