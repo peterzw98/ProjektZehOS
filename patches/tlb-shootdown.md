@@ -1,6 +1,6 @@
 # tlb-shootdown
 
-- **Commit:** offen (Branch `task/lb-n4-s1-tlb`, Basis `story/ladybird-cosmos` a8d2d3897 mit S0); Entwurf `docs/superpowers/specs/2026-11-28-ladybird-n4-smp-entwurf.md` @ 2c6a43b1, Paket S1
+- **Commit:** `story/ladybird-cosmos` 472d2c50f (Merge von `task/lb-n4-s1-tlb` @ 90e5d4efc, Basis a8d2d3897 mit S0); Entwurf `docs/superpowers/specs/2026-11-28-ladybird-n4-smp-entwurf.md` @ 2c6a43b1, Paket S1
 - **Dateien:** `src/Cosmos.Kernel.Core/Memory/UserPageTable.cs`, `src/Cosmos.Kernel.Core/Scheduler/PerCpuState.cs` (`_tlbEpoch`), `src/Cosmos.Kernel.Core/CPU/IInterruptController.cs`, `src/Cosmos.Kernel.Core/CPU/InterruptManager.cs`, `src/Cosmos.Kernel.Core.X64/Cpu/X64InterruptController.cs` (Vektor `0xF2`), `src/Cosmos.Kernel.Core.ARM64/Cpu/ARM64InterruptController.cs` (leer, keine Tabellen), `src/Cosmos.Kernel.Core/PublicAPI.Unshipped.txt`, `tests/Kernels/Cosmos.Kernel.Tests.UserPaging/Kernel.cs`
 - **Grund:** ZehOS N4-SMP: Threads eines Linux-Laufs auf mehreren CPUs. Bisher (user-cr3, Option B) lehnten `Unmap` und `TryProtect` ab, solange eine andere CPU die Tabelle in CR3 hielt. Jetzt:
   - `_active` ist eine CPU-Maske (4 × 64 Bit wie `CpuSet`) statt eines Zählers mit Sperrbit `Changing`. `SwitchTo` setzt das Bit vor dem CR3-Schreiben (interlocked) und löscht das der alten Tabelle danach; T → T schreibt nichts und lässt das Bit stehen. `EnterActive`, `TryBeginChange`, `EndChange` entfallen, ein Wechsel wartet nie mehr.
@@ -19,7 +19,11 @@
   - Ergebnis: kein Aufrufer mit IF=0 oder im Interruptkontext. Der Fall bleibt durch die Panik abgesichert.
 - **Entfernter ZehOS-Umweg:** keiner in S1. Die Bindung an eine CPU (`CosmosLinuxRun.cs:756-762`) bleibt bis S2; der Zweig „Tabelle lehnt ab“ in `LinuxUserProcess` bleibt als Schutz.
 - **Grenzen:** `Dispose` wartet weiter ohne Anstoß auf leere Maske (Anstoß per `0xF0` gehört zu S2, wenn Threads eines Laufs auf mehreren CPUs laufen). Kein PCID, xAPIC nur (wie `SendIpi`). Der Abschuss leert immer den ganzen Benutzer-TLB der Ziel-CPU.
-- **Prüfung** (MSI, QEMU KVM, Werkzeuge 3.0.97-zehos.0.g62c98d6, Testkern-Stand 3. Commit):
+- **Prüfung** (MSI, QEMU KVM, Werkzeuge 3.0.97-zehos.0.g62c98d6 = Kernelcode von 90e5d4efc; 62c98d6..90e5d4efc ändert nur Tests und Doku):
   - `UserPaging` `bare` und `bare+smp4`: 44 bestanden, 0 Fehler, 6 übersprungen von 50 (übersprungen: Zellen mit mehreren CPUs auf `bare`). Neu/geändert: `ActiveOnOtherCpu_ShootdownReachesIt` (Worker auf anderer CPU hält den Eintrag im TLB, 2000 Runden Unmap → Marke in den alten Frame → neuer Frame: Worker liest nie die Marke), `Protect_RacingSwitches_AllAccepted` (20 000 Änderungen, keine abgelehnt), `Shootdown_TwoTriggersOnTable_NoHang` (zwei gebundene Auslöser auf zwei CPUs, je 10 000 Unmap, dritte CPU auf der Tabelle: 19 959 Abschüsse in 39 ms, längster 31 µs).
   - Gegenprobe Testbau `COSMOS_TEST_DEFINES=COSMOS_TEST_HOOKS` (`TestSkipShootdown` lässt IPI und Warten aus): Worker liest die Marke über den alten Eintrag (1 veralteter Lesezugriff, Zelle verlangt > 0), danach mit Abschuss 0; 44/0/6.
-  - Offen: TCG, Suiten Threading/Interrupts/Smp/GarbageCollector/UserMode, ZehOS-Gasttests `tlb_munmap`/`tlb_mprotect`, VMware, Hardware.
+  - Suiten `bare` und `bare+smp4` (KVM), je 0 Fehler: Threading 221/226 (11 übersprungen), Smp 67/88 (21), Interrupts 41/42 (1), GarbageCollector 220 bestanden/214 gezählt (4 übersprungen, Zählung der Engine), UserMode 45/46 (1). `UserPaging` unter TCG (`COSMOS_NO_KVM=1`, `TIMEOUT=300`) `bare` und `bare+smp4` 44/0/6.
+  - ZehOS N4-S2 (`task/lb-n4-s2` d3ea80f0, Pin 472d2c50f, `zehos.linuxsmp=1`, KVM smp4): `tlb_munmap` und `tlb_mprotect` je 300 Runden ohne veraltete Lesung, `smp_two_cpus` zwei CPUs; Satz `s3` bestanden.
+  - Vorgabe `ShootdownTimeoutMs` 5000 ms ist nur unter KVM belegt; unter TCG und unter Last (vCPU-Entzug) mit `zehos.tlbtimeout` anheben, falls eine Panik ohne Kernelfehler auftritt.
+  - Die Panik bei IF=0 greift auch, wenn keine andere CPU in der Maske steht (strenger als nötig): Sie fängt den falschen Kontext schon auf einer CPU, bevor er auf mehreren zum Deadlock wird; das Aufrufer-Audit oben deckt alle heutigen Aufrufer.
+  - Offen: TCG für die übrigen Suiten, Gegenprobe der ZehOS-Gasttests mit `TestSkipShootdown`, VMware, Hardware.
