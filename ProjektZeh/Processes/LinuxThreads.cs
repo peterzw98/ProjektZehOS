@@ -267,68 +267,84 @@ internal sealed class LinuxFutexTable
             _buckets[b].Waiters.Add(me);
         }
 
+        long result = -LinuxSyscalls.EINTR;
         try
         {
-            while (true)
+            result = WaitQueued(memory, address, expected, deadlineNanos, shared, me, w);
+        }
+        finally
+        {
+            // S4-P2: Zwischen der letzten Prüfung von Woken und dem Austragen kann ein Wecker den Wartenden noch wählen und zählen. Remove
+            // liest Woken unter der Eimersperre, unter der jedes Wecken geschieht; danach steht er in keinem Eimer mehr. Ein gezähltes Wecken
+            // liefert deshalb 0 statt -ETIMEDOUT oder -EINTR (Linux: unqueue_me). Bei einer Ausnahme bleibt es beim Austragen.
+            if (Remove(me) && result != 0)
             {
-                lock (me)
+                result = 0;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Schlafschleife von <see cref="Wait"/>, nachdem der Wartende eingereiht ist; austragen tut der Aufrufer.</summary>
+    private long WaitQueued(IUserMemory memory, ulong address, int expected, long deadlineNanos, bool shared, LinuxFutexWaiter me,
+        Span<byte> w)
+    {
+        while (true)
+        {
+            lock (me)
+            {
+                // Abbruch und Signal werden vor dem Kick gesetzt, der Kick nimmt diese Sperre: Ein Prüfen hier vor dem Wait verpasst ihn nicht.
+                if (me.Woken)
                 {
-                    // Abbruch und Signal werden vor dem Kick gesetzt, der Kick nimmt diese Sperre: Ein Prüfen hier vor dem Wait verpasst ihn nicht.
-                    if (me.Woken)
-                    {
-                        return 0;
-                    }
-
-                    if (Volatile.Read(ref _aborted) || Interrupted())
-                    {
-                        return -LinuxSyscalls.EINTR;
-                    }
-
-                    int slice = _sliceMs;
-                    if (deadlineNanos >= 0)
-                    {
-                        long left = deadlineNanos - _monotonicNanos();
-                        if (left <= 0)
-                        {
-                            return -LinuxSyscalls.ETIMEDOUT;
-                        }
-
-                        slice = (int)Math.Min(_sliceMs, Math.Max(1, left / 1_000_000));
-                    }
-
-                    Monitor.Wait(me, slice);
-                    Interlocked.Increment(ref _wakeups);
-                    if (me.Woken)
-                    {
-                        return 0;
-                    }
+                    return 0;
                 }
 
-                // Außerhalb jeder Sperre: TryRead nimmt die Speichersperre, und ein Wecker hält den Eimer, nicht den Wartenden.
-                if (shared && (!memory.TryRead(address, w) || BitConverter.ToInt32(w) != expected))
+                if (Volatile.Read(ref _aborted) || Interrupted())
+                {
+                    return -LinuxSyscalls.EINTR;
+                }
+
+                int slice = _sliceMs;
+                if (deadlineNanos >= 0)
+                {
+                    long left = deadlineNanos - _monotonicNanos();
+                    if (left <= 0)
+                    {
+                        return -LinuxSyscalls.ETIMEDOUT;
+                    }
+
+                    slice = (int)Math.Min(_sliceMs, Math.Max(1, left / 1_000_000));
+                }
+
+                Monitor.Wait(me, slice);
+                Interlocked.Increment(ref _wakeups);
+                if (me.Woken)
                 {
                     return 0;
                 }
             }
-        }
-        finally
-        {
-            Remove(me);
+
+            // Außerhalb jeder Sperre: TryRead nimmt die Speichersperre, und ein Wecker hält den Eimer, nicht den Wartenden.
+            if (shared && (!memory.TryRead(address, w) || BitConverter.ToInt32(w) != expected))
+            {
+                return 0;
+            }
         }
     }
 
     /// <summary>
-    /// Nimmt den Wartenden aus seinem Eimer. Requeue kann ihn bis dahin umgehängt haben; deshalb unter der Sperre prüfen, ob er noch
-    /// in dem gelesenen Eimer steht, sonst den neuen nehmen.
+    /// Nimmt den Wartenden aus seinem Eimer und liefert, ob er bis dahin geweckt wurde (gelesen unter der Eimersperre). Requeue kann ihn
+    /// bis dahin umgehängt haben; deshalb unter der Sperre prüfen, ob er noch in dem gelesenen Eimer steht, sonst den neuen nehmen.
     /// </summary>
-    private void Remove(LinuxFutexWaiter me)
+    private bool Remove(LinuxFutexWaiter me)
     {
         while (true)
         {
             int b = me.Bucket;
             if (b < 0)
             {
-                return;
+                return me.Woken;
             }
 
             lock (_buckets[b])
@@ -337,7 +353,7 @@ internal sealed class LinuxFutexTable
                 {
                     _buckets[b].Waiters.Remove(me);
                     me.Bucket = -1;
-                    return;
+                    return me.Woken;
                 }
             }
         }

@@ -172,6 +172,56 @@ public sealed class LinuxFutexBucketsTests
         Assert.AreEqual(0, table.Wake(to, int.MaxValue));
     }
 
+    /// <summary>
+    /// S4-P2: Ein Wecken zwischen der Prüfung auf Woken und dem Austragen darf nicht verloren gehen (Linux: unqueue_me). Der Wecker läuft hier
+    /// im Uhr- beziehungsweise Signalrückruf, also genau nach der letzten Prüfung von Woken; einsträngig, damit das Fenster sicher getroffen wird.
+    /// </summary>
+    [TestMethod]
+    public void WeckenNachFristpruefungGehtNichtVerloren()
+    {
+        var mem = new Words();
+        LinuxFutexTable? table = null;
+        bool armed = true;
+        int wokenByClock = -1;
+        table = new LinuxFutexTable(() =>
+        {
+            if (armed)
+            {
+                armed = false;
+                wokenByClock = table!.Wake(Base, 1);
+            }
+
+            return 1_000;
+        }, LongSlice);
+        long r = table.Wait(mem, Base, 0, uint.MaxValue, 500);
+        Assert.AreEqual(1, wokenByClock, "Wecker hat den Wartenden gezählt");
+        Assert.AreEqual(0, r, "gezähltes Wecken muss 0 liefern, nicht -ETIMEDOUT");
+        Assert.AreEqual(0, table.WaitingCount);
+    }
+
+    [TestMethod]
+    public void WeckenNachSignalpruefungGehtNichtVerloren()
+    {
+        var mem = new Words();
+        var table = new LinuxFutexTable(Now, LongSlice);
+        bool armed = true;
+        int wokenBySignal = -1;
+        table.SignalWaiting = () =>
+        {
+            if (armed)
+            {
+                armed = false;
+                wokenBySignal = table.Wake(Base, 1);
+            }
+
+            return true;
+        };
+        long r = table.Wait(mem, Base, 0, uint.MaxValue, -1);
+        Assert.AreEqual(1, wokenBySignal);
+        Assert.AreEqual(0, r, "gezähltes Wecken muss 0 liefern, nicht -EINTR");
+        Assert.AreEqual(0, table.WaitingCount);
+    }
+
     [TestMethod]
     public void AbortErreichtJedenEimerUndDenSchlaf()
     {
