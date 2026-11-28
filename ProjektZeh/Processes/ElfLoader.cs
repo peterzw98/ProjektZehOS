@@ -39,6 +39,13 @@ internal sealed class ElfLoadOptions
     public ElfFileReader? ReadInterpreter { get; init; }
 
     /// <summary>
+    /// N2-Z: wie <see cref="ReadInterpreter"/>, aber mit Vorrang und ohne den ganzen Interpreter in einen Puffer zu lesen: Liefert der Leser
+    /// <c>lazy</c>, ist <c>head</c> nur der Kopfteil (<see cref="ElfFile.HeadLength"/>) und die Segmente kommen später aus der Datei
+    /// (der Aufrufer hält die Quelle, <see cref="UserImage.InterpreterLazy"/>); sonst steht der ganze ladbare Teil in <c>head</c>.
+    /// </summary>
+    public ElfInterpreterReader? ReadInterpreterHead { get; init; }
+
+    /// <summary>
     /// V30: Länge der ganzen Programmdatei, wenn <c>elf</c> nur ihr Kopfteil ist (<see cref="ElfFile.HeadLength"/>): Die Segmente werden
     /// gegen diese Länge geprüft und später aus der Datei gelesen. null: <c>elf</c> ist der ganze ladbare Teil (bisheriger Weg).
     /// </summary>
@@ -47,6 +54,9 @@ internal sealed class ElfLoadOptions
 
 /// <summary>Liest eine Datei ganz: 0 oder -errno (etwa -ENOENT), bei Erfolg der Inhalt in <paramref name="content"/>.</summary>
 internal delegate long ElfFileReader(string path, out byte[] content);
+
+/// <summary>N2-Z: liest den Kopfteil einer Datei und nennt ihre ganze Länge; <paramref name="lazy"/>: der Rest kommt beim Zugriff aus der Datei.</summary>
+internal delegate long ElfInterpreterReader(string path, out byte[] head, out long fileLength, out bool lazy);
 
 /// <summary>
 /// Lader für ELF64-Programme (x86-64, Linux-ABI): ET_EXEC an den Adressen der Datei, ET_DYN (PIE) ab <see cref="PieBase"/>.
@@ -148,18 +158,19 @@ internal static class ElfLoader
         ulong entry = programEntry;
         ulong interpreterBias = 0;
         byte[]? interpreter = null;
+        bool interpreterLazy = false;
         UserSegment[] interpreterSegments = [];
         UserRegion[] interpreterRegions = [];
         if (interpreterPath != null)
         {
-            interpreter = ReadInterpreterFile(interpreterPath, options);
+            interpreter = ReadInterpreterFile(interpreterPath, options, out long interpreterLength, out interpreterLazy);
             ElfFile interpreterFile = ElfFile.Parse(interpreter);
             if (interpreterFile.Type != ElfFile.TypeShared)
             {
                 throw new ElfLoadException("Der Interpreter " + interpreterPath + " ist kein ET_DYN.");
             }
 
-            List<ElfProgramHeader> interpreterLoads = CollectLoads(interpreterFile, interpreter, interpreter.Length, options, ref total, out ulong interpreterLowest, out _, out _, out string? nested);
+            List<ElfProgramHeader> interpreterLoads = CollectLoads(interpreterFile, interpreter, interpreterLength, options, ref total, out ulong interpreterLowest, out _, out _, out string? nested);
             if (nested != null)
             {
                 throw new ElfLoadException("Der Interpreter " + interpreterPath + " verlangt selbst einen Interpreter.");
@@ -222,6 +233,7 @@ internal static class ElfLoader
         return new UserImage(entry, stackPointer, bias, phdrAddress, highest, stackBottom, stackTop, all, regions.ToArray(), stack, elf.Length, options.Uid, options.Gid)
         {
             Interpreter = interpreter,
+            InterpreterLazy = interpreterLazy,
             InterpreterBias = interpreterBias,
         };
     }
@@ -325,8 +337,25 @@ internal static class ElfLoader
         return Encoding.UTF8.GetString(raw);
     }
 
-    private static byte[] ReadInterpreterFile(string path, ElfLoadOptions options)
+    private static byte[] ReadInterpreterFile(string path, ElfLoadOptions options, out long length, out bool lazy)
     {
+        lazy = false;
+        if (options.ReadInterpreterHead != null)
+        {
+            long h = options.ReadInterpreterHead(path, out byte[] head, out length, out lazy);
+            if (h < 0)
+            {
+                throw new ElfLoadException("Interpreter " + path + " nicht lesbar (errno " + (-h).ToString(CultureInfo.InvariantCulture) + ").", ElfLoadError.InterpreterUnavailable) { Errno = -h };
+            }
+
+            if (head == null || length < head.Length)
+            {
+                throw new ElfLoadException("Interpreter " + path + " ohne Inhalt.");
+            }
+
+            return head;
+        }
+
         if (options.ReadInterpreter == null)
         {
             throw new ElfLoadException("Interpreter " + path + " nicht erreichbar (kein Dateisystem).", ElfLoadError.InterpreterUnavailable) { Errno = ENoEnt };
@@ -338,6 +367,7 @@ internal static class ElfLoader
             throw new ElfLoadException("Interpreter " + path + " nicht lesbar (errno " + (-r).ToString(CultureInfo.InvariantCulture) + ").", ElfLoadError.InterpreterUnavailable) { Errno = -r };
         }
 
+        length = content?.Length ?? 0;
         return content ?? throw new ElfLoadException("Interpreter " + path + " ohne Inhalt.");
     }
 

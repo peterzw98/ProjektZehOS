@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ProjektZeh.Processes;
 using ProjektZeh.Shared;
+using ProjektZeh.Shell;
 
 namespace ProjektZeh.Tests.Processes;
 
@@ -475,6 +476,89 @@ public sealed class ElfLoaderTests
             return error;
         },
     };
+
+    [TestMethod]
+    public void DynamicLazyInterpreterReadsOnlyHeadAndSkipsItsBytes()
+    {
+        byte[] elf = Dynamic().Build();
+        byte[] interp = Interp();
+        byte[] head = interp.AsSpan(0, 64 + 56 * 5).ToArray();
+        ElfLoadOptions options = new()
+        {
+            Random = FixedRandom,
+            StackSize = 64 * 1024,
+            ReadInterpreterHead = (string path, out byte[] h, out long length, out bool lazy) =>
+            {
+                h = head;
+                length = interp.Length;
+                lazy = true;
+                return 0;
+            },
+        };
+        UserImage image = ElfLoader.Load(elf, ["p"], [], options);
+
+        Assert.IsTrue(image.InterpreterLazy);
+        Assert.AreSame(head, image.Interpreter);
+        Assert.AreEqual(ElfLoader.InterpreterBase + 0x1010, image.Entry);
+        Assert.IsTrue(image.Segments.Any(s => s.Interpreter && s.FileSize > 0));
+        UserSegment seg = image.Segments.First(s => s.Interpreter && s.FileSize > 0);
+        byte[] page = new byte[4096];
+        image.FillPage(elf, seg.Address & ~4095UL, page);
+        CollectionAssert.AreEqual(new byte[4096], page, "Seiten des Interpreters kommen beim Zugriff aus der Datei, nicht aus dem Kopfteil");
+    }
+
+    private sealed class CountingSource : ILinuxPageSource
+    {
+        public int Refs { get; private set; } = 1;
+
+        public long ReadAt(long offset, Span<byte> dst) => 0;
+
+        public void AddRef() => Refs++;
+
+        public void Release() => Refs--;
+    }
+
+    [TestMethod]
+    public void ProcessLoadWithLazyInterpreterCountsReferencesAndRejectsMismatch()
+    {
+        // N2-Z: Load mit Interpreterquelle nimmt je Segment einen eigenen Verweis; Destroy gibt sie zurück, der Verweis des Aufrufers bleibt.
+        byte[] elf = Dynamic().Build();
+        byte[] interp = Interp();
+        byte[] head = interp.AsSpan(0, 64 + 56 * 5).ToArray();
+        ElfLoadOptions options = new()
+        {
+            Random = FixedRandom,
+            StackSize = 64 * 1024,
+            ReadInterpreterHead = (string path, out byte[] h, out long length, out bool lazy) =>
+            {
+                h = head;
+                length = interp.Length;
+                lazy = true;
+                return 0;
+            },
+        };
+        UserImage image = ElfLoader.Load(elf, ["p"], [], options);
+        int segments = image.Segments.Count(s => s.Interpreter && s.FileSize > 0);
+        Assert.IsTrue(segments > 0);
+
+        var terminal = new TerminalDescriptor(new NullOutput());
+        var mismatch = new LinuxUserProcess(new LinuxUserProcessTests.FakePages(), terminal, 7, 64 << 20);
+        Assert.IsFalse(mismatch.Load(image, elf, null, null).IsOK(), "Abbild mit lazy-Interpreter braucht eine Quelle");
+        mismatch.Destroy();
+
+        var source = new CountingSource();
+        var process = new LinuxUserProcess(new LinuxUserProcessTests.FakePages(), terminal, 8, 64 << 20);
+        Assert.IsTrue(process.Load(image, elf, null, source).IsOK());
+        Assert.AreEqual(1 + segments, source.Refs, "je Interpretersegment ein Verweis");
+        process.Destroy();
+        Assert.AreEqual(1, source.Refs, "Prozessende gibt seine Verweise zurück, der des Aufrufers bleibt");
+    }
+
+    private sealed class NullOutput : ITextOutput
+    {
+        public void WriteLine(string text) { }
+        public void Clear() { }
+    }
 
     [TestMethod]
     public void DynamicLoadsInterpreterAndAuxv()

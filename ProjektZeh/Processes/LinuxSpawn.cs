@@ -324,17 +324,19 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
 
         // V30: Vom Programm nur der Kopfteil; die Segmente liest der neue Prozess beim Zugriff über source (eigener Verweis je Segment).
         long read = ReadProgram(path, true, out byte[] elf, out long fileLength, out ILinuxPageSource? source);
+        ILinuxPageSource? interpreterSource = null; // N2-Z: der Interpreter wird nicht mehr ganz gelesen, seine Segmente kommen aus der Datei
         try
         {
-            return ExecRead(path, argv, envp, inVfork, read, elf, fileLength, ref source);
+            return ExecRead(path, argv, envp, inVfork, read, elf, fileLength, ref source, ref interpreterSource);
         }
         finally
         {
             source?.Release();
+            interpreterSource?.Release();
         }
     }
 
-    private long ExecRead(string path, string[] argv, string[] envp, bool inVfork, long read, byte[] elf, long fileLength, ref ILinuxPageSource? source)
+    private long ExecRead(string path, string[] argv, string[] envp, bool inVfork, long read, byte[] elf, long fileLength, ref ILinuxPageSource? source, ref ILinuxPageSource? interpreterSource)
     {
         bool startsSelf = ExePath != null && string.Equals(LinuxPath.Normalize(path), ExePath, StringComparison.OrdinalIgnoreCase);
         if (read == -LinuxErrno.ENOENT && ExePath != null && StartPath != null
@@ -361,6 +363,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         }
 
         UserImage image;
+        ILinuxPageSource? loadedInterpreter = null; // N2-Z: vom Leser gesetzt; der Verweis geht danach an interpreterSource (Exec gibt ihn zurück)
         try
         {
             // V25: Der Interpreter (PT_INTERP) kommt wie das Programm aus dem Dateisystem des Prozesses.
@@ -372,6 +375,15 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 Uid = _uid,
                 Gid = _gid,
                 ReadInterpreter = ReadExecutable,
+                ReadInterpreterHead = (string interpreterPath, out byte[] head, out long length, out bool lazy) =>
+                {
+                    long ir = ReadProgram(interpreterPath, true, out head, out long fullLength, out ILinuxPageSource? isource);
+                    loadedInterpreter?.Release(); // ein früherer Verweis (zweiter Leseversuch) darf nicht liegen bleiben
+                    loadedInterpreter = isource;
+                    lazy = isource != null;
+                    length = lazy ? fullLength : head.Length;
+                    return ir;
+                },
                 FileLength = source != null ? fileLength : null,
             });
         }
@@ -384,6 +396,11 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 ElfLoadError.InterpreterUnavailable => -exception.Errno,
                 _ => -ENoExec,
             };
+        }
+        finally
+        {
+            // Auch bei einer fremden Ausnahme gehört der Verweis dem Aufrufer (Exec gibt ihn in seinem finally zurück).
+            interpreterSource = loadedInterpreter;
         }
 
         IUserPages? pages = CreatePages?.Invoke(); // Exec hat CreatePages geprüft
@@ -400,7 +417,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             // execve auf argv[0] fälschlich das ursprüngliche Programm statt ENOENT starten).
             StartPath = startsSelf ? StartPath : null,
         };
-        if (!(source != null ? next.Load(image, elf, source) : next.Load(image, elf)).IsOK())
+        if (!(source != null ? next.Load(image, elf, source, interpreterSource) : next.Load(image, elf, null, interpreterSource)).IsOK())
         {
             next.DestroyMemory();
             return -LinuxSyscalls.ENOMEM;

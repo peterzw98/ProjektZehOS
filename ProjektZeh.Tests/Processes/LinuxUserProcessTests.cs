@@ -21,7 +21,7 @@ public sealed class LinuxUserProcessTests
     private const ulong NotPresentRead = 0x4, NotPresentWrite = 0x6, NotPresentFetch = 0x14, PresentWrite = 0x7;
 
     /// <summary>Seitentabelle als Wörterbuch; zählt, was der Prozess abbildet und freigibt.</summary>
-    private sealed class FakePages : IUserPages, IUserPagesQuery, IUserPagesRange
+    internal sealed class FakePages : IUserPages, IUserPagesQuery, IUserPagesRange
     {
         public readonly Dictionary<ulong, byte[]> Frames = new();
         public readonly Dictionary<ulong, (ulong Frame, MapAccess Access)> Mapped = new();

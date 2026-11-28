@@ -935,7 +935,7 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
                 bool content = page >= stackContent && page < image.StackTop;
                 foreach (UserSegment segment in image.Segments)
                 {
-                    content |= segment.FileSize > 0 && (!lazyProgram || segment.Interpreter)
+                    content |= segment.FileSize > 0 && !(segment.Interpreter ? image.InterpreterLazy : lazyProgram)
                         && page < segment.Address + segment.FileSize && page + Page > segment.Address;
                 }
 
