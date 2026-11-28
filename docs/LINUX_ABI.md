@@ -301,8 +301,9 @@ Umsetzung und Grenzen:
 - Der FPU-/SSE-Zustand des Kindes ist der Startzustand (FCW 0x37F, MXCSR 0x1F80), nicht die Kopie des Elternthreads (musl und glibc setzen nichts voraus).
 - Alle Threads eines Programms laufen auf **einer** CPU (die erste der Menge des Programmthreads; Kinder erben sie): `UserPageTable` hat noch keinen TLB-Shootdown
   (N4) und lehnt `munmap`/`mprotect` ab, solange eine andere CPU auf der Tabelle läuft. Nebenläufig ja, parallel nein.
-- Speicher (Karte, Frames, brk) schützt eine Sperre im Prozess; futex liest den Wert unter der Sperre der futex-Tabelle (Reihenfolge: futex-Tabelle vor
-  Speicher vor `UserPageTable` vor `PageAllocator`). Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.
+- Speicher (Karte, Frames, brk) schützt eine Sperre im Prozess; futex liest den Wert unter der Sperre seines Eimers (N4-S4: 16 Eimer nach
+  `(Adresse >> 2) % 16`, Requeue hält beide in aufsteigender Nummer; Reihenfolge: futex-Eimer vor Speicher vor `UserPageTable` vor `PageAllocator`).
+  `FUTEX_WAKE` weckt nur die gewählten Wartenden (ein Warteobjekt je Thread), nicht alle des Prozesses. Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.
 - Ein Absturz in einem Thread (Ausnahme, ungültige Register, Fehler der Brücke) beendet den ganzen Prozess wie bei Linux. `pthread_exit` in `main` lässt die
   anderen weiterlaufen; der Prozess endet mit dem letzten Thread.
 - Signalmaske, anhängige Signale und Alternativstack sind noch je Prozess, nicht je Thread (V18 stellt zu, siehe dort); `rt_sigsuspend` gibt es seit v46 (Wartemaske wie ppoll, immer -EINTR); `rt_sigpending` (V23) meldet anhängig und blockiert der einen Prozessmenge (Echtzeitsignale gibt es nicht).

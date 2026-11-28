@@ -107,7 +107,7 @@ internal static partial class LinuxSyscalls
             case Getgid:
             case Getegid: return (long)p.Gid;
             case Futex: return p is ILinuxThreads threads ? DoFutexThreads(p, threads.Futexes, ref a) : DoFutex(p, ref a);
-            case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1) : -ENOSYS; // bis ein Signal mit Handler kommt (-EINTR, V18) oder der Prozess endet
+            case Pause: return p is ILinuxThreads paused ? paused.Futexes.Sleep(-1, paused.CurrentThread.FutexWait) : -ENOSYS; // bis ein Signal mit Handler kommt (-EINTR, V18) oder der Prozess endet
             // rt_sigsuspend(mask, 8): Wartemaske setzen und schlafen, bis ein Signal mit Handler kommt (immer -EINTR). busybox ash wartet in wait
             // so auf SIGCHLD (wait_block_or_sig); ohne den Aufruf kehrte sigsuspend sofort mit -ENOSYS zurück, und wait drehte endlos.
             // Die Brücke stellt die alte Maske über den Signalrahmen wieder her (wie bei ppoll mit -EINTR, LinuxSyscallsStart.cs).
@@ -744,7 +744,7 @@ internal static partial class LinuxSyscalls
         if (p is ILinuxThreads threads && p is ILinuxHost clock)
         {
             long now = clock.MonotonicNanos;
-            return threads.Futexes.Sleep(ns > long.MaxValue - now ? long.MaxValue : now + ns);
+            return threads.Futexes.Sleep(ns > long.MaxValue - now ? long.MaxValue : now + ns, threads.CurrentThread.FutexWait);
         }
 
         (p as ILinuxHost)?.SleepNanos(ns);
@@ -960,7 +960,8 @@ internal static partial class LinuxSyscalls
                 }
 
                 // V21: ohne FUTEX_PRIVATE_FLAG kann der Wecker ein anderer Prozess sein (MAP_SHARED nach fork); siehe LinuxFutexTable.Wait.
-                return table.Wait(p.Memory, a.A0, (int)a.A2, bitset, deadline, shared: ((int)a.A1 & 128) == 0);
+                return table.Wait(p.Memory, a.A0, (int)a.A2, bitset, deadline, shared: ((int)a.A1 & 128) == 0,
+                    waiter: (p as ILinuxThreads)?.CurrentThread.FutexWait);
             }
 
             case Wake:

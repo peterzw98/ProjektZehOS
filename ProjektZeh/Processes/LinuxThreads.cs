@@ -24,6 +24,9 @@ internal sealed class LinuxThread
     /// <summary>Stack des neuen Threads aus clone (0: der Stack des Elternthreads, wie bei Linux).</summary>
     public ulong StackPointer { get; init; }
 
+    /// <summary>N4-S4: Warteobjekt dieses Threads für futex und Schlaf; mit dem Thread angelegt, damit Warten nichts allokiert.</summary>
+    public LinuxFutexWaiter FutexWait { get; } = new();
+
     /// <summary>Gesetzt, sobald der Thread mit exit geendet hat (oder der Prozess mit exit_group).</summary>
     public bool Exited { get; set; }
 
@@ -134,13 +137,36 @@ internal interface ILinuxThreads
 }
 
 /// <summary>
-/// Wartende auf futex-Adressen eines Prozesses (privat, ein Adressraum). Ein Wartender prüft den Wert unter der Sperre der Tabelle
-/// und schläft auf ihr; wer weckt, ändert den Wert vorher im Benutzerspeicher und nimmt dann dieselbe Sperre. So geht kein Wecken
+/// Wartender auf einer futex-Adresse oder im Schlaf ohne Adresse (N4-S4). Jeder Thread hat genau einen (<see cref="LinuxThread.FutexWait"/>), angelegt
+/// mit dem Thread, weil ein Thread nur an einer Stelle zugleich wartet. Wer weckt, setzt <see cref="Woken"/> unter der Sperre dieses Objekts und weckt
+/// nur dieses; der Wartende schläft auf ihm. So weckt FUTEX_WAKE(1) einen Thread statt aller Wartenden des Prozesses.
+/// <para>
+/// <see cref="Address"/>, <see cref="Bitset"/> und <see cref="Bucket"/> ändern sich nur unter der Sperre des Eimers, in dem der Wartende steht
+/// (Requeue hält beide Eimer); <see cref="Woken"/> nur unter Eimer- und eigener Sperre. Sperrreihenfolge: Eimer vor Wartendem.
+/// </para>
+/// </summary>
+internal sealed class LinuxFutexWaiter
+{
+    public ulong Address;
+    public uint Bitset;
+    public bool Woken;
+    /// <summary>Eimer, in dem der Wartende steht; -1 außerhalb, <see cref="LinuxFutexTable.SleepBucket"/> im Schlaf ohne Adresse.</summary>
+    public volatile int Bucket = -1;
+}
+
+/// <summary>
+/// Wartende auf futex-Adressen eines Prozesses (privat, ein Adressraum). Ein Wartender prüft den Wert unter der Sperre seines Eimers
+/// und reiht sich dort ein; wer weckt, ändert den Wert vorher im Benutzerspeicher und nimmt dann dieselbe Eimersperre. So geht kein Wecken
 /// zwischen Prüfen und Schlafen verloren (Linux: Hash-Bucket-Sperre).
 /// <para>
-/// Sperrreihenfolge: <see cref="_gate"/> vor der Speichersperre des Prozesses (das Lesen des Werts geschieht unter <see cref="_gate"/>).
-/// Der Schlaf geschieht in Scheiben, damit ein Abbruch (exit_group, Zeitlimit der Shell) jeden Wartenden spätestens nach einer
-/// Scheibe erreicht, auch wenn ein Wecken verloren ginge.
+/// N4-S4: 16 Eimer nach <c>(address &gt;&gt; 2) % 16</c>, je eigene Sperre, damit Mutexe verschiedener Threads auf mehreren CPUs nicht um eine
+/// Sperre je Prozess streiten. Geweckt wird nur der Wartende selbst (<see cref="LinuxFutexWaiter"/>), nicht mehr jeder Wartende des Prozesses.
+/// </para>
+/// <para>
+/// Sperrreihenfolge: Eimer (aufsteigend; nur Requeue hält zwei) vor dem Wartenden (<see cref="LinuxFutexWaiter"/>) und vor der Speichersperre
+/// des Prozesses (das Lesen des Werts geschieht unter dem Eimer). Der Schlafeimer (<see cref="SleepBucket"/>) wird nie zusammen mit einem
+/// Adresseimer gehalten. Der Schlaf geschieht in Scheiben, damit ein Abbruch (exit_group, Zeitlimit der Shell) jeden Wartenden spätestens nach
+/// einer Scheibe erreicht, auch wenn ein Wecken verloren ginge.
 /// </para>
 /// </summary>
 internal sealed class LinuxFutexTable
@@ -148,36 +174,61 @@ internal sealed class LinuxFutexTable
     /// <summary>Längster Schlaf am Stück; danach prüft der Wartende Abbruch und Frist.</summary>
     public const int SliceMs = 50;
 
-    private readonly object _gate = new();
-    private readonly List<Waiter> _waiters = new();
-    private readonly Func<long> _monotonicNanos;
-    private bool _aborted;
+    /// <summary>Anzahl der Adresseimer; eine Zweierpotenz.</summary>
+    public const int BucketCount = 16;
 
-    private sealed class Waiter
+    /// <summary>Index des Eimers für Schlaf ohne Adresse (nanosleep, pause); er erreicht Abort und Kick wie die Adresseimer.</summary>
+    public const int SleepBucket = BucketCount;
+
+    private sealed class FutexBucket
     {
-        public ulong Address;
-        public uint Bitset;
-        public bool Woken;
+        public readonly List<LinuxFutexWaiter> Waiters = new();
     }
 
-    public LinuxFutexTable(Func<long> monotonicNanos) => _monotonicNanos = monotonicNanos;
+    private readonly FutexBucket[] _buckets = new FutexBucket[BucketCount + 1];
+    private readonly Func<long> _monotonicNanos;
+    private readonly int _sliceMs;
+    private bool _aborted;
+    private long _wakeups;
 
-    /// <summary>Anzahl Wartender (Tests).</summary>
+    public LinuxFutexTable(Func<long> monotonicNanos, int sliceMs = SliceMs)
+    {
+        _monotonicNanos = monotonicNanos;
+        _sliceMs = sliceMs;
+        for (int i = 0; i < _buckets.Length; i++)
+        {
+            _buckets[i] = new FutexBucket();
+        }
+    }
+
+    /// <summary>Eimer einer Adresse (Wörter auf 4 Byte ausgerichtet, deshalb ohne die unteren zwei Bits).</summary>
+    public static int BucketOf(ulong address) => (int)((address >> 2) & (BucketCount - 1));
+
+    /// <summary>Anzahl Wartender auf Adressen, ohne Schlafende (Tests).</summary>
     public int WaitingCount
     {
         get
         {
-            lock (_gate)
+            int n = 0;
+            for (int i = 0; i < BucketCount; i++)
             {
-                return _waiters.Count;
+                lock (_buckets[i])
+                {
+                    n += _buckets[i].Waiters.Count;
+                }
             }
+
+            return n;
         }
     }
+
+    /// <summary>Wie oft ein Wartender aus Monitor.Wait zurückkam, durch Wecken oder Scheibenende (Tests: Einzelwecken weckt keinen anderen).</summary>
+    public long WaitReturns => Interlocked.Read(ref _wakeups);
 
     /// <summary>
     /// FUTEX_WAIT(_BITSET): schläft, solange der Wert an <paramref name="address"/> <paramref name="expected"/> ist und niemand weckt.
     /// 0 nach Wecken, -EAGAIN bei anderem Wert, -EFAULT, -ETIMEDOUT nach <paramref name="deadlineNanos"/> (monoton, negativ = keine
-    /// Frist), -EINTR nach <see cref="Abort"/>.
+    /// Frist), -EINTR nach <see cref="Abort"/>. <paramref name="waiter"/> ist das Warteobjekt des aufrufenden Threads (null: ein neues).
     /// <para>
     /// V21, <paramref name="shared"/> (futex ohne FUTEX_PRIVATE_FLAG): Die Tabelle gehört einem Prozess; ein Wecken aus einem anderen Prozess
     /// über MAP_SHARED (nach fork) erreicht sie nicht. Abkürzung (shortcut) statt einer laufweiten Tabelle nach Datei und Versatz: Der
@@ -185,13 +236,15 @@ internal sealed class LinuxFutexTable
     /// Aufrufer prüfen in einer Schleife). Ein Wecken ohne Wertänderung über Prozesse geht verloren; die Verzögerung ist höchstens eine Scheibe.
     /// </para>
     /// </summary>
-    public long Wait(IUserMemory memory, ulong address, int expected, uint bitset, long deadlineNanos, bool shared = false)
+    public long Wait(IUserMemory memory, ulong address, int expected, uint bitset, long deadlineNanos, bool shared = false,
+        LinuxFutexWaiter? waiter = null)
     {
         Span<byte> w = stackalloc byte[4];
-        var me = new Waiter { Address = address, Bitset = bitset };
-        lock (_gate)
+        var me = waiter ?? new LinuxFutexWaiter();
+        int b = BucketOf(address);
+        lock (_buckets[b])
         {
-            if (_aborted)
+            if (Volatile.Read(ref _aborted))
             {
                 return -LinuxSyscalls.EINTR;
             }
@@ -206,17 +259,32 @@ internal sealed class LinuxFutexTable
                 return -LinuxSyscalls.EAGAIN;
             }
 
-            _waiters.Add(me);
-            try
+            // Noch in keinem Eimer: niemand sonst greift auf das Objekt zu, die Felder dürfen ohne seine Sperre zurückgesetzt werden.
+            me.Address = address;
+            me.Bitset = bitset;
+            me.Woken = false;
+            me.Bucket = b;
+            _buckets[b].Waiters.Add(me);
+        }
+
+        try
+        {
+            while (true)
             {
-                while (!me.Woken)
+                lock (me)
                 {
-                    if (_aborted || Interrupted())
+                    // Abbruch und Signal werden vor dem Kick gesetzt, der Kick nimmt diese Sperre: Ein Prüfen hier vor dem Wait verpasst ihn nicht.
+                    if (me.Woken)
+                    {
+                        return 0;
+                    }
+
+                    if (Volatile.Read(ref _aborted) || Interrupted())
                     {
                         return -LinuxSyscalls.EINTR;
                     }
 
-                    int slice = SliceMs;
+                    int slice = _sliceMs;
                     if (deadlineNanos >= 0)
                     {
                         long left = deadlineNanos - _monotonicNanos();
@@ -225,22 +293,63 @@ internal sealed class LinuxFutexTable
                             return -LinuxSyscalls.ETIMEDOUT;
                         }
 
-                        slice = (int)Math.Min(SliceMs, Math.Max(1, left / 1_000_000));
+                        slice = (int)Math.Min(_sliceMs, Math.Max(1, left / 1_000_000));
                     }
 
-                    Monitor.Wait(_gate, slice);
-                    if (shared && !me.Woken && (!memory.TryRead(address, w) || BitConverter.ToInt32(w) != expected))
+                    Monitor.Wait(me, slice);
+                    Interlocked.Increment(ref _wakeups);
+                    if (me.Woken)
                     {
                         return 0;
                     }
                 }
 
-                return 0;
+                // Außerhalb jeder Sperre: TryRead nimmt die Speichersperre, und ein Wecker hält den Eimer, nicht den Wartenden.
+                if (shared && (!memory.TryRead(address, w) || BitConverter.ToInt32(w) != expected))
+                {
+                    return 0;
+                }
             }
-            finally
+        }
+        finally
+        {
+            Remove(me);
+        }
+    }
+
+    /// <summary>
+    /// Nimmt den Wartenden aus seinem Eimer. Requeue kann ihn bis dahin umgehängt haben; deshalb unter der Sperre prüfen, ob er noch
+    /// in dem gelesenen Eimer steht, sonst den neuen nehmen.
+    /// </summary>
+    private void Remove(LinuxFutexWaiter me)
+    {
+        while (true)
+        {
+            int b = me.Bucket;
+            if (b < 0)
             {
-                _waiters.Remove(me);
+                return;
             }
+
+            lock (_buckets[b])
+            {
+                if (me.Bucket == b)
+                {
+                    _buckets[b].Waiters.Remove(me);
+                    me.Bucket = -1;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// <summary>Weckt genau diesen Wartenden; der Aufrufer hält dessen Eimer.</summary>
+    private static void WakeOne(LinuxFutexWaiter x)
+    {
+        lock (x)
+        {
+            x.Woken = true;
+            Monitor.Pulse(x);
         }
     }
 
@@ -252,10 +361,11 @@ internal sealed class LinuxFutexTable
             return 0;
         }
 
-        lock (_gate)
+        var bucket = _buckets[BucketOf(address)];
+        lock (bucket)
         {
             int woken = 0;
-            foreach (var w in _waiters)
+            foreach (var w in bucket.Waiters)
             {
                 if (woken >= count)
                 {
@@ -264,14 +374,9 @@ internal sealed class LinuxFutexTable
 
                 if (!w.Woken && w.Address == address && (w.Bitset & bitset) != 0)
                 {
-                    w.Woken = true;
+                    WakeOne(w);
                     woken++;
                 }
-            }
-
-            if (woken > 0)
-            {
-                Monitor.PulseAll(_gate);
             }
 
             return woken;
@@ -280,113 +385,171 @@ internal sealed class LinuxFutexTable
 
     /// <summary>
     /// FUTEX_(CMP_)REQUEUE: weckt bis <paramref name="wake"/> auf <paramref name="from"/> und hängt bis <paramref name="requeue"/>
-    /// weitere an <paramref name="to"/>. <paramref name="expected"/> null heißt ohne Vergleich (FUTEX_REQUEUE).
+    /// weitere an <paramref name="to"/>. <paramref name="expected"/> null heißt ohne Vergleich (FUTEX_REQUEUE). Liegen die Adressen in
+    /// verschiedenen Eimern, hält der Aufruf beide, in aufsteigender Nummer.
     /// </summary>
     public long Requeue(IUserMemory memory, ulong from, ulong to, int wake, int requeue, int? expected)
     {
-        Span<byte> w = stackalloc byte[4];
-        lock (_gate)
+        int bf = BucketOf(from), bt = BucketOf(to);
+        var first = _buckets[Math.Min(bf, bt)];
+        var second = _buckets[Math.Max(bf, bt)];
+        lock (first)
         {
-            if (!memory.TryRead(from, w))
+            if (bf == bt)
             {
-                return -LinuxSyscalls.EFAULT;
+                return RequeueLocked(memory, from, to, wake, requeue, expected, bf, bt);
             }
 
-            if (expected is int e && BitConverter.ToInt32(w) != e)
+            lock (second)
             {
-                return -LinuxSyscalls.EAGAIN;
+                return RequeueLocked(memory, from, to, wake, requeue, expected, bf, bt);
+            }
+        }
+    }
+
+    private long RequeueLocked(IUserMemory memory, ulong from, ulong to, int wake, int requeue, int? expected, int bf, int bt)
+    {
+        Span<byte> w = stackalloc byte[4];
+        if (!memory.TryRead(from, w))
+        {
+            return -LinuxSyscalls.EFAULT;
+        }
+
+        if (expected is int e && BitConverter.ToInt32(w) != e)
+        {
+            return -LinuxSyscalls.EAGAIN;
+        }
+
+        var src = _buckets[bf].Waiters;
+        int woken = 0, moved = 0;
+        for (int i = 0; i < src.Count;)
+        {
+            var x = src[i];
+            if (x.Woken || x.Address != from)
+            {
+                i++;
+                continue;
             }
 
-            int woken = 0, moved = 0;
-            foreach (var x in _waiters)
+            if (woken < wake)
             {
-                if (x.Woken || x.Address != from)
+                WakeOne(x);
+                woken++;
+                i++;
+            }
+            else if (moved < requeue)
+            {
+                x.Address = to;
+                moved++;
+                if (bf == bt)
                 {
-                    continue;
-                }
-
-                if (woken < wake)
-                {
-                    x.Woken = true;
-                    woken++;
-                }
-                else if (moved < requeue)
-                {
-                    x.Address = to;
-                    moved++;
+                    i++;
                 }
                 else
                 {
-                    break;
+                    // In den Zieleimer, hinten an (wie Linux); Bucket zuletzt, Remove liest ihn unter der Sperre neu.
+                    src.RemoveAt(i);
+                    _buckets[bt].Waiters.Add(x);
+                    x.Bucket = bt;
                 }
             }
-
-            if (woken > 0)
+            else
             {
-                Monitor.PulseAll(_gate);
+                break;
             }
-
-            // Linux zählt bei CMP_REQUEUE geweckte und umgehängte zusammen, bei REQUEUE nur die geweckten.
-            return expected.HasValue ? woken + moved : woken;
         }
+
+        // Linux zählt bei CMP_REQUEUE geweckte und umgehängte zusammen, bei REQUEUE nur die geweckten.
+        return expected.HasValue ? woken + moved : woken;
     }
 
     /// <summary>
     /// Schlaf ohne Adresse (nanosleep, clock_nanosleep, pause): 0 nach der Frist (monoton, negativ = ohne Frist), -EINTR, sobald
     /// der Prozess endet. So beendet exit_group auch schlafende Threads, nicht erst nach ihrer Frist.
     /// </summary>
-    public long Sleep(long deadlineNanos)
+    public long Sleep(long deadlineNanos, LinuxFutexWaiter? waiter = null)
     {
-        lock (_gate)
+        var me = waiter ?? new LinuxFutexWaiter();
+        var bucket = _buckets[SleepBucket];
+        lock (bucket)
         {
-            while (!_aborted && !Interrupted())
+            me.Address = 0;
+            me.Bitset = 0;
+            me.Woken = false;
+            me.Bucket = SleepBucket;
+            bucket.Waiters.Add(me);
+        }
+
+        try
+        {
+            lock (me)
             {
-                int slice = SliceMs;
-                if (deadlineNanos >= 0)
+                while (!Volatile.Read(ref _aborted) && !Interrupted())
                 {
-                    long left = deadlineNanos - _monotonicNanos();
-                    if (left <= 0)
+                    int slice = _sliceMs;
+                    if (deadlineNanos >= 0)
                     {
-                        return 0;
+                        long left = deadlineNanos - _monotonicNanos();
+                        if (left <= 0)
+                        {
+                            return 0;
+                        }
+
+                        slice = (int)Math.Min(_sliceMs, Math.Max(1, left / 1_000_000));
                     }
 
-                    slice = (int)Math.Min(SliceMs, Math.Max(1, left / 1_000_000));
+                    Monitor.Wait(me, slice);
+                    Interlocked.Increment(ref _wakeups);
                 }
 
-                Monitor.Wait(_gate, slice);
+                return -LinuxSyscalls.EINTR;
             }
-
-            return -LinuxSyscalls.EINTR;
+        }
+        finally
+        {
+            Remove(me);
         }
     }
 
     /// <summary>
     /// V18: true, solange ein Signal mit Handler wartet (der Prozess setzt es); Wait und Sleep kehren dann mit -EINTR zurück. Nur flüchtige
-    /// Felder lesen: Der Aufruf geschieht unter der Sperre der Tabelle, und _threadGate steht in der Reihenfolge darunter.
+    /// Felder lesen: Der Aufruf geschieht unter der Sperre des Wartenden, und _threadGate steht in der Reihenfolge darunter.
     /// </summary>
     public Func<bool>? SignalWaiting { get; set; }
 
     private bool Interrupted() => SignalWaiting?.Invoke() == true;
 
-    /// <summary>V18: Ein Signal mit Handler ist angekommen: Wartende prüfen sofort, nicht erst nach ihrer Scheibe.</summary>
-    public void Kick()
+    /// <summary>Weckt jeden Wartenden aller Eimer, ohne <see cref="LinuxFutexWaiter.Woken"/> zu setzen: Er prüft Abbruch und Signal neu.</summary>
+    private void PulseEveryone()
     {
-        lock (_gate)
+        foreach (var bucket in _buckets)
         {
-            Monitor.PulseAll(_gate);
+            lock (bucket)
+            {
+                foreach (var x in bucket.Waiters)
+                {
+                    lock (x)
+                    {
+                        Monitor.Pulse(x);
+                    }
+                }
+            }
         }
     }
+
+    /// <summary>V18: Ein Signal mit Handler ist angekommen: Wartende prüfen sofort, nicht erst nach ihrer Scheibe.</summary>
+    public void Kick() => PulseEveryone();
 
     /// <summary>true nach <see cref="Abort"/> (Strg+C, Zeitlimit, exit_group); lange Kopierschleifen fragen das je Stück ab.</summary>
     public bool IsAborted => Volatile.Read(ref _aborted);
 
-    /// <summary>Der Prozess endet: jeder Wartende kehrt mit -EINTR zurück, neue Wartende auch.</summary>
+    /// <summary>
+    /// Der Prozess endet: jeder Wartende kehrt mit -EINTR zurück, neue Wartende auch. Das Flag steht vor dem Durchgang über die Eimer: Wer sich
+    /// danach einreiht, sieht es unter der Eimersperre; wer schon steht, bekommt den Puls oder sieht es unter seiner eigenen Sperre vor dem Wait.
+    /// </summary>
     public void Abort()
     {
-        lock (_gate)
-        {
-            _aborted = true;
-            Monitor.PulseAll(_gate);
-        }
+        Volatile.Write(ref _aborted, true);
+        PulseEveryone();
     }
 }
