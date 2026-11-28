@@ -9,4 +9,7 @@
   - Testschalter `TestWorkKicks` und `TestWorkLoseState` nur mit `COSMOS_TEST_HOOKS`.
 - **Entfernter ZehOS-Umweg:** keiner; ZehOS setzt `ReturnHandler` und ruft `RequestWork` im Folge-PR (N4 IRQ-Signal).
 - **Grenzen:** `Enter` prüft den Merker nicht; ein Merker, der vor `Enter` gesetzt wird, wirkt mit dem ersten Interrupt oder Aufruf im Ring 3. Paranoide Vektoren (NMI, #DF, #MC) lenken nichts um. xAPIC nur (wie `Kick`).
-- **Prüfung:** offen (siehe PR).
+- **Prüfung** (MSI, QEMU KVM, Pakete 3.0.97-zehos.0.ga300dc7 = dieser Stand):
+  - `UserMode` `bare` und `bare+smp4`: 48 bestanden, 0 Fehler, 2 übersprungen von 50, ohne und mit `COSMOS_TEST_DEFINES=COSMOS_TEST_HOOKS`. Neu `ReturnWork_InterruptReturn_KeepsRegisters`: Programm 13 setzt alle 15 GPRs, XMM0-15 (beide Hälften), MXCSR 0x7F80, FCW 0x0F7F und DF und rechnet ohne Aufruf; 64 Mal `RequestWork`, der Handler überschreibt FPU/SSE und flüchtige GPRs im Kernel. Ergebnis 0 (alles unverändert), 64 Läufe für 64 Anfragen; smp4 (Main CPU 0, Programm CPU 1, aktives Warten): längste 5 µs (Haken-Bau 22 µs), also über den Kick; eine CPU: längste 10,7 ms (Takt/Wechsel).
+  - Gegenprobe (`TestWorkLoseState`: Rampe verliert XMM-Abbild und RBX): Programm meldet 0x2 (RBX), Zelle rot erwartet und gesehen; `TestWorkKicks` = 64 = Läufe (Kick nur bei neu gesetztem Merker).
+  - Offen: TCG, übrige Suiten, ZehOS-Gastlauf mit dem Pin (Folge-PR), VMware, Hardware.
