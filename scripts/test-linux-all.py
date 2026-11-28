@@ -10,7 +10,10 @@ Tabelle der bisherigen Laeufe aus und endet mit Exit 130. Aufraeumen: Die Datenp
 
 Nutzung (aus dem Repository-Wurzelordner):
   python3 -I scripts/test-linux-all.py [--sets s1 s3 ...] [--configs kvm:1 kvm:4 tcg:1] [--work <ordner>]
-                                       [--cosmos-tools <ordner>] [--timeout <s>] [--keep-images]
+                                       [--cosmos-tools <ordner>] [--timeout <s>] [--keep-images] [--linuxsmp 0|1]
+
+--linuxsmp 1 baut alle Saetze mit -p:ZehOSLinuxRunSmp=true (wie zehos.linuxsmp=1: Threads eines Programms auf allen CPUs
+der Stufe, N4-S2); Vorgabe 0 wie die Kernel-Vorgabe. Der Satz n4smp laeuft immer so (er prueft das Laufen auf mehreren CPUs).
 
 Voraussetzungen: musl-gcc (oder $CC), dotnet (DOTNET_ROOT/PATH), Cosmos-Werkzeuge (Standard: neuester Ordner unter
 .tools/cosmos-tools), QEMU/KVM. Ein Gast zur selben Zeit (die Stufen laufen nacheinander).
@@ -41,6 +44,9 @@ ISO = ROOT / "ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso"
 #   status:  Status fuer Programme ohne Erwartung (--status name=status)
 #   expected: Erwartungsordner (None: keiner)
 #   runner:  anderes Laufskript; configs: nur diese Stufen (Praefix des Beschleunigers)
+#   linuxsmp: immer mit -p:ZehOSLinuxRunSmp=true bauen
+#   smp1:    Erwartungsordner, der vor expected/<satz> gilt, wenn der Lauf nur eine CPU bekommt: Stufen mit smp <= 2, weil
+#            CpuSelection.Workers CPU 0 der Hauptschleife laesst und die Worker (Laufmenge) erst ab CPU 1 zaehlt
 SPECIAL = {
     # symlinks braucht ein Dateisystem mit Symlinks; das FAT-Datenlaufwerk des Gastes liefert -EPERM (wie vfat unter Linux), belegt durch v7bsymlink.
     "s1": {"exclude": ["symlinks"]},
@@ -52,9 +58,15 @@ SPECIAL = {
     "v7bfull": {"build": ["v7b"], "files": [("v7b", "v7bfull")], "expected": None, "status": {"v7bfull": "exit 0"},
                 "runner": FULL, "accel": {"kvm"}},
     # V50: Speicher bis zum Ende fuellen; das Ende ist je nach Pfad ENOMEM (Exit 0) oder SIGKILL des Prozesses, der Kernel muss leben (zz_alive).
+    # N4-S5 (Tor N4-Z): smp_two_cpus, tlb_munmap, tlb_mprotect, futex_stress, kill_spinner auf mehreren CPUs eines Laufs.
+    # Mit einer CPU im Lauf (smp1, smp2) meldet smp_two_cpus "one-cpu" (expected/n4smp/smp1); die uebrigen Programme erwarten
+    # dasselbe wie auf mehreren.
+    # Nur KVM: tlb_munmap/tlb_mprotect brauchen auf einer CPU schon unter KVM je 12 s (A dreht bis zum Tick), unter TCG mehr als
+    # das Probelimit; der Satz prueft ohnehin das Laufen auf mehreren CPUs.
+    "n4smp": {"linuxsmp": True, "smp1": ABI / "expected/n4smp/smp1", "accel": {"kvm"}},
     "v50": {"expected": None, "status": {"oom_brk": "exit 0", "oom_mmap": "signal 9", "oom_big": "signal 9", "oom_shared": "signal 9", "oom_small": "exit 0", "oom_fork": "exit 0", "oom_thr": "signal 9", "oom_memfd": "exit 0", "oom_edge": "signal 9", "oom_loop": "exit 0", "oom_probe": "exit 0", "zz_alive": "exit 0"}},
 }
-DEFAULT_SETS = ["s1", "s3", "v3", "v7b", "v9", "v10", "v11", "v14", "v15", "v16", "v17", "v18", "v29c", "v7bfull", "v50"]
+DEFAULT_SETS = ["s1", "s3", "v3", "v7b", "v9", "v10", "v11", "v14", "v15", "v16", "v17", "v18", "v29c", "v7bfull", "v50", "n4smp"]
 # Saetze ohne Gast-Lauf ueber das Buendel (Hilfsprogramme anderer Saetze oder eigener Bau)
 SKIPPED = {"v3neg": "Hilfsprogramme fuer v3 (spin)", "v3stdin": "Desktop-Terminal: scripts/test-linux-stdin.py",
            "tools": "eigener Bau (toybox/Rust), kein Buendellauf"}
@@ -118,6 +130,7 @@ def summary_line(log: Path) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--sets", nargs="+", default=DEFAULT_SETS, help="Saetze (Standard: alle Buendelsaetze)")
+    ap.add_argument("--linuxsmp", choices=["0", "1"], default="0", help="1: alle Saetze wie mit zehos.linuxsmp=1 bauen")
     ap.add_argument("--configs", nargs="+", default=["kvm:1", "kvm:4", "tcg:1"], help="<kvm|tcg>:<smp> je Stufe")
     ap.add_argument("--work", type=Path, help="Ausgabeordner (Standard: .tools/linux-all/<Zeit>)")
     ap.add_argument("--cosmos-tools", help="Werkzeugordner (Standard: .tools/cosmos-tools/<deploy/cosmos/VERSION>)")
@@ -175,6 +188,8 @@ def main(argv=None) -> int:
                 continue
             build = ["dotnet", "build", ROOT / "ProjektZeh/ProjektZeh.csproj", "--configuration", "Release", "-warnaserror",
                      "-p:ZehOSLinuxRunProbe=true", f"-p:ZehOSLinuxRunBundle={bundle}"]
+            if args.linuxsmp == "1" or cfg.get("linuxsmp"):
+                build.append("-p:ZehOSLinuxRunSmp=true")
             ISO.unlink(missing_ok=True)  # kein Alt-ISO, falls der Bau still nichts erzeugt
             if run(build, work / f"{s}.build.log", env=env, timeout=BUILD_TIMEOUT) != 0:
                 row["*"] = (False, "Kernelbau fehlgeschlagen")
@@ -192,8 +207,9 @@ def main(argv=None) -> int:
                     row[key] = (None, "entfaellt")
                     continue
                 log = work / f"{s}.{key}.log"
+                stage_expected = ["--expected", cfg["smp1"], *expected] if smp <= 2 and "smp1" in cfg and expected else expected
                 runner = cfg.get("runner", RUN)
-                cmd = [sys.executable, "-I", runner, "run", "--iso", iso, *expected, *status, "--programs", *programs,
+                cmd = [sys.executable, "-I", runner, "run", "--iso", iso, *stage_expected, *status, "--programs", *programs,
                        "--accel", accel, "--smp", smp, "--timeout", args.timeout]
                 before = image_dirs()
                 try:

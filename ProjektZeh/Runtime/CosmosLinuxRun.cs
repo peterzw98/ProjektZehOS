@@ -931,7 +931,12 @@ internal static unsafe class CosmosLinuxRun
             // die Threads eines Programms dürfen deshalb auf der ganzen Menge laufen. Bis die Prüfung S5 bestanden ist, nur mit
             // zehos.linuxsmp=1; sonst wie bisher alle Threads auf einer CPU. Kindthreads erben die Menge ihres Erzeugers.
             var cpus = Cosmos.Kernel.System.Threading.ThreadAffinity.Current;
-            if (cpus.Count > 1 && !CosmosBootOptions.Current.LinuxSmp)
+            bool linuxSmp = CosmosBootOptions.Current.LinuxSmp;
+#if ZEHOS_LINUX_RUN_SMP
+            // N4-S5: Testbau -p:ZehOSLinuxRunSmp=true wirkt wie zehos.linuxsmp=1 (Gastsatz n4smp, test-linux-all.py --linuxsmp 1).
+            linuxSmp = true;
+#endif
+            if (cpus.Count > 1 && !linuxSmp)
             {
                 cpus = Cosmos.Kernel.System.Threading.CpuSet.Single(cpus.First);
                 Cosmos.Kernel.System.Threading.ThreadAffinity.Current = cpus;

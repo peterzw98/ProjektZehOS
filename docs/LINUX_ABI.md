@@ -299,8 +299,9 @@ Umsetzung und Grenzen:
   genullten Registern; sein erster Aufruf übernimmt den gesicherten Frame des Elternthreads (rax 0, neuer Stack) statt verteilt zu werden. Das geht ohne
   Cosmos-Patch, weil der Rückweg aus `syscall` jedes Register aus dem Frame herstellt. FS-Basis je Thread (`CLONE_SETTLS`, `arch_prctl`).
 - Der FPU-/SSE-Zustand des Kindes ist der Startzustand (FCW 0x37F, MXCSR 0x1F80), nicht die Kopie des Elternthreads (musl und glibc setzen nichts voraus).
-- Alle Threads eines Programms laufen auf **einer** CPU (die erste der Menge des Programmthreads; Kinder erben sie): `UserPageTable` hat noch keinen TLB-Shootdown
-  (N4) und lehnt `munmap`/`mprotect` ab, solange eine andere CPU auf der Tabelle läuft. Nebenläufig ja, parallel nein.
+- Ohne `zehos.linuxsmp=1` (Vorgabe) laufen alle Threads eines Programms auf **einer** CPU (die erste der Menge des Programmthreads; Kinder erben sie).
+  Mit `zehos.linuxsmp=1` laufen sie auf der ganzen Menge (N4-S2; `munmap`/`mprotect` schießen seit dem Cosmos-Patch tlb-shootdown auf allen CPUs ab).
+  Im Gast belegt der Satz `n4smp` (`experiments/LinuxAbi/README.md`, N4-S5) beides; die Vorgabe wechselt erst nach der Messung aus N4-S5.
 - Speicher (Karte, Frames, brk) schützt eine Sperre im Prozess; futex liest den Wert unter der Sperre seines Eimers (N4-S4: 16 Eimer nach
   `(Adresse >> 2) % 16`, Requeue hält beide in aufsteigender Nummer; Reihenfolge: futex-Eimer vor Speicher vor `UserPageTable` vor `PageAllocator`).
   `FUTEX_WAKE` weckt nur die gewählten Wartenden (ein Warteobjekt je Thread), nicht alle des Prozesses. Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.

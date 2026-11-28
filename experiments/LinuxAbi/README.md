@@ -28,13 +28,33 @@ Im Gast kommt dieselbe Ausgabe über denselben Aufruf (Argumente und Umgebung si
 ### Alle Gastsätze mit einem Befehl
 
 ```sh
-CC=<musl-gcc> python3 -I scripts/test-linux-all.py [--sets s1 s3 ...] [--configs kvm:1 kvm:4 tcg:1] [--work <ordner>]
+CC=<musl-gcc> python3 -I scripts/test-linux-all.py [--sets s1 s3 ...] [--configs kvm:1 kvm:4 tcg:1] [--work <ordner>] [--linuxsmp 0|1]
 ```
 
 Baut je Satz mit `build.sh`, packt das Bündel, baut den Kernel (`-warnaserror`, `-p:ZehOSLinuxRunProbe=true`) und fährt das ISO je Stufe
 (Standard KVM smp1, KVM smp4, TCG smp1) gegen `expected/`; am Ende steht eine Tabelle Satz × Stufe, Exit 0 nur bei lauter PASS. Logs und ISOs liegen im
 `--work`-Ordner (Standard `.tools/linux-all/<Zeit>`). Besonderheiten (spin aus `v3neg`, `v7b` nur mit Status, `v7bfull` mit Füllplatte nur KVM) stehen in
 `SPECIAL` des Skripts. Aufräumen: Datenplatten (`data.qcow2` unter `.tools/linux-run/`) und Satz-ISOs werden nach jedem Lauf gelöscht (`--keep-images` behält sie); Strg+C gibt die Tabelle der bisherigen Läufe aus (Exit 130); build.sh und dotnet haben ein Zeitlimit von 3600 s. Nicht enthalten: Desktop-Terminal-Tests (`test-linux-stdin.py`, `test-linux-js.py`) und der Satz `tools`.
+
+`--linuxsmp 1` baut alle Sätze zusätzlich mit `-p:ZehOSLinuxRunSmp=true`: Die Probe verhält sich wie mit `zehos.linuxsmp=1` (Threads eines Programms
+auf allen CPUs des Laufs), ohne `Bootloader/limine.conf` zu ändern. Der Satz `n4smp` läuft immer so. Nach jedem Programm schreibt die Probe
+`LINUX_RUN time <name> ms=<n> shootdowns=<n> longest_us=<n>` (Laufzeit, TLB-Abschüsse des Programms, längste Wartezeit eines Abschusses seit dem Boot);
+`test-linux-run.py` zeigt sie im Log hinter der Ausgabe, verglichen wird sie nicht.
+
+## Satz N4smp (Threads eines Programms auf mehreren CPUs, N4-S2 bis S5)
+
+Nur im Gast und nur unter KVM; gebaut mit `-p:ZehOSLinuxRunSmp=true`. Der Lauf bekommt die Worker-CPUs (ab CPU 1, `CpuSelection.Workers`), also
+eine CPU bei smp1 und smp2: Dort gilt für `smp_two_cpus` die Erwartung aus `expected/n4smp/smp1` (`one-cpu`).
+
+| Programm | prüft |
+| --- | --- |
+| `smp_two_cpus` | Tor N4-Z: zwei Threads rechnen je 2 s; Prozess-CPU-Zeit gegen Wandzeit > 1,6 und zwei verschiedene CPUs (`getcpu`): `two-cpus ok`; erlaubt die Affinität nur eine CPU: `one-cpu` |
+| `tlb_munmap` | 300 Runden: A liest eine Seite, B entfernt sie und schreibt eine Marke in frische Seiten; A endet jede Runde mit SIGSEGV und liest die Marke nie über die alte Adresse |
+| `tlb_mprotect` | 300 Runden: A schreibt, B setzt `PROT_READ` und liest zweimal; beide Lesungen gleich, A bekommt SIGSEGV |
+| `futex_stress` | vier Threads: Mutex-Zähler 4 × 25 000, dann je 10⁵ Runden im Ring mit `pthread_cond_broadcast` und mit `pthread_cond_signal` (eine Bedingung je Thread); Zähler genau, Reihenfolge nie verletzt, kein Hänger |
+| `kill_spinner` | fatale Signale (kill, tgkill, Fehler eines Geschwisters) beenden Threads, die im Ring 3 rechnen (N4-S3) |
+
+Gegenprobe `futex_stress` (Host, Linux): mit `-DFUTEX_STRESS_NOLOCK` fehlt der Mutex in Teil 1, der Zähler bleibt deutlich unter 100 000.
 
 ## Satz S1
 

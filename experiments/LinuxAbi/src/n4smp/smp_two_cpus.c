@@ -1,6 +1,8 @@
 /* N4-S2/Tor N4-Z: Nutzt ein pthread-Programm zwei CPUs? Zwei Threads rechnen dieselbe feste Arbeit gleichzeitig; das
  * Verhaeltnis Prozess-CPU-Zeit zu Wandzeit und getcpu beider Threads entscheiden. Ausgabe "two-cpus ok" (Verhaeltnis
- * > 1,6 und zwei verschiedene CPUs) oder "one-cpu"; die Zahlen selbst stehen nicht in der Ausgabe (sie schwanken). */
+ * > 1,6 und zwei verschiedene CPUs). Erlaubt die Affinitaet nur eine CPU (smp1 oder zehos.linuxsmp=0), lautet die Ausgabe
+ * "one-cpu" (eigener erwarteter Fall expected/n4smp/smp1); bei mehreren erlaubten CPUs ist alles andere ein Fehler
+ * ("fail ..."). Die Zahlen selbst stehen nur im Fehlerfall in der Ausgabe (sie schwanken). */
 #define _GNU_SOURCE
 #include "../s3/util.h"
 #include <pthread.h>
@@ -38,6 +40,12 @@ static void *work(void *arg)
 int main(void)
 {
     INIT();
+    cpu_set_t allowed;
+    NEED(sched_getaffinity(0, sizeof allowed, &allowed) == 0);
+    if (CPU_COUNT(&allowed) == 1) {
+        printf("one-cpu\n");
+        return 0;
+    }
     pthread_t t[2];
     for (long i = 0; i < 2; i++) NEED(pthread_create(&t[i], NULL, work, (void *)i) == 0);
     double wall0 = now(CLOCK_MONOTONIC), cpu0 = now(CLOCK_PROCESS_CPUTIME_ID);
@@ -50,7 +58,7 @@ int main(void)
         printf("two-cpus ok\n");
     } else {
         /* Nur im Fehlerfall: die schwankenden Werte gehoeren nicht in die verglichene Ausgabe. */
-        printf("one-cpu ratio=%.2f cpus0=%#x cpus1=%#x\n", ratio, cpus_of[0], cpus_of[1]);
+        printf("fail ratio=%.2f cpus0=%#x cpus1=%#x\n", ratio, cpus_of[0], cpus_of[1]);
     }
     return 0;
 }
