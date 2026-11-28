@@ -41,7 +41,8 @@ Baut je Satz mit `build.sh`, packt das Bündel, baut den Kernel (`-warnaserror`,
 | Programm | prüft |
 | --- | --- |
 | `args_env_auxv` | `argc`/`argv`/`envp`, Hilfsvektor (`AT_PAGESZ PHENT PHNUM PHDR ENTRY BASE RANDOM UID EUID GID EGID SECURE EXECFN HWCAP`), ohne Werte, die vom Benutzer oder Lader abhängen |
-| `files` | `openat`/`open` (`O_EXCL`, `O_NOFOLLOW`), `read write readv writev lseek fstat stat lstat access rename unlink readlink symlink`, Lücke hinter dem Dateiende, Fehlernummern |
+| `files` | `openat`/`open` (`O_EXCL`, `O_NOFOLLOW`), `read write readv writev lseek fstat stat lstat access rename unlink`, Lücke hinter dem Dateiende, Fehlernummern |
+| `symlinks` | `symlink`, `readlink`, `lstat`, `stat` über den Link, `O_NOFOLLOW` (`ELOOP`); nur unter Linux und auf Dateisystemen mit Symlinks, **nicht im Gast-Bündel** (FAT liefert `EPERM`) |
 | `dirs` | `mkdir rmdir getdents64 getcwd chdir rename unlink`, Fehlernummern (`EEXIST ENOENT ENOTEMPTY ENOTDIR EISDIR`) |
 | `mmap_anon` | `mmap` anonym, `MAP_FIXED`, `munmap` (Teile), `mprotect`, `madvise(DONTNEED)` (Nullung), `MAP_NORESERVE`, Fehlerwege |
 | `mprotect_fault` | Schreiben auf eine schreibgeschützte Seite: Status `signal 11`, Ausgabe davor vollständig |
@@ -50,7 +51,7 @@ Baut je Satz mit `build.sh`, packt das Bündel, baut den Kernel (`-warnaserror`,
 | `random` | `getrandom`: zwei Aufrufe verschieden, Flags, Fehlerwege (nie die Werte) |
 | `long_double` | x87 80 Bit (`long double`, Exponent bis 4932), SSE, FPU-Zustand über einen Systemaufruf hinweg |
 | `tls` | `__thread` (`.tdata`/`.tbss`, 3000-Byte-Feld), FS-Basis über `arch_prctl(ARCH_GET_FS)` und `%fs:0` |
-| `badptr` | ungültige, Kernel- und nichtkanonische Zeiger an 14 Aufrufe (inkl. symlink für readlink): `EFAULT` (14), kein Absturz; `mprotect` auf Ungemapptes: `ENOMEM` |
+| `badptr` | ungültige, Kernel- und nichtkanonische Zeiger an 14 Aufrufe (readlink auf /proc/self/exe, kein Symlink auf FAT nötig): `EFAULT` (14), kein Absturz; `mprotect` auf Ungemapptes: `ENOMEM` |
 | `unknown_syscall` | unbekannte Nummern (und `-1`): `ENOSYS` (38), der Prozess läuft weiter |
 
 Stand der Erwartungen: erzeugt mit `--update` auf Linux `6.12.90+deb13.1-amd64` (Debian 13, x86-64, musl 1.2.5, musl-gcc von Debian). Auf demselben

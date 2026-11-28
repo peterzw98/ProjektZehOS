@@ -44,14 +44,6 @@ int main(void)
     SHOWI("rename", rename("a.txt", "b.txt"));
     SHOWI("stat old", stat("a.txt", &st)); SHOWI("errno", errno);
     SHOWI("stat new", stat("b.txt", &st)); SHOWI("size", st.st_size);
-    SHOWI("symlink", symlink("b.txt", "l.txt"));
-    char link[32] = { 0 };
-    SHOWI("readlink", readlink("l.txt", link, sizeof link - 1));
-    printf("link=%s\n", link);
-    SHOWI("lstat", lstat("l.txt", &st)); SHOW("is link", S_ISLNK(st.st_mode));
-    SHOWI("stat via link", stat("l.txt", &st)); SHOW("is regular", S_ISREG(st.st_mode));
-    SHOWI("O_NOFOLLOW link", open("l.txt", O_RDONLY | O_NOFOLLOW)); SHOWI("errno", errno);
-    SHOWI("unlink link", unlink("l.txt"));
     SHOWI("unlink", unlink("b.txt"));
     SHOWI("unlink again", unlink("b.txt")); SHOWI("errno", errno);
     SHOWI("open dir for write", open(".", O_WRONLY)); SHOWI("errno", errno);
