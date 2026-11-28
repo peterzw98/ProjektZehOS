@@ -2,8 +2,8 @@
 
 Nutzung: scripts/test-linux-faults.py <iso> <arbeitsordner> [smp] [runden]
 Vorher: CC=<musl-gcc> sh experiments/LinuxAbi/build.sh t3
-Je Runde laufen vier Programme ohne Signalbehandler: Seitenfehler auf Adresse 0 (signal 11), ud2 (signal 4), div durch 0 (signal 8)
-und kill(getpid(), SIGSEGV) (signal 11). Nach jedem Absturz muss ein weiterer Start (okprog, exit 0) gehen; am Ende muss das
+Je Runde laufen fuenf Programme ohne Signalbehandler: Seitenfehler auf Adresse 0 (signal 11), ud2 (signal 4), div durch 0 (signal 8)
+kill(getpid(), SIGSEGV) und SIGSEGV in einem Thread (je signal 11). Nach jedem Absturz muss ein weiterer Start (okprog, exit 0) gehen; am Ende muss das
 Terminal weiter bedienbar sein, ohne dass der Kernel angehalten hat (keine CPU-EXCEPTION-Zeile, kein Wechsel in die Textshell).
 """
 import importlib.util, sys, time, shutil, os
@@ -14,7 +14,7 @@ iso, work = Path(sys.argv[1]), Path(sys.argv[2]); smp = sys.argv[3] if len(sys.a
 rounds = int(sys.argv[4]) if len(sys.argv) > 4 else 2
 work.mkdir()
 os.environ["ZEHOS_QEMU_SMP"] = smp
-CASES = (("nullpf", 11), ("ud2", 4), ("div0", 8), ("segvself", 11))
+CASES = (("nullpf", 11), ("ud2", 4), ("div0", 8), ("segvself", 11), ("thrsegv", 11))
 d = work / "appdir"; d.mkdir(); (d / "t").mkdir()
 for name in [c[0] for c in CASES] + ["okprog"]:
     shutil.copy2(R / "experiments/LinuxAbi/out/t3" / name, d / "t" / name)
@@ -47,7 +47,8 @@ try:
     check("Terminal weiter bedienbar (letzter Start)", run("okprog", "exit 0"))
     try: g.qmp.line("shutdown")
     except Exception: pass
-    p.wait(timeout=60)
+    try: p.wait(timeout=60)
+    except Exception: pass  # finally beendet QEMU notfalls
 finally:
     if p.poll() is None: p.kill(); p.wait()
 print(f"ERGEBNIS {sum(c for _, c in ok)}/{len(ok)}")
