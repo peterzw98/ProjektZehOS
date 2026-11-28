@@ -1462,8 +1462,14 @@ internal static unsafe class CosmosLinuxRun
                 // V50 P3: Ende melden, Ids und Slot freigeben, auch wenn das Schließen einer Datei geworfen hat.
                 try
                 {
-                    process.ReportEnd(process.WaitStatusOf(9));
-                    process.Destroy();
+                    try
+                    {
+                        process.ReportEnd(process.WaitStatusOf(9));
+                    }
+                    finally
+                    {
+                        process.Destroy(); // auch wenn ReportEnd wirft, sonst leaken die Ids
+                    }
                 }
                 finally
                 {
