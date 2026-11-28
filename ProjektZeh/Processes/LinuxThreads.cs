@@ -122,6 +122,13 @@ internal interface ILinuxThreads
     /// <summary>Nach sigprocmask und sigaction: anhängige Signale verwerfen oder ihrer Standardaktion folgen (V10-Review P3).</summary>
     void SignalStateChanged();
 
+    /// <summary>
+    /// sigaction: liefert die bisherige Aktion (Handler, Flags, Restorer, Maske) in <paramref name="action"/> und setzt bei
+    /// <paramref name="set"/> die übergebene, beides unter derselben Sperre wie TakeSignal. Sonst sähe ein anderer Thread den neuen
+    /// Handler mit den alten Flags (Risiko-Review 2, P3-1).
+    /// </summary>
+    void ExchangeSignalAction(int signal, bool set, Span<ulong> action);
+
     /// <summary>Anhängige Signale (Bit = Nummer - 1), für rt_sigpending (V23).</summary>
     ulong PendingSignals { get; }
 }

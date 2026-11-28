@@ -672,8 +672,29 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     // Standardaktion "beenden": den ganzen Prozess, wie bei Linux (Status "signal <n>").
     private void Terminate(int signal)
     {
-        TerminatedBySignal ??= signal;
+        // P3-9 (Risiko-Review 2): Signal und Status unter derselben Sperre wie ExitCode in Exit. Kam exit_group eines anderen Threads
+        // zuvor, gilt dessen Code allein; sonst meldete Describe "signal n" zu ExitCode 0. Auf mehreren CPUs ist das Fenster breit.
+        lock (_threadGate)
+        {
+            if (ExitCode == null)
+            {
+                TerminatedBySignal ??= signal;
+            }
+        }
+
         Exit(128 + signal);
+    }
+
+    /// <summary>
+    /// sigaction (<see cref="ILinuxThreads.ExchangeSignalAction"/>): unter <c>_threadGate</c>, wie TakeSignal, TakeFaultSignal und
+    /// SA_RESETHAND, damit kein Thread eine halb geschriebene Aktion zustellt (Risiko-Review 2, P3-1).
+    /// </summary>
+    public void ExchangeSignalAction(int signal, bool set, Span<ulong> action)
+    {
+        lock (_threadGate)
+        {
+            LinuxSyscalls.ExchangeAction(Signals, signal, set, action);
+        }
     }
 
     public LinuxSignalState Signals { get; } = new();

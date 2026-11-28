@@ -322,12 +322,29 @@ internal static partial class LinuxSyscalls
             newMask = BitConverter.ToUInt64(b.Slice(24, 8));
         }
 
+        // P3-1 (Risiko-Review 2): Lesen der alten und Setzen der neuen Aktion unter der Sperre, unter der ein anderer Thread sie
+        // zustellt (TakeSignal, SA_RESETHAND). Die alte schreibt erst danach in den Speicher des Programms, außerhalb der Sperre
+        // (_threadGate steht zuunterst); scheitert das, gilt die neue trotzdem, wie bei Linux (do_sigaction vor copy_to_user).
+        Span<ulong> action = stackalloc ulong[4];
+        action[0] = newHandler;
+        action[1] = newFlags;
+        action[2] = newRestorer;
+        action[3] = newMask & ~SigKillStopMask;
+        if (p is ILinuxThreads threads)
+        {
+            threads.ExchangeSignalAction(sig, act != 0, action);
+        }
+        else
+        {
+            ExchangeAction(st, sig, act != 0, action);
+        }
+
         if (oact != 0)
         {
-            BitConverter.TryWriteBytes(b.Slice(0, 8), st.Handler[sig]);
-            BitConverter.TryWriteBytes(b.Slice(8, 8), st.Flags[sig]);
-            BitConverter.TryWriteBytes(b.Slice(16, 8), st.Restorer[sig]);
-            BitConverter.TryWriteBytes(b.Slice(24, 8), st.Mask[sig]);
+            BitConverter.TryWriteBytes(b.Slice(0, 8), action[0]);
+            BitConverter.TryWriteBytes(b.Slice(8, 8), action[1]);
+            BitConverter.TryWriteBytes(b.Slice(16, 8), action[2]);
+            BitConverter.TryWriteBytes(b.Slice(24, 8), action[3]);
             if (!p.Memory.TryWrite(oact, b))
             {
                 return -EFAULT;
@@ -336,16 +353,29 @@ internal static partial class LinuxSyscalls
 
         if (act != 0)
         {
-            st.Handler[sig] = newHandler;
-            st.Flags[sig] = newFlags;
-            st.Restorer[sig] = newRestorer;
-            st.Mask[sig] = newMask & ~SigKillStopMask;
-
             // SIG_IGN verwirft ein anhängiges Signal (Linux do_sigaction), auch ein blockiertes.
             (p as ILinuxThreads)?.SignalStateChanged();
         }
 
         return 0;
+    }
+
+    /// <summary>Tauscht die Aktion eines Signals (Handler, Flags, Restorer, Maske); der Aufrufer hält die Sperre, falls es eine gibt.</summary>
+    internal static void ExchangeAction(LinuxSignalState st, int sig, bool set, Span<ulong> action)
+    {
+        ulong handler = st.Handler[sig], flags = st.Flags[sig], restorer = st.Restorer[sig], mask = st.Mask[sig];
+        if (set)
+        {
+            st.Handler[sig] = action[0];
+            st.Flags[sig] = action[1];
+            st.Restorer[sig] = action[2];
+            st.Mask[sig] = action[3];
+        }
+
+        action[0] = handler;
+        action[1] = flags;
+        action[2] = restorer;
+        action[3] = mask;
     }
 
     private static long DoSigprocmask(ILinuxProcess p, int how, ulong set, ulong oldset, ulong sigsetsize)

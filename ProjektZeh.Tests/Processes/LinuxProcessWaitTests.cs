@@ -579,6 +579,19 @@ public sealed class LinuxProcessWaitTests
     }
 
     [TestMethod]
+    public void SignalNachExitGroupLaesstDessenStatus()
+    {
+        // Risiko-Review 2, P3-9: exit_group(0) kam zuerst; ein Signal mit Standardaktion danach darf den Status nicht auf "signal 15" drehen.
+        var r = new Root();
+        r.P.Exit(0);
+        Assert.AreEqual(0L, Sys(r.P, KillNr, RootPid, 15));
+        Assert.AreEqual(0, r.P.ExitCode);
+        Assert.IsNull(r.P.TerminatedBySignal);
+        r.P.RecordFault(11);
+        Assert.IsNull(r.P.TerminatedBySignal, "auch der Fehler eines Geschwisters nach exit_group nicht");
+    }
+
+    [TestMethod]
     public void KillNachExecveBeendetDasKindVonAussen()
     {
         var r = new Root();
