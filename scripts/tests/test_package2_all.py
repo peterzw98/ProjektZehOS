@@ -42,6 +42,9 @@ def wait_dead(pid, seconds=5.0):
     return False
 
 
+# Das Skript braucht Prozessgruppen (os.killpg, start_new_session) und SIGHUP; beides fehlt unter Windows. Die CI und die
+# Gastlaeufe sind Linux, unter Windows wird die Klasse deshalb uebersprungen statt mit AttributeError zu scheitern.
+@unittest.skipUnless(hasattr(os, "killpg") and hasattr(signal, "SIGHUP"), "braucht POSIX-Prozessgruppen und SIGHUP")
 class Package2AllTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

@@ -48,8 +48,10 @@ WORK_LINE = re.compile(r"; Protokolle: (.+)$")
 
 
 class Terminated(BaseException):
-    """SIGTERM/SIGHUP als Ausnahme: Ohne sie beendete Python den Sammelaufruf ohne finally, und QEMU (eigene Sitzung,
-    erreicht also kein Signal an unsere Gruppe) liefe ohne Aufsicht weiter und belegte den Gastplatz."""
+    """SIGTERM/SIGHUP als Ausnahme: Ohne sie beendete Python den Sammelaufruf ohne finally, run() kaeme nicht zum killpg,
+    und die Probe samt QEMU (beide in der eigenen Prozessgruppe aus run(), vom Signal an unsere Gruppe nicht erreicht)
+    liefe ohne Aufsicht weiter und belegte den Gastplatz. Die Probe stirbt per SIGKILL, ihr finally laeuft nicht; ihre
+    Platten unter .tools/package2-guest bleiben deshalb liegen und werden gemeldet."""
 
     def __init__(self, signum):
         super().__init__(signum)
@@ -169,7 +171,8 @@ def main(argv=None) -> int:
     try:
         return _main(argv)
     except Terminated as t:
-        # Nur waehrend des Baus erreichbar (die Gastlaeufe fangen das Signal selbst); run() hat die Gruppe beendet.
+        # Nur waehrend des Baus erreichbar: Waehrend der Gastlaeufe faengt _main() das Signal und druckt die Tabelle;
+        # run() hat die Gruppe der Probe dann schon per SIGKILL beendet.
         print(f"Abbruch durch Signal {t.signum} waehrend des Baus", file=sys.stderr)
         return 128 + t.signum
     finally:
