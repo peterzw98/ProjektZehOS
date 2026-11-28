@@ -23,6 +23,17 @@ internal sealed record PackageIndexEntry(PackageIndexKind Kind, string Path, str
     public bool Executable => File?.Executable == true;
 }
 
+internal enum PackageIndexNodeKind
+{
+    Missing,
+    File,
+    Directory,
+    Link,
+}
+
+/// <summary>Eintrag ohne Folgen eines Links (<see cref="PackageIndex2.Lookup"/>): Datei mit Manifestzeile und Ablageort oder Link mit Manifestziel.</summary>
+internal sealed record PackageIndexNode(PackageIndexNodeKind Kind, string Path, PackageFile2? File, string? Location, string? Target);
+
 /// <summary>
 /// Unveraenderlicher Pfadindex einer aktiven Menge v2 (Plan N3-B, Schritt B1): <c>Pfad → Paketdatei</c> statt eines
 /// Vereinigungsdateisystems. Gebaut wird er nur aus <see cref="PackageStore2.ReadActive"/>, also aus Manifesten mit gepruefter
@@ -39,9 +50,12 @@ internal sealed record PackageIndexEntry(PackageIndexKind Kind, string Path, str
 /// </remarks>
 internal sealed class PackageIndex2
 {
-    private sealed record Node(PackageIndexKind Kind, string Path, ActivePackage2? Package, PackageFile2? File, string? Target);
+    // Target: aufgeloestes Ziel relativ zur Wurzel (fuer Resolve); RawTarget: Ziel wie im Manifest (fuer die Prozesswurzel, N3-B2).
+    private sealed record Node(PackageIndexKind Kind, string Path, ActivePackage2? Package, PackageFile2? File, string? Target, string? RawTarget = null);
 
     private readonly Dictionary<string, Node> nodes;
+    // Kinder je Ordner ("" ist die Wurzel), Namen in der Schreibweise des Manifests, ordinal sortiert (readdir der Prozesswurzel).
+    private readonly Dictionary<string, string[]> children;
 
     /// <summary>Die Menge, aus der der Index entstand (Reihenfolge wie active2).</summary>
     public ActivePackage2[] Packages { get; }
@@ -54,6 +68,20 @@ internal sealed class PackageIndex2
         Packages = packages;
         this.nodes = nodes;
         Generation = generation;
+        var lists = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { [""] = [] };
+        foreach (var node in nodes.Values)
+            if (node.Kind == PackageIndexKind.Directory) lists.TryAdd(node.Path, []);
+        foreach (var node in nodes.Values)
+        {
+            int slash = node.Path.LastIndexOf('/');
+            lists[slash < 0 ? "" : node.Path[..slash]].Add(node.Path[(slash + 1)..]);
+        }
+        children = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (directory, names) in lists)
+        {
+            names.Sort(StringComparer.Ordinal);
+            children.Add(directory, [.. names]);
+        }
     }
 
     /// <summary>
@@ -76,7 +104,7 @@ internal sealed class PackageIndex2
                 string? target = ResolveLink(link);
                 if (target == null)
                     return ResultObjectFactory.CreateFailure<PackageIndex2>(ResultCode.Failure, $"Link {link.Path} zeigt ueber die Paketwurzel hinaus.");
-                if (!nodes.TryAdd(link.Path, new Node(PackageIndexKind.File, link.Path, package, null, target)))
+                if (!nodes.TryAdd(link.Path, new Node(PackageIndexKind.File, link.Path, package, null, target, link.Target)))
                     return Conflict(link.Path);
             }
         }
@@ -135,6 +163,27 @@ internal sealed class PackageIndex2
             if (current.Length > PackageManifest2.MaximumPathLength)
                 return ResultObjectFactory.CreateFailure<PackageIndexEntry>(ResultCode.Failure, "Linkkette ergibt einen Pfad ueber 200 Zeichen: " + Shown(path));
         }
+    }
+
+    /// <summary>
+    /// Eintrag eines kanonischen Pfads OHNE Folgen eines Links (lstat der Prozesswurzel, N3-B2); "" ist die Wurzel. Links loest das
+    /// Linux-Dateisystem darueber Teil fuer Teil selbst auf, deshalb liefert der Index hier das Ziel wie im Manifest.
+    /// </summary>
+    public PackageIndexNode Lookup(string path)
+    {
+        if (path.Length == 0) return new PackageIndexNode(PackageIndexNodeKind.Directory, "", null, null, null);
+        if (!TryCanonical(path, out string canonical) || !nodes.TryGetValue(canonical, out var node))
+            return new PackageIndexNode(PackageIndexNodeKind.Missing, path, null, null, null);
+        if (node.Kind == PackageIndexKind.Directory) return new PackageIndexNode(PackageIndexNodeKind.Directory, node.Path, null, null, null);
+        if (node.RawTarget != null) return new PackageIndexNode(PackageIndexNodeKind.Link, node.Path, null, null, node.RawTarget);
+        return new PackageIndexNode(PackageIndexNodeKind.File, node.Path, node.File, Entry(node).Location, null);
+    }
+
+    /// <summary>Namen eines Ordners (ordinal sortiert, Schreibweise des Manifests) oder null, wenn der Pfad kein Ordner des Index ist.</summary>
+    public string[]? List(string path)
+    {
+        if (path.Length == 0) return children[""];
+        return TryCanonical(path, out string canonical) && children.TryGetValue(canonical, out var names) ? names : null;
     }
 
     /// <summary>Prueft eine aufgeloeste Datei gegen Groesse und SHA-256 ihres signierten Manifests (Sperren wie <see cref="PackageStore2.VerifyFiles"/>).</summary>

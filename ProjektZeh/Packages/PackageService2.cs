@@ -16,18 +16,20 @@ internal sealed record PackageChange2(CatalogEntry2[] Staged, string[] Removed, 
 /// <see cref="PackageTrust"/> mit <see cref="PackageResolver"/> und <see cref="PackageStore2"/>. Jeder aendernde Auftrag berechnet
 /// zuerst die vollstaendige Zielmenge, prueft den Platz, stuft alle neuen Versionen und wechselt dann genau einmal mit
 /// <see cref="PackageStore2.Activate"/>. Scheitert oder endet ein Auftrag vorher, gilt der bisherige Bestand unveraendert; gestufte
-/// Reste entfernt <see cref="PackageStore2.Reconcile"/> beim naechsten Einbinden. Die Shell erreicht den Dienst ueber
+/// Reste entfernt <see cref="Reconcile"/> beim naechsten Einbinden. Die Shell erreicht den Dienst ueber
 /// <c>pkg native</c> (N3-B1); der Bestand v1 bleibt davon unberuehrt.
 /// </summary>
 /// <remarks>
-/// Entfernte Versionen bleiben als Ordner liegen, bis <see cref="PackageStore2.Reconcile"/> laeuft: Erst N3-B zaehlt laufende Nutzer,
-/// vorher darf nur das Einbinden vor dem ersten Paketstart aufraeumen. Die Platzpruefung ist eine Vorabschaetzung (Inhalt plus
+/// Nutzungszaehlung (N3-B3): Jeder lebende Indexstand (der veroeffentlichte und jeder noch von Prozessen gebundene) haelt in
+/// <see cref="PackageStore2"/> einen Nutzer je enthaltener Paketversion. Nach jedem Wechsel raeumt der Auftrag Versionen ohne Nutzer
+/// sofort ab; was ein laufendes Programm noch braucht, bleibt bis zur Freigabe seines Stands liegen und faellt beim naechsten
+/// <see cref="CollectUnused"/> (naechster Paketstart, naechster Wechsel oder Einbinden) weg. Die Platzpruefung ist eine Vorabschaetzung (Inhalt plus
 /// Verwaltungsaufschlag je Paket); den tatsaechlich vollen Datentraeger erkennt <see cref="PackageStore2.Stage"/> an der
 /// gespeicherten Laenge.
 /// <para>Paketindex (N3-B1): Nach jedem erfolgreichen <see cref="PackageStore2.Activate"/> und nach <see cref="RefreshIndex"/>
 /// (Einbinden, Neustart) gilt ein neuer, unveraenderlicher <see cref="PackageIndex2"/> aus dem dann gueltigen active2. Wer
-/// <see cref="CurrentIndex"/> einmal geholt hat, behaelt diesen Stand; das Binden an einen Prozess bis zum Ende seiner Nutzer
-/// folgt mit N3-B2. Der Wechsel ist ein einzelner Verweis unter <c>gate</c>, ohne Plattenzugriff in der Sperre.</para>
+/// <see cref="CurrentIndex"/> einmal geholt hat, behaelt diesen Verweis; dessen Dateien haelt aber nur <see cref="Bind"/> bis zur
+/// Freigabe (N3-B2/B3), ein blosser Verweis kann nach dem naechsten Wechsel auf entfernte Dateien zeigen. Der Wechsel ist ein einzelner Verweis unter <c>gate</c>, ohne Plattenzugriff in der Sperre.</para>
 /// </remarks>
 internal sealed class PackageService2(string root, PackageStore2 store, PackageTrust? trust, Func<ResultObject<long>>? freeBytes = null,
     Func<IDisposable?>? tryBeginWrite = null)
@@ -43,6 +45,13 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     private bool indexBuilt;
     private long indexGeneration;
     private long publishedGeneration;
+    // Unter gate (N3-B2): gebundene Nutzer je Indexstand. Ein Eintrag verschwindet mit seinem letzten Nutzer; B3 leitet daraus ab,
+    // welche Paketversionen noch gebraucht werden.
+    private readonly Dictionary<long, int> boundUsers = [];
+    // Unter gate (N3-B3): Nutzungsschluessel je lebendem Indexstand, wie in store gezaehlt. Ein Stand lebt, solange er
+    // veroeffentlicht ist oder boundUsers ihn fuehrt. collectPending: eine Version hat ihren letzten Nutzer verloren.
+    private readonly Dictionary<long, string[]> liveKeys = [];
+    private bool collectPending;
 
     private const int FloorMaximumBytes = 512;
 
@@ -71,6 +80,117 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     }
 
     /// <summary>
+    /// Bindet den aktuellen Index an einen Prozessstart (N3-B2). Der Lauf behaelt diesen Stand samt Kindprozessen, bis er die
+    /// Bindung freigibt, auch wenn ein spaeteres Activate neue Starts auf einen neuen Stand schaltet.
+    /// </summary>
+    /// <remarks>
+    /// Sperre fuer Start und Aktivierung ist <c>gate</c>: Holen des Verweises und Zaehlen liegen im selben Abschnitt wie der Wechsel
+    /// in <see cref="Publish"/>, ein Start sieht also genau einen ganzen Stand. <c>gate</c> ist ein Blatt: darin keine Plattenzugriffe
+    /// und kein <c>StorageLock</c> (Reihenfolge <c>StorageLock</c> vor <c>gate</c> vor der Zaehlsperre von <see cref="PackageStore2"/>).
+    /// Ein Start zwischen Activate und Neubau bindet noch den alten Stand; der veroeffentlichte Stand haelt seine Versionen, deren
+    /// Dateien bleiben also liegen, bis auch dieser Lauf freigibt.
+    /// </remarks>
+    public ResultObject<PackageIndexLease> Bind()
+    {
+        var current = CurrentIndex();
+        if (!current.IsOK()) return ResultObjectFactory.CreateFailure<PackageIndexLease>(current.Status);
+        lock (gate)
+        {
+            // Hat ein Wechsel inzwischen einen neueren Stand veroeffentlicht, bekommt der Start diesen (oder seinen Fehler).
+            if (index == null) return ResultObjectFactory.CreateFailure<PackageIndexLease>(ResultCode.Failure, indexError ?? "Kein Paketindex v2.");
+            boundUsers[index.Generation] = boundUsers.GetValueOrDefault(index.Generation) + 1;
+            return ResultObjectFactory.CreateSuccess(new PackageIndexLease(this, index));
+        }
+    }
+
+    /// <summary>Gebundene Nutzer je Indexstand (Generation, Anzahl), aufsteigend nach Generation; leer ohne laufende Paketprozesse.</summary>
+    public (long Generation, int Users)[] BoundUsers()
+    {
+        lock (gate)
+        {
+            var result = new (long, int)[boundUsers.Count];
+            int at = 0;
+            foreach (var (generation, users) in boundUsers) result[at++] = (generation, users);
+            Array.Sort(result, (a, b) => a.Item1.CompareTo(b.Item1));
+            return result;
+        }
+    }
+
+    // Aus dem Ende eines Laufs (Programmthread oder Shell), auch auf Fehlerwegen: keine Plattenzugriffe, keine Allokation. Das
+    // Entfernen freigewordener Versionen folgt bei CollectUnused.
+    internal void Unbind(PackageIndex2 bound)
+    {
+        lock (gate)
+        {
+            if (!boundUsers.TryGetValue(bound.Generation, out int users)) return;
+            if (users > 1)
+            {
+                boundUsers[bound.Generation] = users - 1;
+                return;
+            }
+            boundUsers.Remove(bound.Generation);
+            if (index?.Generation != bound.Generation) ReleaseGenerationLocked(bound.Generation);
+        }
+    }
+
+    // Unter gate: Ein Stand lebt nicht mehr; seine Versionen verlieren je einen Nutzer.
+    private void ReleaseGenerationLocked(long generation)
+    {
+        if (liveKeys.Remove(generation, out string[]? keys) && store.Release(keys)) collectPending = true;
+    }
+
+    /// <summary>Ob eine Freigabe Versionen ohne Nutzer hinterlassen hat, die <see cref="CollectUnused"/> entfernen wuerde.</summary>
+    public bool CollectPending
+    {
+        get { lock (gate) return collectPending; }
+    }
+
+    /// <summary>
+    /// Laufzeitbereinigung (N3-B3): Hat seit der letzten Bereinigung eine Version ihren letzten Nutzer verloren, entfernt das volle
+    /// <see cref="PackageStore2.Reconcile"/> alle nicht aktiven Versionen ohne Nutzer. Laeuft gerade ein Auftrag, bleibt die
+    /// Bereinigung vorgemerkt (der Auftrag raeumt nach seinem Wechsel selbst auf). Aus dem Shellthread rufen, nie aus dem Ende eines
+    /// Programmthreads: Reconcile greift auf die Platte zu.
+    /// </summary>
+    public ResultErr CollectUnused()
+    {
+        lock (gate) if (!collectPending) return ResultErr.CreateSuccess();
+        var begun = Begin();
+        if (!begun.IsOK()) return begun;
+        try { return CollectBegun(); }
+        finally { End(); }
+    }
+
+    /// <summary>
+    /// Beim Einbinden (Boot, disk mount): halbe Wechsel abschliessen, Reste und nicht aktive Versionen ohne Nutzer entfernen, dann
+    /// den Index aus dem gueltigen active2 neu bilden. Unter dem Auftragsausschluss, damit kein Reconcile zwischen einem Activate
+    /// und der Veroeffentlichung des neuen Stands laeuft (Bedingung in <see cref="PackageStore2.Reconcile"/>).
+    /// </summary>
+    public ResultErr Reconcile()
+    {
+        var begun = Begin();
+        if (!begun.IsOK()) return begun;
+        try
+        {
+            lock (gate) collectPending = false;
+            var reconciled = store.Reconcile();
+            if (!reconciled.IsOK()) lock (gate) collectPending = true;
+            var indexed = RefreshIndex();
+            return !reconciled.IsOK() ? reconciled : indexed;
+        }
+        finally { End(); }
+    }
+
+    // Unter busy. Vormerkung vor dem Lesen loeschen: Eine Freigabe waehrend Reconcile merkt erneut vor, statt verloren zu gehen.
+    private ResultErr CollectBegun()
+    {
+        Step("aufraeumen");
+        lock (gate) collectPending = false;
+        var reconciled = store.Reconcile();
+        if (!reconciled.IsOK()) lock (gate) collectPending = true;
+        return reconciled;
+    }
+
+    /// <summary>
     /// Baut den Index aus dem gueltigen active2 neu (Einbinden, Neustart, nach Reconcile). Liest die Manifeste ausserhalb von
     /// <c>gate</c>; nur der Wechsel des Verweises liegt darin. Laufen zwei Aufrufe gleichzeitig, gewinnt der spaeter gebaute Stand.
     /// </summary>
@@ -87,15 +207,24 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
 
     private ResultErr Publish(long generation, PackageIndex2? value, string? error)
     {
+        string[]? keys = value == null ? null : PackageStore2.UsageKeys(value.Packages);
         lock (gate)
         {
             // Ein frueher begonnener Bau ueberschreibt keinen spaeteren (zwei RefreshIndex gleichzeitig, etwa Einbinden und Auftragsende).
             if (generation > publishedGeneration)
             {
+                // Erst den neuen Stand zaehlen, dann den alten freigeben: Eine Version beider Staende faellt nie kurz auf null.
+                if (value != null)
+                {
+                    store.Acquire(keys!);
+                    liveKeys[value.Generation] = keys!;
+                }
+                var old = index;
                 publishedGeneration = generation;
                 index = value;
                 indexError = error;
                 indexBuilt = true;
+                if (old != null && !boundUsers.ContainsKey(old.Generation)) ReleaseGenerationLocked(old.Generation);
             }
         }
         return error == null ? ResultErr.CreateSuccess() : ResultErr.CreateFailure(ResultCode.Failure, error);
@@ -496,6 +625,8 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     {
         Step("index");
         var refreshed = RefreshIndex();
+        // Ein Fehler hier aendert den Auftrag nicht: Die Bereinigung bleibt vorgemerkt und laeuft beim naechsten Anlass erneut.
+        CollectBegun();
         return refreshed.IsOK() ? ResultObjectFactory.CreateSuccess(change)
             : Fail(ResultCode.Failure, "Bestand gewechselt, aber kein Index: " + refreshed.Message
                 + " Neue Starts scheitern bis zum naechsten erfolgreichen Neubau (Einbinden oder pkg-Auftrag).");
@@ -507,4 +638,24 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
 
     private static ResultObject<PackageCatalog2?> DamagedCatalog() =>
         ResultObjectFactory.CreateFailure<PackageCatalog2?>(ResultCode.Failure, "Gespeicherter Katalog v2 beschaedigt; pkg update ausfuehren.");
+}
+
+/// <summary>
+/// Bindung eines Laufs an einen Indexstand (N3-B2). Freigabe genau einmal, auch bei doppeltem <see cref="Dispose"/> aus Fehlerwegen.
+/// </summary>
+internal sealed class PackageIndexLease : IDisposable
+{
+    private PackageService2? owner;
+
+    internal PackageIndexLease(PackageService2 owner, PackageIndex2 index)
+    {
+        this.owner = owner;
+        Index = index;
+    }
+
+    public PackageIndex2 Index { get; }
+
+    public bool Released => Volatile.Read(ref owner) == null;
+
+    public void Dispose() => Interlocked.Exchange(ref owner, null)?.Unbind(Index);
 }

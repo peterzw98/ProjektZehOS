@@ -30,8 +30,8 @@ internal readonly record struct CatalogEntry2Key(string Id, PackageVersion2 Vers
 /// <remarks>
 /// Jede Signatur wird vor <see cref="PackageManifest2.Parse"/> geprueft: Der Parser bekommt nur Text des Herausgebers zu sehen
 /// (Review von #668: die Pfadmenge im Parser hasht ohne Salt). Schreibende Operationen schliessen sich innerhalb einer Instanz
-/// aus; nicht aktive Versionen entfernt nur <see cref="Reconcile"/>, das vor dem Start von Paketprogrammen laufen muss, weil es
-/// noch keine Belegung laufender Versionen gibt.
+/// aus; nicht aktive Versionen entfernt nur <see cref="Reconcile"/>. Es laesst Versionen mit Nutzern (<see cref="Acquire"/>, N3-B3)
+/// liegen, darf also auch laufen, waehrend Paketprogramme Dateien eines aelteren Stands lesen.
 /// </remarks>
 internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVersion kernel, Func<IDisposable?>? tryBeginWrite = null)
 {
@@ -51,6 +51,10 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
     // In dieser Instanz vollstaendig gestufte Versionen ("id/version-rN") mit dem Hash ihres Manifests. Die Dateien wurden beim
     // Schreiben gehasht; im laufenden Kernel aendert nur dieser Bestand sie. Nach einem Neustart entfernt Reconcile die Stufen.
     private readonly Dictionary<string, string> staged = new(StringComparer.Ordinal);
+    // Unter gate (N3-B3): Nutzer je Paketversion ("id/version-rN"). Ein Nutzer ist ein lebender Indexstand des Paketdienstes
+    // (veroeffentlicht oder von laufenden Prozessen gebunden). Reconcile entfernt nur Versionen ohne Eintrag. gate ist ein Blatt:
+    // Der Dienst ruft Acquire/Release unter seiner eigenen Sperre (Reihenfolge Dienst-gate vor Store-gate), hier darin nichts weiter.
+    private readonly Dictionary<string, int> users = new(StringComparer.Ordinal);
 
     /// <summary>Testnaht: wird vor jedem veraendernden Dateischritt aufgerufen (Abbruch- und Schreibfehlertests).</summary>
     internal Action<string>? FileStep { get; init; }
@@ -303,10 +307,16 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
     }
 
     /// <summary>
-    /// Beim Einbinden, bevor Paketprogramme laufen: halb ersetztes active2 abschliessen, dann unvollstaendige Stufen und nicht
-    /// aktive Versionen entfernen. Ist active2 unlesbar, wird nichts geloescht; der Bestand bleibt gesperrt statt Daten zu verlieren.
-    /// Ordner, die keine gueltige Kennung oder Version tragen, bleiben unberuehrt.
+    /// Beim Einbinden und nach dem Wechsel oder der letzten Freigabe (N3-B3): halb ersetztes active2 abschliessen, dann
+    /// unvollstaendige Stufen und nicht aktive Versionen ohne Nutzer entfernen. Ist active2 unlesbar, wird nichts geloescht; der
+    /// Bestand bleibt gesperrt statt Daten zu verlieren. Ordner, die keine gueltige Kennung oder Version tragen, bleiben unberuehrt.
     /// </summary>
+    /// <remarks>
+    /// Die Nutzer werden nach dem Lesen von active2 einmal festgehalten. Sicher ist das, weil eine Version ohne Nutzer und ausserhalb
+    /// von active2 keinen neuen Nutzer mehr bekommt: Der Dienst zaehlt nur Indexstaende, die er aus einem active2 gebaut hat, und
+    /// ruft Reconcile nur unter seinem Auftragsausschluss, nachdem er den Stand nach dem letzten Activate veroeffentlicht hat
+    /// (<see cref="PackageService2.Reconcile"/>). Wer die Methode direkt ruft (Tests), muss das selbst sicherstellen.
+    /// </remarks>
     public ResultErr Reconcile()
     {
         var begun = Begin();
@@ -322,7 +332,11 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
             if (!lines.IsOK()) return ResultErr.CreateFailure(ResultCode.Failure, lines.Status.Message + " Nichts aufgeraeumt.");
             var keep = new HashSet<string>(StringComparer.Ordinal);
             foreach (var line in lines.Value!) keep.Add(Key(line.Id, line.Version));
-            lock (gate) foreach (string key in staged.Keys) keep.Add(key);
+            lock (gate)
+            {
+                foreach (string key in staged.Keys) keep.Add(key);
+                foreach (string key in users.Keys) keep.Add(key);
+            }
             foreach (string directory in directories)
             {
                 string id = Path.GetFileName(directory);
@@ -346,6 +360,47 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
             return ResultErr.CreateFailure(ResultCode.Failure, "Paketbestand v2 nicht aufgeraeumt: " + exception.Message);
         }
         finally { End(); }
+    }
+
+    /// <summary>Schluessel der Nutzungszaehlung fuer die Versionen einer Menge; ausserhalb jeder Sperre bilden (allokiert).</summary>
+    internal static string[] UsageKeys(ActivePackage2[] packages)
+    {
+        var keys = new string[packages.Length];
+        for (int i = 0; i < packages.Length; i++) keys[i] = Key(packages[i].Manifest.Id, packages[i].Manifest.Version);
+        return keys;
+    }
+
+    /// <summary>Zaehlt je Version einen Nutzer mehr (N3-B3); solange er lebt, entfernt <see cref="Reconcile"/> die Version nicht.</summary>
+    internal void Acquire(string[] keys)
+    {
+        lock (gate) foreach (string key in keys) users[key] = users.GetValueOrDefault(key) + 1;
+    }
+
+    /// <summary>
+    /// Gibt je Version einen Nutzer frei. Liefert true, wenn dabei eine Version ihren letzten Nutzer verlor: Dann kann ein
+    /// <see cref="Reconcile"/> wieder etwas entfernen. Ohne Allokation; unbekannte Schluessel (doppelte Freigabe) zaehlen nicht.
+    /// </summary>
+    internal bool Release(string[] keys)
+    {
+        bool freed = false;
+        lock (gate)
+            foreach (string key in keys)
+            {
+                if (!users.TryGetValue(key, out int count)) continue;
+                if (count > 1) users[key] = count - 1;
+                else
+                {
+                    users.Remove(key);
+                    freed = true;
+                }
+            }
+        return freed;
+    }
+
+    /// <summary>Anzahl lebender Nutzer einer Version (Tests und Diagnose).</summary>
+    public int Users(string id, PackageVersion2 version)
+    {
+        lock (gate) return users.GetValueOrDefault(Key(id, version));
     }
 
     /// <summary>Prueft alle gespeicherten Dateien gegen das signierte Manifest; eine spaetere Veraenderung sperrt den Start.</summary>
@@ -390,7 +445,7 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
         finally { StorageLock.Run(() => stream.Dispose()); }
     }
 
-    private static bool Matches(FileStream stream, PackageFile2 file, byte[] buffer, CancellationToken cancellation)
+    internal static bool Matches(FileStream stream, PackageFile2 file, byte[] buffer, CancellationToken cancellation)
     {
         if (StorageLock.Run(() => stream.Length) != file.Size) return false;
         var digest = new Sha256Digest();
