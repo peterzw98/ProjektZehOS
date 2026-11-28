@@ -55,6 +55,12 @@ internal static unsafe partial class CosmosLinuxRunProbe
 
     private static void Write(string text) => Log.WriteString("LINUX_RUN " + text + "\n");
 
+#pragma warning disable COSMOS0001 // UserPageTable gilt als Vorschau.
+    private static long ShootdownCount() => Cosmos.Kernel.Core.Memory.UserPageTable.Shootdowns;
+
+    private static long LongestShootdownMicroseconds() => Cosmos.Kernel.Core.Memory.UserPageTable.LongestShootdownMicroseconds;
+#pragma warning restore COSMOS0001
+
     /// <summary>Immer false: nach der Probe hält der Kernel an.</summary>
     internal static bool Run()
     {
@@ -123,11 +129,18 @@ internal static unsafe partial class CosmosLinuxRunProbe
                     }
                 }
 
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                long shootdowns = ShootdownCount();
                 CosmosLinuxRun.Outcome outcome = CosmosLinuxRun.Run(elf, [name, "a1", "b 2"], CosmosLinuxRun.Environment, new SerialOutput(), TimeoutSeconds,
                     root: root, cwd: ProbeCwd, exePath: exePath);
                 Write(outcome.Ran
                     ? "status " + name + " " + outcome.Status + (outcome.Detail.Length > 0 ? " (" + outcome.Detail + ")" : string.Empty)
                     : "status " + name + " notrun (" + outcome.Detail + ")");
+                // N4-S5: Laufzeit und TLB-Abschüsse je Programm (Entwurf, Risiken: längste Wartezeit je Lauf ausgeben). Die Zeile gehört
+                // nicht zur verglichenen Ausgabe; test-linux-run.py zeigt sie im Protokoll. longest_us gilt seit dem Boot.
+                long elapsedMs = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                Write("time " + name + " ms=" + elapsedMs + " shootdowns=" + (ShootdownCount() - shootdowns)
+                    + " longest_us=" + LongestShootdownMicroseconds());
                 count++;
             }
         }
