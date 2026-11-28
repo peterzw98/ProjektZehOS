@@ -19,7 +19,7 @@ namespace ProjektZeh.Tests;
 /// Activate, Neubau nach Neustart und die Shellbefehle <c>pkg native</c> gegen ein lokales Testrepo mit Testschluessel.
 /// </summary>
 [TestClass]
-public sealed class PackageIndex2Tests
+public sealed partial class PackageIndex2Tests
 {
     // Nur fuer Hosttests; nie in einen Kernelbuild uebernehmen.
     private static readonly Ed25519PrivateKeyParameters TestKey = new(Enumerable.Range(1, 32).Select(i => (byte)i).ToArray(), 0);

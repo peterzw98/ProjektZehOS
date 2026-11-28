@@ -390,7 +390,7 @@ internal sealed class PackageStore2(string root, PackageTrust? trust, UpdateVers
         finally { StorageLock.Run(() => stream.Dispose()); }
     }
 
-    private static bool Matches(FileStream stream, PackageFile2 file, byte[] buffer, CancellationToken cancellation)
+    internal static bool Matches(FileStream stream, PackageFile2 file, byte[] buffer, CancellationToken cancellation)
     {
         if (StorageLock.Run(() => stream.Length) != file.Size) return false;
         var digest = new Sha256Digest();

@@ -43,6 +43,9 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     private bool indexBuilt;
     private long indexGeneration;
     private long publishedGeneration;
+    // Unter gate (N3-B2): gebundene Nutzer je Indexstand. Ein Eintrag verschwindet mit seinem letzten Nutzer; B3 leitet daraus ab,
+    // welche Paketversionen noch gebraucht werden.
+    private readonly Dictionary<long, int> boundUsers = [];
 
     private const int FloorMaximumBytes = 512;
 
@@ -68,6 +71,52 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
         var refreshed = RefreshIndex();
         if (!refreshed.IsOK()) return ResultObjectFactory.CreateFailure<PackageIndex2>(refreshed);
         lock (gate) return index != null ? ResultObjectFactory.CreateSuccess(index) : ResultObjectFactory.CreateFailure<PackageIndex2>(ResultCode.Failure, indexError!);
+    }
+
+    /// <summary>
+    /// Bindet den aktuellen Index an einen Prozessstart (N3-B2). Der Lauf behaelt diesen Stand samt Kindprozessen, bis er die
+    /// Bindung freigibt, auch wenn ein spaeteres Activate neue Starts auf einen neuen Stand schaltet.
+    /// </summary>
+    /// <remarks>
+    /// Sperre fuer Start und Aktivierung ist <c>gate</c>: Holen des Verweises und Zaehlen liegen im selben Abschnitt wie der Wechsel
+    /// in <see cref="Publish"/>, ein Start sieht also genau einen ganzen Stand. <c>gate</c> ist ein Blatt: darin keine Plattenzugriffe
+    /// und kein <c>StorageLock</c> (Reihenfolge <c>StorageLock</c> vor <c>gate</c>, falls je beide noetig werden). Ein Start zwischen
+    /// Activate und Neubau bindet noch den alten Stand; dessen Dateien bleiben bis zum naechsten Reconcile liegen.
+    /// </remarks>
+    public ResultObject<PackageIndexLease> Bind()
+    {
+        var current = CurrentIndex();
+        if (!current.IsOK()) return ResultObjectFactory.CreateFailure<PackageIndexLease>(current.Status);
+        lock (gate)
+        {
+            // Hat ein Wechsel inzwischen einen neueren Stand veroeffentlicht, bekommt der Start diesen (oder seinen Fehler).
+            if (index == null) return ResultObjectFactory.CreateFailure<PackageIndexLease>(ResultCode.Failure, indexError ?? "Kein Paketindex v2.");
+            boundUsers[index.Generation] = boundUsers.GetValueOrDefault(index.Generation) + 1;
+            return ResultObjectFactory.CreateSuccess(new PackageIndexLease(this, index));
+        }
+    }
+
+    /// <summary>Gebundene Nutzer je Indexstand (Generation, Anzahl), aufsteigend nach Generation; leer ohne laufende Paketprozesse.</summary>
+    public (long Generation, int Users)[] BoundUsers()
+    {
+        lock (gate)
+        {
+            var result = new (long, int)[boundUsers.Count];
+            int at = 0;
+            foreach (var (generation, users) in boundUsers) result[at++] = (generation, users);
+            Array.Sort(result, (a, b) => a.Item1.CompareTo(b.Item1));
+            return result;
+        }
+    }
+
+    internal void Unbind(PackageIndex2 bound)
+    {
+        lock (gate)
+        {
+            if (!boundUsers.TryGetValue(bound.Generation, out int users)) return;
+            if (users <= 1) boundUsers.Remove(bound.Generation);
+            else boundUsers[bound.Generation] = users - 1;
+        }
     }
 
     /// <summary>
@@ -497,4 +546,24 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
 
     private static ResultObject<PackageCatalog2?> DamagedCatalog() =>
         ResultObjectFactory.CreateFailure<PackageCatalog2?>(ResultCode.Failure, "Gespeicherter Katalog v2 beschaedigt; pkg update ausfuehren.");
+}
+
+/// <summary>
+/// Bindung eines Laufs an einen Indexstand (N3-B2). Freigabe genau einmal, auch bei doppeltem <see cref="Dispose"/> aus Fehlerwegen.
+/// </summary>
+internal sealed class PackageIndexLease : IDisposable
+{
+    private PackageService2? owner;
+
+    internal PackageIndexLease(PackageService2 owner, PackageIndex2 index)
+    {
+        this.owner = owner;
+        Index = index;
+    }
+
+    public PackageIndex2 Index { get; }
+
+    public bool Released => Volatile.Read(ref owner) == null;
+
+    public void Dispose() => Interlocked.Exchange(ref owner, null)?.Unbind(Index);
 }
