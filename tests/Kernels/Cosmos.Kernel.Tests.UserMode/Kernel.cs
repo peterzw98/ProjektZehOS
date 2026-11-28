@@ -441,10 +441,10 @@ public unsafe partial class Kernel : Sys.Kernel
         ulong tickNs = SchedulerDiagnostics.TickPeriodNs;
         Assert.True(tickNs > 0, "the timer ticks");
         long halfTick = (long)(tickNs / 2) * Stopwatch.Frequency / 1_000_000_000;
-        Core.Scheduler.CpuSet mainSet = ThreadAffinity.Current;
+        var mainSet = ThreadAffinity.Current;
         try
         {
-            ThreadAffinity.Current = Core.Scheduler.CpuSet.Single(0);
+            ThreadAffinity.Current = Sys.Threading.CpuSet.Single(0);
 #if COSMOS_TEST_HOOKS
             Volatile.Write(ref Core.CPU.UserMode.TestSkipKick, true);
             int slowSkipped = LeaveRounds(halfTick, out long worstSkipped);
@@ -479,7 +479,7 @@ public unsafe partial class Kernel : Sys.Kernel
             Volatile.Write(ref s_leftAt, 0);
             var thread = new SysThread(() =>
             {
-                ThreadAffinity.Current = Core.Scheduler.CpuSet.Single(1);
+                ThreadAffinity.Current = Sys.Threading.CpuSet.Single(1);
                 Volatile.Write(ref scheduler, SchedulerManager.CurrentThread);
                 result = Run(5, 0);
                 Volatile.Write(ref s_leftAt, Stopwatch.GetTimestamp());
