@@ -333,7 +333,7 @@ Ohne `--from` gilt die HTTPS-Quelle von Version 1 (`pkg source`), `catalog2` lie
 
 ### Werkzeug
 
-`scripts/package2.py` schreibt Version und Katalog des Formats 2 in einen lokalen Repository-Ordner; Schlüssel und Signatur kommen unverändert aus `scripts/build-package.py` (OpenSSL, Ed25519), dessen Befehle für Version 1 gleich bleiben. Nichts davon geht in den Branch `packages`, solange der Server Format 2 nicht ausliefert (N3-G). Gastprobe mit lokalem Testrepo: `scripts/test-package2-guest.py`.
+`scripts/package2.py` schreibt Version und Katalog des Formats 2 in einen lokalen Repository-Ordner; Schlüssel und Signatur kommen unverändert aus `scripts/build-package.py` (OpenSSL, Ed25519), dessen Befehle für Version 1 gleich bleiben. Nichts davon geht in den Branch `packages`, solange der Server Format 2 nicht ausliefert (N3-G). Gastprobe mit lokalem Testrepo: `scripts/test-package2-guest.py`. Alle drei Paketproben (`test-package2-guest.py`, `test-package2-dyn-guest.py`, `test-package2-upgrade-live-guest.py`) mit einem Testbau und je Stufe (Standard KVM mit 1 und 4 CPUs, TCG mit 1 CPU) in einem Aufruf, Tabelle am Ende: `python3 -I scripts/test-package2-all.py --key <test>/private.pem [--ld-musl <musl>/libc.so] [--iso <iso>] [--configs kvm:1 kvm:4 tcg:1]`; ohne `--ld-musl` entfällt die dyn-Probe sichtbar in der Tabelle.
 
 ```sh
 python3 scripts/package2.py package --key <privater-Schlüssel.pem> --repo <ordner> --spec <paket>.toml <datei>=<pfad> ...

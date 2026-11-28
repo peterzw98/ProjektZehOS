@@ -121,8 +121,8 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     private bool _frameShort;
 
     // V10: Threads teilen den Adressraum. Diese Sperre schützt Karte, Frames und brk; sie wird in Aufrufen und Seitenfehlern
-    // genommen (Threadkontext, Interrupts an), nie im Interrupt. Platz in der Reihenfolge: nach der Sperre der futex-Tabelle
-    // (LinuxFutexTable liest den Wert unter ihrer Sperre), vor der Sperre der UserPageTable (in IUserPages) und des PageAllocator.
+    // genommen (Threadkontext, Interrupts an), nie im Interrupt. Platz in der Reihenfolge: nach den Eimersperren der futex-Tabelle
+    // (LinuxFutexTable liest den Wert unter der Sperre des Eimers, N4-S4), vor der Sperre der UserPageTable (in IUserPages) und des PageAllocator.
     private readonly object _memGate = new();
     private ulong _brkStart;
     private ulong _brk;
