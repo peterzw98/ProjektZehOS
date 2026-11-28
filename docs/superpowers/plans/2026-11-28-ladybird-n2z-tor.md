@@ -1,6 +1,6 @@
 # Ladybird N2-Z: Torpakete nach dem Vorzeigestand
 
-Stand 28. November 2026. Auftrag Peter (Terminal, 28.11.): nach dem Vorzeigestand mit dem Gesamtplan weitermachen. Grundlage: [Übersicht](2026-11-24-ladybird-nativ.md) (Tor N2-Z), [N2-Umriss](2026-11-24-ladybird-n2-prozesse.md), [Zeitplanentwurf](2026-12-04-ladybird-n2-n6-zeitplan.md) auf `docs/lb-plan-nach-demo` (wartet auf Entscheidung Peter).
+Stand 28. November 2026. Auftrag Peter (Terminal, 28.11.): nach dem Vorzeigestand mit dem Gesamtplan weitermachen. Grundlage: [Übersicht](2026-11-24-ladybird-nativ.md) (Tor N2-Z), [N2-Umriss](2026-11-24-ladybird-n2-prozesse.md), [Zeitplanentwurf](https://github.com/peterzw98/ProjektZehOS/blob/ddf9c2d642515a832a85277c11918b9be3d654bb/docs/superpowers/plans/2026-12-04-ladybird-n2-n6-zeitplan.md) auf `docs/lb-plan-nach-demo` (wartet auf Entscheidung Peter).
 
 ## Rahmen
 
@@ -16,7 +16,7 @@ Stand 28. November 2026. Auftrag Peter (Terminal, 28.11.): nach dem Vorzeigestan
 3. 1000 Prozessstarts ohne Speicherverlust über 1 MiB.
 4. Desktop und Wasm-Pakete unverändert.
 
-Stand: (1) 23 von 24 (`badptr` scheitert), (2) durch V24/V45-Gastfälle belegt, Torlauf fehlt, (3) verfehlt ohne GC-Lauf (~962 kB je Start, ungesammelter GC-Heap, V47), (4) nicht geprüft auf dem Story-Stand.
+Stand: (1) 23 von 24 (`badptr` scheitert), (2) durch V24/V45-Gastfälle belegt, Torlauf fehlt, (3) mit V47 auf `3e1026f8` knapp verfehlt: 1000 Starts nach 100 Aufwärmstarts 1236 KiB (1 CPU) und 1172 KiB (4 CPUs), auf dem V47-Kopf 656 und 648 KiB; Rest ~0,7 KiB je Start ist Wachstum des GC-Segments durch Fragmentierung, kein Objekt- oder Frameleck; `task/lb-n2z-leck` senkt die Allokationen je Exec, (4) nicht geprüft auf dem Story-Stand.
 
 ## Pakete
 
