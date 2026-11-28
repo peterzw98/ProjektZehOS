@@ -468,7 +468,7 @@ internal static unsafe class CosmosLinuxRun
         {
             // Auch der Shell-Weg (run, Ladybird-Demo) braucht die Reserve, nicht nur Run().
             ReserveKernelPages();
-            if (!Prepare(elf, arguments, envp, root, out UserImage? image, out string why))
+            if (!Prepare(elf, arguments, envp, root, store, out UserImage? image, out string why))
             {
                 return ResultErr.CreateFailure(ResultCode.Failure, "run: " + why);
             }
@@ -594,7 +594,8 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>Initialisiert den Ring 3 und lädt das Abbild (Kernelseite, noch ohne Programmthread).</summary>
-    private static bool Prepare(byte[] elf, string[] argv, string[] envp, string? root, out UserImage? image, out string why)
+    /// <param name="store">Prozesswurzel als Speicher (etwa die gebundene Paketwurzel von <c>run --pkg</c>); geht vor <paramref name="root"/>.</param>
+    private static bool Prepare(byte[] elf, string[] argv, string[] envp, string? root, ILinuxFileStore? store, out UserImage? image, out string why)
     {
         image = null;
         if (!Initialize(out why))
@@ -607,12 +608,19 @@ internal static unsafe class CosmosLinuxRun
             // AT_RANDOM ist die Stack-Kanarie von musl: nur aus der Hardware, ohne Ersatz (V1-Review P3 (2)).
             byte[] random = new byte[16];
             CosmosSaltSource.Fill(random);
-            image = ElfLoader.Load(elf, argv, envp, new ElfLoadOptions
+            // N3-E: Mit einem Speicher kommt der Interpreter aus demselben Dateisystem, das der Prozess danach bekommt (bei run --pkg der
+            // gebundene Indexstand, Links und Inhaltspruefung inklusive); ohne gab es fuer dynamische Paketprogramme keinen Leser (ENOENT).
+            // Rechte wie fuer den Prozess: die Nutzerkennung der Ladeoptionen (der Lader ruft den Leser erst, wenn sie feststeht).
+            ElfLoadOptions? options = null;
+            options = new ElfLoadOptions
             {
                 Random = random,
                 HwCap = (uint)X86Base.CpuId(1, 0).Edx,
-                ReadInterpreter = root == null ? null : (string path, out byte[] content) => ReadFromRoot(root, path, out content),
-            });
+                ReadInterpreter = store != null
+                    ? (string path, out byte[] content) => LinuxInterpreterFile.Read(store, path, (uint)options!.Uid, (uint)options.Gid, out content)
+                    : root == null ? null : (string path, out byte[] content) => ReadFromRoot(root, path, out content),
+            };
+            image = ElfLoader.Load(elf, argv, envp, options);
             return true;
         }
         catch (ElfLoadException exception)
@@ -710,7 +718,7 @@ internal static unsafe class CosmosLinuxRun
         try
         {
             ReserveKernelPages();
-            if (!Prepare(elf, argv, envp, root, out UserImage? image, out string why))
+            if (!Prepare(elf, argv, envp, root, store, out UserImage? image, out string why))
             {
                 return new Outcome(false, string.Empty, why);
             }
