@@ -28,7 +28,11 @@ Recovery-Bau mit `dotnet build ProjektZeh/ProjektZeh.csproj --configuration Rele
 | Normalstart, Konto auf Wegwerfplatte, Terminal, Dateien, Einstellungen, Textshell und F4-Rückkehr, Shutdown | Bestanden, 107 s | Bestanden, 88 s |
 | Recovery-Start bis Textshell ohne Desktop, Shutdown | Bestanden, 8 s | Bestanden, 7 s |
 | Recovery `test-power-commands.ps1`, Reboot bis Textshell, Shutdown mit QEMU-Exit 0 | Bestanden, 12 s | Bestanden, 13 s |
-| Signierte Pakete aus dem öffentlichen HTTPS-Katalog, Rechner 1.0.0 und Doom 1.1.0 | Installation und Rechner belegt, Wiederholung mit einzeln gestarteten Apps ausstehend | Ausstehend |
+| Signierte Pakete aus dem öffentlichen HTTPS-Katalog, Rechner 1.0.0 und Doom 1.1.0 | Bestanden, 299 s | Bestanden, 273 s |
+
+Beide Rechner zeigten `2+3=5` und ließen sich schließen. Doom renderte
+auf beiden Ständen im Desktopfenster und reagierte bis zur Auswahl des
+Schwierigkeitsgrads auf Tastatureingaben. Die Bilder wurden visuell geprüft.
 
 Die Desktop- und Paketproben arbeiteten mit je einem eigenen temporären
 Datenträger. Der Recovery-Reboot-Test lief ohne Datenplatte. Der erste
