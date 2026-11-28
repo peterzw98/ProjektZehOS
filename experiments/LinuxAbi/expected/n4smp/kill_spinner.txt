@@ -1,0 +1,11 @@
+self kill SIGKILL, 1 spinner: signal 9
+self kill SIGTERM, 1 spinner: signal 15
+self tgkill spinner SIGKILL: signal 9
+self tgkill spinner SIGTERM: signal 15
+self tgkill spinner SIGUSR1: signal 10
+fault beside 3 spinners: signal 11
+parent kill SIGKILL, single spinner: signal 9
+parent kill SIGTERM, single spinner: signal 15
+parent kill SIGKILL, 3 spinners + main: signal 9
+parent kill SIGINT, 3 spinners + main: signal 2
+done

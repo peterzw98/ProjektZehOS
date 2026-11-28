@@ -157,7 +157,12 @@ Threading-, Interrupts-, Smp- und GarbageCollector-Suiten wie die Basis.
   ohnehin; auf mehreren läuft ein Thread nach exit_group oder nach dem Absturz eines Geschwisters bis zu einem Takt weiter. Für die Richtigkeit reicht das
   (Speicher bleibt bis zum Lösen aller Threads), für die Latenz nicht.
 - Cosmos-Patch `user-leave-kick`: `UserMode.RequestLeave` und eine neue `UserMode.Kick(SchedulerThread)` senden `0xF0` (Reschedule) an die CPU, auf der der
-  Thread gerade läuft (`SchedulerThread` kennt seine CPU), sonst nichts. ZehOS ruft `Kick` nach `DeliverSignal` an einen laufenden Thread.
+  Thread gerade läuft (`SchedulerThread` kennt seine CPU), sonst nichts.
+- Abweichung (Befund S3, Entscheidung Lead 28. November: Variante A): ZehOS stellt Signale mit Handler nur beim Rücksprung aus einem Aufruf oder einer
+  Ausnahme zu (`CosmosLinuxRun.DeliverSignals`), nie beim Rücksprung eines Interrupts in den Ring 3. Ein `Kick` nach `DeliverSignal` brächte das Signal
+  einem rechnenden Thread daher nicht näher, auch nicht auf einer CPU; er entfällt in S3. SIGKILL und Signale mit Standardaktion „beenden“ gehen dagegen
+  über `Exit`/`Kill` → `LeaveAll`/`LeaveProcess` → `RequestLeave` und erreichen den rechnenden Thread mit dem Patch sofort (Satz `n4smp`, `kill_spinner`).
+  Die Zustellung bei IRQ-Rückkehr ist ein offenes Paket (Abschnitt 6).
 - Mit echter Parallelität werden die schmalen Fenster aus [Risiko-Review 2](2026-11-27-ladybird-risk-2-smp-signale.md) breiter; vor der Vorgabe 1 schließen:
   P3-1 (`sigaction` unter `_threadGate`), P3-2 (Alternativstack je Thread, wie Linux), P3-9 (`TerminatedBySignal` unter derselben Sperre wie `ExitCode`).
 - Absturz eines Threads (Ring-3-Ausnahme) auf CPU B, während Geschwister auf A und C laufen: `FaultIsolationPolicy` entscheidet mit `CpuExceptionInfo.ThreadId`
@@ -220,6 +225,10 @@ geteilter Speicher (`memfd_seal.c`, `unix_fdpass.c`) mit beiden Prozessen auf ve
 
 ## 6. Offen
 
+- **Offenes Paket: Signalzustellung bei IRQ-Rückkehr.** Ein Signal mit Handler erreicht einen Thread, der im Ring 3 rechnet und keinen Aufruf macht, erst
+  bei seinem nächsten Aufruf (Grenze in `docs/LINUX_ABI.md`, V18). Linux stellt es beim nächsten Interrupt zu. Nötig wäre ein Zustellpunkt in Cosmos
+  (Haken vor dem `iretq` in den Ring 3, etwa in `UserMode`/Prepare, eigener Patch) und danach `Kick` nach `DeliverSignal`. Betrifft Programme, die sich
+  auf `SIGALRM`/`SIGPROF` oder `pthread_kill` mit Handler in Rechenschleifen verlassen; SIGKILL und fatale Standardsignale sind nicht betroffen.
 - `SchedulerThread.CpuId` (Cosmos `SchedulerThread.cs:48`) und `IsOnCpu` (`:115`) gibt es; ob `CpuId` während des Laufs ohne Sperre stimmt (Umzug zwischen Lesen und IPI ist harmlos: ein überflüssiges Reschedule), in S3 am Code der Policy belegen.
 - Ob das ZehOS-Platzierungs- und Ausgleichsverfahren (`Scheduling/`) Threads eines Laufs über die Menge verteilt oder auf der ersten CPU stapelt; in S2 im Gast
   mit `getcpu` messen, sonst Platzierung für neue Kindthreads anpassen.
