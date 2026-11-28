@@ -34,8 +34,10 @@
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.Dispose() -> void
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryMap(ulong user, ulong physical, bool writable, bool executable) -> bool
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryProtect(ulong user, bool writable, bool executable) -> bool
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryProtectRange(ulong start, int count, bool writable, bool executable) -> bool
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.TryTranslate(ulong user, bool write, out ulong physical) -> bool
 [COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.Unmap(ulong user) -> ulong
+[COSMOS0001]Cosmos.Kernel.Core.Memory.UserPageTable.UnmapRange(ulong start, int count, System.Span<ulong> frames) -> int
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.CpuLockScope() -> void
 [COSMOS0001]Cosmos.Kernel.Core.Scheduler.CpuLockScope.Dispose() -> void
@@ -113,9 +115,13 @@
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.AllocateFrame() -> ulong
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.FreeFrame(ulong physical) -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.FreePages.get -> ulong
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.LongestShootdownMicroseconds.get -> long
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ReservedPages.get -> ulong
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ReservedPages.set -> void
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ShareKernelHalf() -> bool
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ShootdownTimeoutMs.get -> int
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.ShootdownTimeoutMs.set -> void
+[COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.Shootdowns.get -> long
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.TotalPages.get -> ulong
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.TryCreate() -> Cosmos.Kernel.Core.Memory.UserPageTable?
 [COSMOS0001]static Cosmos.Kernel.Core.Memory.UserPageTable.UnbindCurrentThread() -> void

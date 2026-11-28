@@ -293,6 +293,19 @@ internal static class InterruptManager
         s_controller?.SendPanicStop(hardwareId);
     }
 
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    /// <summary>
+    /// Raises the TLB shootdown interrupt on another CPU
+    /// (<see cref="IInterruptController.SendTlbShootdown"/>); nothing before the
+    /// controller is registered. Allocation-free; any context, interrupts
+    /// masked by the caller.
+    /// </summary>
+    /// <param name="hardwareId">The target CPU's controller identity, from its block.</param>
+    internal static void SendTlbShootdown(ulong hardwareId)
+    {
+        s_controller?.SendTlbShootdown(hardwareId);
+    }
+
     /// <summary>
     /// Undoes <see cref="SetIrqHandler"/>: masks the line at the controller,
     /// then clears the slot at 0x20 + <paramref name="irqNo"/>, so a

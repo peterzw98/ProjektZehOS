@@ -1,6 +1,7 @@
 // This code is licensed under the BSD 3-Clause license (see LICENSE for details)
 
 using System;
+using System.Diagnostics;
 using System.Threading;
 using Cosmos.Kernel.Core.CPU;
 using Cosmos.Kernel.Core.Memory;
@@ -28,7 +29,7 @@ namespace Cosmos.Kernel.Tests.UserPaging;
 public unsafe class Kernel : Sys.Kernel
 {
     /// <summary>Total number of tests announced to the test runner for this suite.</summary>
-    private const int ExpectedTestCount = 24;
+    private const int ExpectedTestCount = 25;
 
     /// <summary>A user address with a different index on every level.</summary>
     private const ulong User = 0x0000_1234_5678_9000;
@@ -83,10 +84,12 @@ public unsafe class Kernel : Sys.Kernel
         TR.RunIf(supported, "ThreadEnd_WithoutUnbind_DisposeAfterJoin", TestThreadEndUnbinds, NoTables);
         TR.RunIf(supported, "Kill_QueuedBound_EndsBinding", TestKillQueued, NoTables);
         TR.RunIf(supported, "Abandon_BoundAtFault_EndsBinding", TestAbandon, NoTables);
-        TR.RunIf(twoCpus, "ActiveOnOtherCpu_ProtectUnmapRefused", TestActiveElsewhere, "needs two CPUs");
+        // ZehOS patch tlb-shootdown, see PATCHES.md
+        TR.RunIf(twoCpus, "ActiveOnOtherCpu_ShootdownReachesIt", TestActiveElsewhere, "needs two CPUs");
         TR.RunIf(twoCpus, "BoundNotRunning_ChangeSeenAfterSwitch", TestBoundNotRunning, "needs two CPUs");
         TR.RunIf(twoCpus, "Kill_RunningBound_EndsBindingAtSwitch", TestKillRunning, "needs two CPUs");
-        TR.RunIf(twoCpus, "Protect_RacingSwitches_RefusalWritesNothing", TestProtectRace, "needs two CPUs");
+        TR.RunIf(twoCpus, "Protect_RacingSwitches_AllAccepted", TestProtectRace, "needs two CPUs");
+        TR.RunIf(supported && KernelCpus.Count >= 3, "Shootdown_TwoTriggersOnTable_NoHang", TestTwoTriggers, "needs three CPUs");
         TR.Finish();
     }
 
@@ -366,20 +369,17 @@ public unsafe class Kernel : Sys.Kernel
     private static volatile uint s_victimId = CpuExceptionInfo.NoThread;
     private static ulong s_sink;
     private static int s_seenChanges;
-    // Der Worker setzt s_onTable nur im maskierten Abschnitt nach Yield, also
-    // sicher auf Tabelle A (gezaehlt); s_leaves zaehlt jedes Ende davon.
-    // Liest Main vor TryProtect s_onTable == 1 und ist s_leaves danach
-    // unveraendert, lief der Worker die ganze Zeit dort: dann muss die
-    // Aenderung abgelehnt werden. Faengt einen verlorenen Zaehler in _active.
-    private static volatile int s_onTable;
-    private static int s_leaves;
-    private const int ProtectRaceRounds = 200_000;
-    private const int ProtectRaceEnough = 1000;
-#if COSMOS_TEST_HOOKS
-    // Etwa eine halbe Millisekunde unter KVM: viel laenger als ein Wechsel des
-    // Workers zum Fueller und zurueck, kurz genug fuer 1000 Aenderungen.
-    private const int ProtectRaceHoldSpins = 20_000;
-#endif
+    // ZehOS patch tlb-shootdown: Wechsel zwischen Main und Worker in der
+    // Abschusszelle. Main setzt s_go, der Worker liest die Seite einmal und
+    // quittiert mit s_ack; dazwischen beruehrt er die Seite nicht.
+    private static int s_go;
+    private static int s_ack;
+    private static ulong s_readValue;
+    private const ulong Marker = 0xDEAD_0000_0000_0000;
+    private const int ShootRounds = 2000;
+    private const int ProtectRaceRounds = 20_000;
+    private const int TriggerRounds = 10_000;
+    private const int HandshakeMs = 2000;
 
 #if ARCH_X64
     /// <summary>The root this CPU translates through.</summary>
@@ -783,41 +783,154 @@ public unsafe class Kernel : Sys.Kernel
 
     private static uint OtherCpu() => (KernelCpus.Current + 1) % (uint)KernelCpus.Count;
 
-    // Option B: no shootdown before N4, so a change is refused while another
-    // CPU runs on the table, and the entry stays as it was.
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    // The worker on the other CPU keeps the page in its TLB (it spins on the
+    // table, so its CR3 is never written). Each round Main unmaps the page,
+    // marks the old frame through the HHDM and maps another frame there; the
+    // worker then reads the page once more and must see the new frame, never
+    // the mark: Unmap returned only after the worker's TLB dropped the entry.
+    // In the test build the same rounds run first without the shootdown and
+    // must see the mark, which shows that the cell sees a stale entry at all.
     private static void TestActiveElsewhere()
     {
         Reset();
-        s_tableA = TableWith(ValueA, out ulong frame);
-        ulong second = Frame();
+        s_go = 0;
+        s_ack = 0;
+        s_tableA = TableWith(1, out ulong frame);
+        ulong other = Frame();
         CpuSet mainSet = ThreadAffinity.Current;
+        bool workerDone = false;
+        var worker = new SysThread(ActiveWorker);
         try
         {
             Assert.True(PinHere(KernelCpus.Current), "Main stays on its CPU");
             s_workerCpu = OtherCpu();
-            var worker = new SysThread(ActiveWorker);
             worker.Start();
             Assert.True(WaitFor(() => s_step == 1), "the worker runs bound on the other CPU");
             AssertWorkerClean();
-            Assert.False(s_tableA.TryProtect(User, false, false), "protect is refused");
-            Assert.True(s_tableA.Unmap(User) == 0, "unmap is refused");
-            Assert.True(s_tableA.TryTranslate(User, true, out ulong physical) && physical == frame, "the entry is unchanged");
-            Assert.True(s_tableA.TryMap(User + PageSize, second, true, false), "a new page needs no shootdown");
+            long shootdowns = UserPageTable.Shootdowns;
+#if COSMOS_TEST_HOOKS
+            Volatile.Write(ref UserPageTable.TestSkipShootdown, true);
+            int staleSkipped = ShootRoundsOnce(ref frame, ref other, ShootRounds, stopAtStale: true);
+            Volatile.Write(ref UserPageTable.TestSkipShootdown, false);
+            Log.WriteString($"[UserPaging] without shootdown: {staleSkipped} stale reads\n");
+            Assert.True(staleSkipped > 0, "without the shootdown the worker reads the old frame (counter-probe)");
+            // Der Worker kann den alten Eintrag noch halten: einmal mit Abschuss leeren.
+            Assert.True(s_tableA.TryProtect(User, true, false), "a protect with shootdown flushes the worker");
+#endif
+            int stale = ShootRoundsOnce(ref frame, ref other, ShootRounds, stopAtStale: false);
+            Assert.True(stale == 0, "the worker never reads the old frame after Unmap returned");
+            Assert.True(UserPageTable.Shootdowns - shootdowns >= ShootRounds, "every unmap interrupted the worker's CPU");
+
+            // Protect while the worker runs on the table: accepted, no refusal any more.
+            Assert.True(s_tableA.TryProtect(User, false, false), "protect is accepted while another CPU runs on the table");
+            Assert.False(s_tableA.TryTranslate(User, true, out _), "the page is read-only now");
+            Assert.True(s_tableA.TryProtect(User, true, false), "and writable again");
+            Assert.True(s_tableA.TryMap(User + PageSize, other, true, false), "a new page needs no shootdown");
+            Assert.True(s_tableA.Unmap(User + PageSize) == other, "and goes again");
             s_release = true;
             Assert.True(worker.Join(JoinTimeoutMs), "the worker ends");
+            workerDone = true;
             AssertWorkerClean();
-            Assert.True(s_tableA.TryProtect(User, false, false), "protect once no CPU runs on the table");
-            Assert.True(s_tableA.Unmap(User) == frame && s_tableA.Unmap(User + PageSize) == second, "unmap too");
+            Assert.True(s_tableA.Unmap(User) == frame, "unmap once no CPU runs on the table");
             Release(s_tableA);
         }
         finally
         {
             s_release = true;
             ThreadAffinity.Current = mainSet;
+#if COSMOS_TEST_HOOKS
+            Volatile.Write(ref UserPageTable.TestSkipShootdown, false);
+#endif
         }
 
-        UserPageTable.FreeFrame(frame);
-        UserPageTable.FreeFrame(second);
+        // The frames go only once the worker unbound: its CR3 write flushed every copy.
+        if (workerDone)
+        {
+            UserPageTable.FreeFrame(frame);
+            UserPageTable.FreeFrame(other);
+        }
+    }
+
+    /// <summary>
+    /// Rounds of the cell above. <paramref name="frame"/> is mapped at
+    /// <see cref="User"/> and holds the current value; afterwards too.
+    /// </summary>
+    /// <returns>Reads of the worker that found the mark.</returns>
+    private static int ShootRoundsOnce(ref ulong frame, ref ulong other, int rounds, bool stopAtStale)
+    {
+        int stale = 0;
+        for (int r = 0; r < rounds && s_failure == null; r++)
+        {
+            // The worker reads the current frame: its TLB holds the entry.
+            if (!Handshake())
+            {
+                Fail("the worker answers");
+                break;
+            }
+
+            ulong value = (ulong)r + 2;
+            *At(other) = value;
+            ulong old = s_tableA!.Unmap(User);
+            if (old != frame)
+            {
+                Fail("unmap returns the frame");
+                break;
+            }
+
+            *At(old) = Marker;
+            if (!s_tableA.TryMap(User, other, true, false))
+            {
+                Fail("map the other frame");
+                break;
+            }
+
+            if (!Handshake())
+            {
+                Fail("the worker answers");
+                break;
+            }
+
+            ulong seen = Volatile.Read(ref s_readValue);
+            if (seen == Marker)
+            {
+                stale++;
+                if (stopAtStale)
+                {
+                    *At(old) = value; // the next round's own value, so it maps a clean frame
+                    frame = other;
+                    other = old;
+                    break;
+                }
+            }
+            else if (seen != value)
+            {
+                Fail("the worker reads the new frame");
+            }
+
+            frame = other;
+            other = old;
+        }
+
+        return stale;
+    }
+
+    /// <summary>Lets the worker read the page once; false when it does not answer in <see cref="HandshakeMs"/>.</summary>
+    private static bool Handshake()
+    {
+        int go = Interlocked.Increment(ref s_go);
+        long deadline = Stopwatch.GetTimestamp() + Stopwatch.Frequency * HandshakeMs / 1000;
+        while (Volatile.Read(ref s_ack) != go)
+        {
+            if (Stopwatch.GetTimestamp() > deadline)
+            {
+                return false;
+            }
+
+            SysThread.SpinWait(1);
+        }
+
+        return true;
     }
 
     private static void ActiveWorker()
@@ -831,15 +944,138 @@ public unsafe class Kernel : Sys.Kernel
 
         s_tableA!.BindToCurrentThread();
         s_step = 1;
-        // No yield: the CPU holds the table until the release.
+        int seen = 0;
+        // No yield: the CPU holds the table, and its TLB the entry, until the release.
+        while (!s_release)
+        {
+            int go = Volatile.Read(ref s_go);
+            if (go != seen)
+            {
+                Volatile.Write(ref s_readValue, *(ulong*)User);
+                seen = go;
+                Volatile.Write(ref s_ack, go);
+            }
+        }
+
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    // Two triggers bound to the same table, on two CPUs, shoot down their own
+    // page over and over while a third CPU spins on the table. Each trigger
+    // waits for the other's CPU with interrupts enabled and answers its
+    // interrupts meanwhile: no hang, every change returns.
+    private static void TestTwoTriggers()
+    {
+        Reset();
+        s_tableA = TableWith(ValueA, out ulong frame);
+        ulong mainFrame = Frame();
+        s_triggerFrame = Frame();
+        s_triggerRounds = 0;
+        CpuSet mainSet = ThreadAffinity.Current;
+        bool bound = false;
+        try
+        {
+            uint here = KernelCpus.Current;
+            Assert.True(PinHere(here), "Main stays on its CPU");
+            s_workerCpu = (here + 1) % (uint)KernelCpus.Count;
+            s_triggerCpu = (here + 2) % (uint)KernelCpus.Count;
+            var worker = new SysThread(SpinOnTableWorker);
+            var trigger = new SysThread(TriggerWorker);
+            worker.Start();
+            Assert.True(WaitFor(() => s_step == 1), "the worker runs bound on its CPU");
+            trigger.Start();
+            Assert.True(WaitFor(() => s_step == 2), "the trigger runs bound on its CPU");
+            s_tableA.BindToCurrentThread();
+            bound = true;
+            long shootdowns = UserPageTable.Shootdowns;
+            long start = Stopwatch.GetTimestamp();
+            int done = 0;
+            for (int i = 0; i < TriggerRounds && s_failure == null; i++)
+            {
+                if (!s_tableA.TryMap(User + PageSize, mainFrame, true, false) || s_tableA.Unmap(User + PageSize) != mainFrame)
+                {
+                    Fail("Main maps and unmaps its page");
+                    break;
+                }
+
+                done++;
+            }
+
+            Assert.True(WaitFor(() => Volatile.Read(ref s_triggerRounds) >= TriggerRounds || s_failure != null), "the trigger finishes");
+            long ms = (Stopwatch.GetTimestamp() - start) * 1000 / Stopwatch.Frequency;
+            UserPageTable.UnbindCurrentThread();
+            bound = false;
+            s_release = true;
+            Assert.True(worker.Join(JoinTimeoutMs) && trigger.Join(JoinTimeoutMs), "the workers end");
+            AssertWorkerClean();
+            long count = UserPageTable.Shootdowns - shootdowns;
+            Log.WriteString($"[UserPaging] two triggers: {done} + {s_triggerRounds} rounds, {count} shootdowns, {ms} ms, longest {UserPageTable.LongestShootdownMicroseconds} us\n");
+            Assert.True(done == TriggerRounds, "Main's changes all returned");
+            Assert.True(count >= 2L * TriggerRounds, "each change interrupted another CPU");
+            Assert.True(s_tableA.Unmap(User) == frame, "unmap the worker's page");
+            Release(s_tableA);
+        }
+        finally
+        {
+            if (bound)
+            {
+                UserPageTable.UnbindCurrentThread();
+            }
+
+            s_release = true;
+            ThreadAffinity.Current = mainSet;
+        }
+
+        UserPageTable.FreeFrame(frame);
+        UserPageTable.FreeFrame(mainFrame);
+        UserPageTable.FreeFrame(s_triggerFrame);
+    }
+
+    private static volatile uint s_triggerCpu;
+    private static ulong s_triggerFrame;
+    private static int s_triggerRounds;
+
+    private static void SpinOnTableWorker()
+    {
+        if (!PinHere(s_workerCpu))
+        {
+            Fail("the worker runs on its CPU");
+            s_step = 1;
+            return;
+        }
+
+        s_tableA!.BindToCurrentThread();
+        s_step = 1;
         while (!s_release)
         {
             s_sink = *(ulong*)User;
         }
 
-        if (*(ulong*)User != ValueA)
+        UserPageTable.UnbindCurrentThread();
+    }
+
+    private static void TriggerWorker()
+    {
+        if (!PinHere(s_triggerCpu))
         {
-            Fail("the refused change left the page");
+            Fail("the trigger runs on its CPU");
+            s_step = 2;
+            return;
+        }
+
+        s_tableA!.BindToCurrentThread();
+        s_step = 2;
+        ulong page = User + 2 * PageSize;
+        for (int i = 0; i < TriggerRounds && s_failure == null; i++)
+        {
+            if (!s_tableA.TryMap(page, s_triggerFrame, true, false) || s_tableA.Unmap(page) != s_triggerFrame)
+            {
+                Fail("the trigger maps and unmaps its page");
+                break;
+            }
+
+            Interlocked.Increment(ref s_triggerRounds);
         }
 
         UserPageTable.UnbindCurrentThread();
@@ -847,9 +1083,10 @@ public unsafe class Kernel : Sys.Kernel
 
     // A bound thread on the other CPU switches in and out without pause,
     // against a filler thread there, while Main flips the page's write bit.
-    // A refusal must not touch the entry at all (no write taken back later):
-    // the worker, each time it runs, reads the entry and counts every change
-    // of the bit it sees. It may miss changes, never see more than Main made.
+    // ZehOS patch tlb-shootdown: every change is accepted now, whether the
+    // worker runs on the table or not, and returns; the worker, each time it
+    // runs, reads the entry and counts every change of the bit it sees. It
+    // may miss changes, never see more than Main made.
     private static void TestProtectRace()
     {
         Reset();
@@ -857,17 +1094,7 @@ public unsafe class Kernel : Sys.Kernel
         s_tableA = TableWith(ValueA, out ulong frame);
         CpuSet mainSet = ThreadAffinity.Current;
         int done = 0;
-        int refused = 0;
         bool writable = true;
-        s_onTable = 0;
-        s_leaves = 0;
-#if COSMOS_TEST_HOOKS
-        // Testbau mit Haken: haelt das Sperrbit nach jedem Schreiben lange,
-        // damit der Wechsel des Workers in das Fenster faellt; die Tabelle
-        // zaehlt, ob dabei eine CPU hinzukam (Gegenprobe nogate wird rot).
-        UserPageTable.TestEnteredDuringChange = 0;
-        UserPageTable.TestHeldChanges = 0;
-#endif
         try
         {
             Assert.True(PinHere(KernelCpus.Current), "Main stays on its CPU");
@@ -877,46 +1104,22 @@ public unsafe class Kernel : Sys.Kernel
             filler.Start();
             worker.Start();
             Assert.True(WaitFor(() => s_step == 1), "the worker runs bound on the other CPU");
-#if COSMOS_TEST_HOOKS
-            Volatile.Write(ref UserPageTable.TestChangeHoldSpins, ProtectRaceHoldSpins);
-#endif
-            for (int i = 0; i < ProtectRaceRounds && (done < ProtectRaceEnough || refused < ProtectRaceEnough); i++)
+            for (int i = 0; i < ProtectRaceRounds && s_failure == null; i++)
             {
-                int leaves = Volatile.Read(ref s_leaves);
-                bool onTable = s_onTable == 1;
-                if (s_tableA.TryProtect(User, !writable, false))
+                if (!s_tableA.TryProtect(User, !writable, false))
                 {
-                    writable = !writable;
-                    done++;
-                    if (onTable && Volatile.Read(ref s_leaves) == leaves)
-                    {
-                        Fail("a change went through while the worker ran on the table");
-                    }
+                    Fail("a protect was refused");
+                    break;
                 }
-                else
-                {
-                    refused++;
-                    if (LeafWritable(s_tableA, User) != writable)
-                    {
-                        Fail("a refused protect left the entry changed");
-                    }
-                }
+
+                writable = !writable;
+                done++;
             }
 
-#if COSMOS_TEST_HOOKS
-            Volatile.Write(ref UserPageTable.TestChangeHoldSpins, 0);
-#endif
             s_release = true;
             Assert.True(worker.Join(JoinTimeoutMs) && filler.Join(JoinTimeoutMs), "the workers end");
             AssertWorkerClean();
-            Assert.True(done > 0 && refused > 0, "changes went through and were refused, both");
-#if COSMOS_TEST_HOOKS
-            int held = Volatile.Read(ref UserPageTable.TestHeldChanges);
-            int entered = Volatile.Read(ref UserPageTable.TestEnteredDuringChange);
-            Log.WriteString($"[UserPaging] protect race: {done} changes, {held} held, {entered} entered during one\n");
-            Assert.True(held == done, "the hook held every change");
-            Assert.True(entered == 0, "no CPU loaded the table while an entry changed");
-#endif
+            Assert.True(done == ProtectRaceRounds, "every change went through");
             Assert.True(Volatile.Read(ref s_seenChanges) <= done, "the worker saw no change Main did not make");
             Assert.True(s_tableA.TryTranslate(User, true, out _) == writable, "the entry holds the last change");
             Assert.True(s_tableA.Unmap(User) == frame, "unmap once no CPU runs on the table");
@@ -924,9 +1127,6 @@ public unsafe class Kernel : Sys.Kernel
         }
         finally
         {
-#if COSMOS_TEST_HOOKS
-            Volatile.Write(ref UserPageTable.TestChangeHoldSpins, 0);
-#endif
             s_release = true;
             ThreadAffinity.Current = mainSet;
         }
@@ -948,12 +1148,10 @@ public unsafe class Kernel : Sys.Kernel
         bool last = LeafWritable(s_tableA, User);
         while (!s_release)
         {
-            // Maskiert, damit kein Tick den Worker im markierten Abschnitt
-            // von der Tabelle nimmt (sonst Fehlalarm in Main). Erst
-            // abmelden, dann zaehlen: beides noch auf der Tabelle.
+            // Maskiert wie vor dem Abschuss: Main wartet dann auf das Ende des
+            // Abschnitts, der Abschuss muss das aushalten.
             using (InternalCpu.DisableInterruptsScope())
             {
-                s_onTable = 1;
                 for (int i = 0; i < 64; i++)
                 {
                     bool now = LeafWritable(s_tableA, User);
@@ -963,9 +1161,6 @@ public unsafe class Kernel : Sys.Kernel
                         Interlocked.Increment(ref s_seenChanges);
                     }
                 }
-
-                s_onTable = 0;
-                Interlocked.Increment(ref s_leaves);
             }
 
             if (*(ulong*)User != ValueA)

@@ -118,6 +118,12 @@ public sealed class PerCpuState : SchedulerExtensible
     internal Memory.UserPageTable? _loadedTable;
     internal ulong _kernelRoot;
 
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    // Counts this CPU's CR3 writes: odd from just before a write, even from
+    // just after it (UserPageTable.LoadAndCount), both interlocked. Written on
+    // this CPU alone with interrupts masked, read by a shootdown on any CPU.
+    internal long _tlbEpoch;
+
     // ===== Synchronization =====
 
     // The queue lock: held around every policy hook that touches this CPU's

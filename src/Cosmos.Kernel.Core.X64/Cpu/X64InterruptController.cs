@@ -37,6 +37,14 @@ internal class X64InterruptController : IInterruptController
     /// </summary>
     private const byte StopVector = 0xF1;
 
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    /// <summary>
+    /// The vector of the TLB shootdown IPI (<see cref="SendTlbShootdown"/>), next to the stop
+    /// vector and above every vector a device can allocate. A CPU held by a stop (interrupts
+    /// masked) takes it after the release; the shootdown waits for that.
+    /// </summary>
+    private const byte TlbShootdownVector = 0xF2;
+
     /// <summary>
     /// True once a hardware line can be routed, which on x64 takes the I/O
     /// APIC the MADT describes. The Local APIC alone, which a machine without
@@ -55,6 +63,7 @@ internal class X64InterruptController : IInterruptController
         // Dispatch's hardware-IRQ path: the EOI, then the pending reschedule.
         InterruptManager.SetHandler(RescheduleVector, HandleReschedule);
         InterruptManager.SetHandler(StopVector, HandleStop);
+        InterruptManager.SetHandler(TlbShootdownVector, HandleTlbShootdown);
 
         // ZehOS patch user-mode-probe, see PATCHES.md
         UserMode.RegisterArch(new UserModeX64());
@@ -100,6 +109,13 @@ internal class X64InterruptController : IInterruptController
     public void SendPanicStop(ulong hardwareId)
     {
         LocalApic.SendNmi(hardwareId);
+    }
+
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    /// <inheritdoc/>
+    public void SendTlbShootdown(ulong hardwareId)
+    {
+        LocalApic.SendIpi(hardwareId, TlbShootdownVector);
     }
 
     public void RouteIrq(byte irqNo, byte vector, bool startMasked)
@@ -224,6 +240,13 @@ internal class X64InterruptController : IInterruptController
     private static unsafe void HandleStop(ref IRQContext ctx)
     {
         CpuStop.HandleStopInterrupt((nuint)Unsafe.AsPointer(ref ctx) - ThreadContext.FpuAreaSize);
+    }
+
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    /// <summary>The TLB shootdown IPI's handler: CR3 reloaded and counted; the EOI follows on Dispatch's exit.</summary>
+    private static void HandleTlbShootdown(ref IRQContext ctx)
+    {
+        UserPageTable.HandleShootdownInterrupt();
     }
 
     private static void SendEOI()
