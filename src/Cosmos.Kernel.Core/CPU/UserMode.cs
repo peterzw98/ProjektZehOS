@@ -130,6 +130,11 @@ public static unsafe class UserMode
         s_arch.Enter(&frame, (ulong*)Unsafe.AsPointer(ref thread._userKernelRsp));
         thread._userKernelRsp = 0;
 
+        // ZehOS patch user-return-work, see PATCHES.md
+        // Work still due belongs to the program that left: the next Enter must not run the
+        // handler for it. A request from here on waits for that Enter.
+        Volatile.Write(ref thread._userWork, 0);
+
         // A request wins over a failure and is used up; one that is only being written stays
         // for the next Enter.
         if (Volatile.Read(ref thread._userLeaveState) == 2)
@@ -222,8 +227,9 @@ public static unsafe class UserMode
     /// before its next return to ring 3, a return from an interrupt included, so also for a
     /// program that computes without calls. Requests before that run are one. Only a request
     /// that sets the mark interrupts the thread's CPU (<see cref="Kick"/>); a thread outside of
-    /// <see cref="Enter"/> keeps it until its first interrupt or call there. Allocation-free, no
-    /// lock; any context, also masked.
+    /// <see cref="Enter"/> keeps it until its first interrupt or call there. A request not run
+    /// when <see cref="Enter"/> returns is dropped. Allocation-free, no lock; any context, also
+    /// masked.
     /// </summary>
     public static void RequestWork(SchedulerThread thread)
     {
@@ -247,6 +253,10 @@ public static unsafe class UserMode
     // The suite's counter-check shows with it that its cell sees such a loss.
     internal static int TestWorkKicks;
     internal static bool TestWorkLoseState;
+
+    // How often a frame was turned to the ramp in the context of a staged switch, not the
+    // interrupted frame: the thread was resumed with work due.
+    internal static int TestWorkStaged;
 #endif
 
 #if COSMOS_TEST_HOOKS

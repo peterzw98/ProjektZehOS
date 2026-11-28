@@ -28,7 +28,7 @@ namespace Cosmos.Kernel.Tests.UserMode;
 /// </summary>
 public unsafe partial class Kernel : Sys.Kernel
 {
-    private const int ExpectedTestCount = 25;
+    private const int ExpectedTestCount = 27;
     private const string NoRing3 = "no ring 3 on this architecture";
 
     protected override void BeforeRun()
@@ -61,6 +61,8 @@ public unsafe partial class Kernel : Sys.Kernel
         TR.RunIf(KernelCpus.Count >= 4, "Nmi_InRing3_Returns", TestNmi, "needs four CPUs");
         TR.RunIf(KernelCpus.Count >= 2, "RequestLeave_OtherCpu_BeforeTick", TestRequestLeaveKick, "needs two CPUs");
         TR.Run("ReturnWork_InterruptReturn_KeepsRegisters", TestReturnWork);
+        TR.Run("ReturnWork_StagedSwitch_KeepsRegisters", TestReturnWorkStaged);
+        TR.Run("ReturnWork_Fault_RunsOrDrops", TestReturnWorkFault);
 #else
         TR.Run("Initialize_NotSupported", () => Assert.True(!Core.CPU.UserMode.Initialize() && !Core.CPU.UserMode.IsSupported, "not supported"));
         for (int i = 1; i < ExpectedTestCount; i++)
@@ -209,6 +211,16 @@ public unsafe partial class Kernel : Sys.Kernel
             case 3:
                 Change(frame);
                 return 1;
+            case 4:
+                // ZehOS patch user-return-work, see PATCHES.md
+                // Work requested during a fault that is retried: runs on the way back.
+                Core.CPU.UserMode.RequestWork(SchedulerManager.CurrentThread);
+                frame->Rax = DataUser(1);
+                return 1;
+            case 5:
+                // Work requested during a fault that ends the program: dropped with it.
+                Core.CPU.UserMode.RequestWork(SchedulerManager.CurrentThread);
+                return 0;
             default:
                 return 0;
         }
@@ -464,7 +476,7 @@ public unsafe partial class Kernel : Sys.Kernel
         ulong lost;
         try
         {
-            lost = WorkRun(out _, out _);
+            lost = WorkRun(false, out _, out _);
         }
         finally
         {
@@ -475,7 +487,7 @@ public unsafe partial class Kernel : Sys.Kernel
         Assert.True(lost != 0, "a ramp that loses the state is seen (counter-probe)");
         int kicksBefore = Volatile.Read(ref Core.CPU.UserMode.TestWorkKicks);
 #endif
-        ulong result = WorkRun(out int runs, out long worst);
+        ulong result = WorkRun(false, out int runs, out long worst);
         Log.WriteString($"[UserMode] work: result 0x{result:X}, {runs} runs for {WorkRounds} requests, worst {worst * 1_000_000 / Stopwatch.Frequency} us, {KernelCpus.Count} CPUs\n");
         Equal(0, result);
         Assert.True(runs >= WorkRounds, "every request ran the handler");
@@ -491,7 +503,59 @@ public unsafe partial class Kernel : Sys.Kernel
 #endif
     }
 
-    private static ulong WorkRun(out int runs, out long worst)
+    // The program and main on one CPU: each request finds the program switched out, so the
+    // ramp starts from the context of the staged switch that resumes it, not from an
+    // interrupted frame.
+    private static void TestReturnWorkStaged()
+    {
+#if COSMOS_TEST_HOOKS
+        int stagedBefore = Volatile.Read(ref Core.CPU.UserMode.TestWorkStaged);
+#endif
+        ulong result = WorkRun(true, out int runs, out _);
+        Log.WriteString($"[UserMode] work, one CPU: result 0x{result:X}, {runs} runs for {WorkRounds} requests\n");
+        Equal(0, result);
+        Assert.True(runs >= WorkRounds, "every request ran the handler");
+#if COSMOS_TEST_HOOKS
+        int staged = Volatile.Read(ref Core.CPU.UserMode.TestWorkStaged) - stagedBefore;
+        Log.WriteString($"[UserMode] work, one CPU: {staged} ramps from a staged switch\n");
+        Assert.True(staged == runs, "every run started from a staged switch");
+#endif
+    }
+
+    // Work requested in the fault handler: a retried fault runs it before the instruction again,
+    // with the frame the handler changed; a fault that ends the program drops it, and the next
+    // Enter does not run it.
+    private static void TestReturnWorkFault()
+    {
+        Volatile.Write(ref s_workRuns, 0);
+        s_faults = 0;
+        s_faultAction = 4;
+        Slot(0) = UserBase + 0x20_0000;
+        *(ulong*)s_data[1] = 0;
+        ulong retried = Run(2);
+        int runsRetried = Volatile.Read(ref s_workRuns);
+        Log.WriteString($"[UserMode] work, fault retried: result 0x{retried:X}, {runsRetried} runs\n");
+        Equal(0x78, retried);
+        Equal(1, (ulong)s_faults);
+        Equal(1, *(ulong*)s_data[1]);
+        Equal(1, (ulong)runsRetried);
+
+        Volatile.Write(ref s_workRuns, 0);
+        s_faults = 0;
+        s_faultAction = 5;
+        ulong ended = Run(1);
+        s_faultAction = 0;
+        int runsEnded = Volatile.Read(ref s_workRuns);
+        StillRuns();
+        int runsAfter = Volatile.Read(ref s_workRuns);
+        Log.WriteString($"[UserMode] work, fault ends: result 0x{ended:X}, {runsEnded} runs, {runsAfter} after the next Enter\n");
+        Equal(Core.CPU.UserMode.Faulted, ended);
+        Equal(1, (ulong)s_faults);
+        Equal(0, (ulong)runsEnded);
+        Equal(0, (ulong)runsAfter);
+    }
+
+    private static ulong WorkRun(bool oneCpu, out int runs, out long worst)
     {
         Slot(WorkPage) = 0;
         WorkSlot = 0;
@@ -500,14 +564,14 @@ public unsafe partial class Kernel : Sys.Kernel
 
         // With two CPUs: main on CPU 0 waits actively, the program computes on CPU 1, so each
         // request must arrive by the kick, not by CPU 1's next tick. With one: by a tick or switch.
-        bool two = KernelCpus.Count >= 2;
+        bool two = !oneCpu && KernelCpus.Count >= 2;
         var mainSet = ThreadAffinity.Current;
         SchedulerThread? scheduler = null;
         ulong result = 0;
         int done = 0;
         try
         {
-            if (two)
+            if (two || oneCpu)
             {
                 ThreadAffinity.Current = Sys.Threading.CpuSet.Single(0);
             }
@@ -518,6 +582,10 @@ public unsafe partial class Kernel : Sys.Kernel
                 {
                     ThreadAffinity.Current = Sys.Threading.CpuSet.Single(1);
                 }
+                else if (oneCpu)
+                {
+                    ThreadAffinity.Current = Sys.Threading.CpuSet.Single(0);
+                }
 
                 Volatile.Write(ref scheduler, SchedulerManager.CurrentThread);
                 result = Run(13, WorkPage);
@@ -527,9 +595,9 @@ public unsafe partial class Kernel : Sys.Kernel
             WaitProgress(WorkPage);
             WaitProgress(WorkPage);
             SchedulerThread target = Volatile.Read(ref scheduler)!;
-            if (two)
+            if (two || oneCpu)
             {
-                Equal(1, target.CpuId);
+                Equal(two ? 1UL : 0UL, target.CpuId);
             }
 
             Equal(0, Volatile.Read(ref WorkSlot));
