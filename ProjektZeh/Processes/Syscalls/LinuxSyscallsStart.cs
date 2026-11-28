@@ -120,7 +120,7 @@ internal static partial class LinuxSyscalls
 
         // Bleibt die Wartemaske nach -EINTR stehen, stellt der Signalrahmen die alte Maske her (rt_sigreturn); endet der Prozess, ist es egal.
         up.BeginWaitMask(up.CurrentThread, BitConverter.ToUInt64(m));
-        return threads.Futexes.Sleep(-1);
+        return threads.Futexes.Sleep(-1, threads.CurrentThread.FutexWait);
     }
 
     /// <summary>
