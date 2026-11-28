@@ -220,9 +220,154 @@ public sealed class PackageService2Tests
         bytes[^3] ^= 1;
         File.WriteAllBytes(path, bytes);
         Assert.IsFalse(service.ReadCatalog().IsOK());
+        PublishCatalog(1, [MuslR1]);
+        Assert.IsFalse(service.Update(Source(), CancellationToken.None).IsOK(), "Der Boden sperrt aeltere Kataloge auch bei beschaedigtem Katalog.");
+        PublishCatalog(2, [MuslR2]);
+        Assert.IsFalse(service.Update(Source(), CancellationToken.None).IsOK(), "Gleiche Generation mit anderem Inhalt bleibt gesperrt.");
         PublishCatalog(2, [MuslR1]);
-        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK(), "Beschaedigter Stand sperrt keine Aktualisierung.");
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK(), "Derselbe Stand repariert den beschaedigten Katalog.");
         Assert.IsTrue(service.ReadCatalog().IsOK());
+        PublishCatalog(3, [MuslR2]);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK());
+    }
+
+    private string FloorFile => Path.Combine(Root, "v2", "catalog2.floor");
+    private string CatalogFile => Path.Combine(Root, "v2", "catalog2.signed");
+
+    [TestMethod]
+    public void DamagedFloorFallsBackToCatalogAndBothDamagedFailClosed()
+    {
+        var service = Service();
+        PublishCatalog(4, [MuslR1]);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK());
+        Assert.IsTrue(PackageService2.TryParseFloor(File.ReadAllBytes(FloorFile), out long generation, out _));
+        Assert.AreEqual(4, generation);
+        byte[] floor = File.ReadAllBytes(FloorFile);
+        floor[30] ^= 1;
+        File.WriteAllBytes(FloorFile, floor);
+        PublishCatalog(3, [MuslR1]);
+        Assert.IsFalse(service.Update(Source(), CancellationToken.None).IsOK(), "Katalog traegt den Schutz, wenn der Boden kaputt ist.");
+        PublishCatalog(4, [MuslR1]);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK(), "Derselbe Stand schreibt den Boden neu.");
+        Assert.IsTrue(PackageService2.TryParseFloor(File.ReadAllBytes(FloorFile), out _, out _));
+
+        // Beide kaputt: kein bekannter Stand, aber etwas lag vor; nichts annehmen, auch nicht die neueste Fassung.
+        File.WriteAllBytes(FloorFile, [1, 2, 3]);
+        byte[] catalog = File.ReadAllBytes(CatalogFile);
+        catalog[^3] ^= 1;
+        File.WriteAllBytes(CatalogFile, catalog);
+        PublishCatalog(1, [MuslR1]);
+        var refused = service.Update(Source(), CancellationToken.None);
+        Assert.IsFalse(refused.IsOK());
+        StringAssert.Contains(refused.Status.Message, "Rueckstufungsschutz");
+        PublishCatalog(9, [MuslR1]);
+        Assert.IsFalse(service.Update(Source(), CancellationToken.None).IsOK(), "Fail closed gilt fuer jede Generation.");
+        Assert.AreEqual(3, File.ReadAllBytes(FloorFile).Length, "Nichts geschrieben.");
+    }
+
+    [TestMethod]
+    public void CatalogBelowFloorIsNotUsedAndCannotBeReaccepted()
+    {
+        var service = Service();
+        PublishCatalog(2, [MuslR1]);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK());
+        byte[] older = File.ReadAllBytes(CatalogFile);
+        PublishCatalog(3, [MuslR2]);
+        // Abbruch zwischen Boden und Katalog: Boden 3 liegt, der Katalog bleibt bei 2.
+        var torn = Service(step: what => { if (what == "Katalog speichern") throw new IOException("Strom weg"); });
+        Assert.IsFalse(torn.Update(Source(), CancellationToken.None).IsOK());
+        CollectionAssert.AreEqual(older, File.ReadAllBytes(CatalogFile));
+        var read = service.ReadCatalog();
+        Assert.IsFalse(read.IsOK(), "Katalog unter dem Boden gilt nicht.");
+        StringAssert.Contains(read.Status.Message, "Generationsboden");
+        Assert.IsFalse(service.Install(Source(), ["musl"], CancellationToken.None).IsOK());
+        PublishCatalog(2, [MuslR1]);
+        Assert.IsFalse(service.Update(Source(), CancellationToken.None).IsOK(), "Alter Stand bleibt gesperrt.");
+        PublishCatalog(3, [MuslR2]);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK(), "Der Stand des Bodens geht durch.");
+        Assert.AreEqual(3, service.ReadCatalog().Value!.Generation);
+    }
+
+    [TestMethod]
+    public void FloorParserRejectsTruncatedAndForeignBytes()
+    {
+        var service = Service();
+        PublishCatalog(7, [MuslR1]);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK());
+        byte[] floor = File.ReadAllBytes(FloorFile);
+        Assert.IsTrue(PackageService2.TryParseFloor(floor, out _, out _));
+        Assert.IsFalse(PackageService2.TryParseFloor(floor[..^1], out _, out _));
+        Assert.IsFalse(PackageService2.TryParseFloor([], out _, out _));
+        string text = Encoding.ASCII.GetString(floor).Replace("generation=7", "generation=9", StringComparison.Ordinal);
+        Assert.IsFalse(PackageService2.TryParseFloor(Encoding.ASCII.GetBytes(text), out _, out _), "Pruefsumme passt nicht mehr.");
+    }
+
+    [TestMethod]
+    public void SecondJobWhileBusyIsRejectedAndLeavesNothing()
+    {
+        var store = Store();
+        InstallChain(store);
+        foreach (var pkg in new[] { MuslR2, FooR2, AppR2 }) Publish(pkg);
+        PublishCatalog(2, [MuslR2, FooR2, AppR2]);
+        PackageService2? service = null;
+        var inner = new List<string>();
+        service = Service(store, step: what =>
+        {
+            if (what != "stufen libfoo" && what != "Katalog speichern") return;
+            inner.Add(service!.Update(Source(), CancellationToken.None).Status.Message);
+            inner.Add(service.Remove("app", CancellationToken.None).Status.Message);
+            inner.Add(service.Upgrade(Source(), CancellationToken.None).Status.Message);
+        });
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK());
+        var upgraded = service.Upgrade(Source(), CancellationToken.None);
+        Assert.IsTrue(upgraded.IsOK(), upgraded.Status.Message);
+        Assert.AreEqual(6, inner.Count);
+        foreach (string message in inner) StringAssert.Contains(message, "gerade einen Auftrag");
+        Assert.AreEqual("app 2.0.0-r1 requested,libfoo 1.1.0-r1 auto,musl 1.2.5-r2 auto", Describe(store), "Nur der erste Auftrag wirkt.");
+        Assert.IsTrue(service.Remove("app", CancellationToken.None).IsOK(), "Nach dem Ende ist der Dienst wieder frei.");
+    }
+
+    private sealed class CancelAfterFirstRead(IPackageSource inner, CancellationTokenSource cancel) : IPackageSource
+    {
+        public ResultObject<byte[]> Read(string path, int maximumBytes, CancellationToken cancellation)
+        {
+            var result = inner.Read(path, maximumBytes, cancellation);
+            cancel.Cancel();
+            return result;
+        }
+
+        public ResultErr Copy(string path, long size, Stream target, CancellationToken cancellation) => inner.Copy(path, size, target, cancellation);
+    }
+
+    [TestMethod]
+    public void CancelDuringUpdateStoresNothingAndKeepsKnownCatalog()
+    {
+        var service = Service();
+        PublishCatalog(1, [MuslR1]);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK());
+        byte[] floor = File.ReadAllBytes(FloorFile), catalog = File.ReadAllBytes(CatalogFile);
+        PublishCatalog(2, [MuslR2]);
+        using var cancel = new CancellationTokenSource();
+        var result = service.Update(new CancelAfterFirstRead(Source(), cancel), cancel.Token);
+        Assert.IsFalse(result.IsOK());
+        StringAssert.Contains(result.Status.Message, "abgebrochen");
+        CollectionAssert.AreEqual(floor, File.ReadAllBytes(FloorFile));
+        CollectionAssert.AreEqual(catalog, File.ReadAllBytes(CatalogFile));
+        Assert.AreEqual(1, service.ReadCatalog().Value!.Generation);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK(), "Danach geht derselbe Auftrag durch.");
+    }
+
+    [TestMethod]
+    public void RemoveOfMissingPackageChangesNothing()
+    {
+        var store = Store();
+        var service = InstallChain(store);
+        string active = File.ReadAllText(Path.Combine(Root, "v2", "active2"));
+        var result = service.Remove("fehlt", CancellationToken.None);
+        Assert.AreEqual(ResultCode.NotFound, result.Status.Code);
+        StringAssert.Contains(result.Status.Message, "nicht installiert");
+        Assert.AreEqual(active, File.ReadAllText(Path.Combine(Root, "v2", "active2")));
+        Assert.AreEqual(ChainR1, Describe(store));
     }
 
     [TestMethod]

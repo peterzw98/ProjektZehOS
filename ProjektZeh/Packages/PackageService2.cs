@@ -34,7 +34,12 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     private readonly object gate = new();
     private bool busy;
 
+    private const int FloorMaximumBytes = 512;
+
     private string CatalogPath => Path.Combine(root, "v2", "catalog2.signed");
+
+    /// <summary>Generationsboden: hoechste je angenommene Katalog-Generation, getrennt vom Katalog abgelegt (Rueckstufungsschutz).</summary>
+    private string FloorPath => Path.Combine(root, "v2", "catalog2.floor");
 
     /// <summary>Testnaht: wird vor jedem Paketschritt aufgerufen (Abbruch zwischen Stufen und vor Activate).</summary>
     internal Action<string>? ServiceStep { get; init; }
@@ -50,7 +55,13 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
             var stored = ReadStored();
             if (stored == null) return ResultObjectFactory.CreateSuccess<PackageCatalog2?>(null);
             var parsed = PackageCatalog2.Parse(stored.Value.Catalog);
-            return parsed.IsOK() ? ResultObjectFactory.CreateSuccess<PackageCatalog2?>(parsed.Value) : DamagedCatalog();
+            if (!parsed.IsOK()) return DamagedCatalog();
+            // Liegt der Katalog unter dem Boden (Abbruch zwischen Boden und Katalog, alte Fassung zurueckgelegt), gilt er nicht.
+            long floor = HighestValidFloor();
+            if (parsed.Value!.Generation < floor)
+                return ResultObjectFactory.CreateFailure<PackageCatalog2?>(ResultCode.Failure,
+                    $"Gespeicherter Katalog v2 ist aelter als der Generationsboden ({parsed.Value.Generation} < {floor}); pkg update ausfuehren.");
+            return ResultObjectFactory.CreateSuccess<PackageCatalog2?>(parsed.Value);
         }
         catch (Exception exception) when (FileErrors.IsFileError(exception))
         {
@@ -94,32 +105,130 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
         finally { End(); }
     }
 
+    // Rueckstufungsschutz: Der hoechste angenommene Stand steht zusaetzlich als Generationsboden in einer eigenen Datei. Ist der
+    // gespeicherte Katalog beschaedigt, gilt der Boden weiter; nur wenn keine der beiden Angaben lesbar ist, obwohl eine vorliegt,
+    // wird abgelehnt (fail closed): Sonst nimmt ein beschaedigter Katalog jede aeltere, gueltig signierte Fassung an, und
+    // Neuinstallationen fielen auf alte Versionen zurueck. Reihenfolge beim Schreiben: erst der Boden, dann der Katalog.
     private ResultErr Accept(PackageCatalog2 parsed, byte[] catalog, byte[] signature)
     {
-        StoredCatalog? stored;
-        // Ein unlesbarer gespeicherter Katalog sperrt keine Aktualisierung; die Rueckstufungssperre der Pakete (active2) bleibt.
-        try { stored = ReadStored(); }
-        catch (InvalidDataException) { stored = null; }
-        if (stored != null && PackageCatalog2.Parse(stored.Value.Catalog) is { } old && old.IsOK())
+        string hash = PackageTrust.Sha256Hex(catalog);
+        var floor = KnownGeneration(out byte[]? storedCatalog);
+        if (floor.Damaged && floor.Hashes.Count == 0)
+            return ResultErr.CreateFailure(ResultCode.Failure,
+                "Katalog v2 und Generationsboden sind beschaedigt; Rueckstufungsschutz unbekannt, pkg update abgelehnt.");
+        if (floor.Hashes.Count > 0)
         {
-            long known = old.Value!.Generation;
-            if (parsed.Generation < known)
-                return ResultErr.CreateFailure(ResultCode.Failure, $"Katalog v2 ist aelter als der bekannte Stand (Generation {parsed.Generation} < {known}).");
-            if (parsed.Generation == known)
-                return stored.Value.Catalog.AsSpan().SequenceEqual(catalog) ? ResultErr.CreateSuccess()
-                    : ResultErr.CreateFailure(ResultCode.Failure, $"Katalog v2 nennt die bekannte Generation {known} mit anderem Inhalt; abgelehnt.");
+            if (parsed.Generation < floor.Generation)
+                return ResultErr.CreateFailure(ResultCode.Failure, $"Katalog v2 ist aelter als der bekannte Stand (Generation {parsed.Generation} < {floor.Generation}).");
+            if (parsed.Generation == floor.Generation)
+            {
+                if (!floor.Hashes.Contains(hash))
+                    return ResultErr.CreateFailure(ResultCode.Failure, $"Katalog v2 nennt die bekannte Generation {floor.Generation} mit anderem Inhalt; abgelehnt.");
+                // Derselbe Stand: nichts zu tun, wenn Katalog und Boden schon vorliegen; sonst beide wiederherstellen.
+                if (storedCatalog != null && storedCatalog.AsSpan().SequenceEqual(catalog) && floor.FloorValid) return ResultErr.CreateSuccess();
+            }
         }
         byte[] combined = new byte[signature.Length + catalog.Length];
         signature.CopyTo(combined, 0);
         catalog.CopyTo(combined, signature.Length);
+        byte[] floorBytes = FloorBytes(parsed.Generation, hash);
         using var writer = BeginWrite();
-        Step("Katalog speichern");
+        Step("Boden speichern");
         StorageLock.Run(() =>
         {
             Directory.CreateDirectory(Path.GetDirectoryName(CatalogPath)!);
-            PackageStore.ReplaceFileStorageLocked(CatalogPath, combined);
+            PackageStore.ReplaceFileStorageLocked(FloorPath, floorBytes, textLine: true);
         });
+        Step("Katalog speichern");
+        StorageLock.Run(() => PackageStore.ReplaceFileStorageLocked(CatalogPath, combined));
         return ResultErr.CreateSuccess();
+    }
+
+    /// <summary>Bekannter Stand: hoechste Generation aus Boden und gespeichertem Katalog, die dort angenommenen Inhalte (SHA-256) und ob etwas Vorhandenes unlesbar war.</summary>
+    private readonly record struct Floor(long Generation, HashSet<string> Hashes, bool Damaged, bool FloorValid);
+
+    private Floor KnownGeneration(out byte[]? storedCatalog)
+    {
+        storedCatalog = null;
+        long generation = 0;
+        var hashes = new HashSet<string>(StringComparer.Ordinal);
+        bool damaged = false;
+        void Offer(long candidate, string hash)
+        {
+            if (candidate > generation || hashes.Count == 0) { generation = candidate; hashes.Clear(); }
+            if (candidate == generation) hashes.Add(hash);
+        }
+        var floors = StorageLock.Run(() => ReadFloorsStorageLocked());
+        bool floorValid = false;
+        foreach (byte[] bytes in floors)
+            if (TryParseFloor(bytes, out long value, out string hash)) { Offer(value, hash); floorValid = true; }
+            else damaged = true;
+        try
+        {
+            var stored = ReadStored();
+            if (stored != null)
+            {
+                var old = PackageCatalog2.Parse(stored.Value.Catalog);
+                if (old.IsOK())
+                {
+                    storedCatalog = stored.Value.Catalog;
+                    Offer(old.Value!.Generation, PackageTrust.Sha256Hex(storedCatalog));
+                }
+                else damaged = true;
+            }
+        }
+        catch (InvalidDataException) { damaged = true; }
+        return new Floor(generation, hashes, damaged, floorValid);
+    }
+
+    private long HighestValidFloor()
+    {
+        long highest = 0;
+        foreach (byte[] bytes in StorageLock.Run(() => ReadFloorsStorageLocked()))
+            if (TryParseFloor(bytes, out long value, out _) && value > highest) highest = value;
+        return highest;
+    }
+
+    // Boden: Textdatei mit Generation, SHA-256 des Katalogs und einer Pruefsumme ueber beide Zeilen (erkennt gekuerzte oder
+    // verfaelschte Bytes; gegen gezieltes Faelschen mit Plattenzugriff schuetzt sie nicht, das kann ohne Schluessel nichts).
+    private static byte[] FloorBytes(long generation, string hash)
+    {
+        string body = $"zehos-catalog-floor 1\ngeneration={generation.ToString(System.Globalization.CultureInfo.InvariantCulture)}\nsha256={hash}\n";
+        return System.Text.Encoding.ASCII.GetBytes(body + "check=" + PackageTrust.Sha256Hex(System.Text.Encoding.ASCII.GetBytes(body)) + "\n");
+    }
+
+    internal static bool TryParseFloor(byte[] bytes, out long generation, out string hash)
+    {
+        generation = 0;
+        hash = "";
+        if (bytes.Length > FloorMaximumBytes) return false;
+        // Nicht-ASCII wird hier zu '?', der Vergleich mit der neu erzeugten Fassung am Ende weist das ab.
+        string[] lines = System.Text.Encoding.ASCII.GetString(bytes).Split('\n');
+        if (lines.Length != 5 || lines[0] != "zehos-catalog-floor 1" || lines[4] != "") return false;
+        if (!lines[1].StartsWith("generation=", StringComparison.Ordinal) || !lines[2].StartsWith("sha256=", StringComparison.Ordinal)
+            || !lines[3].StartsWith("check=", StringComparison.Ordinal)) return false;
+        if (!long.TryParse(lines[1].AsSpan("generation=".Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out generation)) return false;
+        hash = lines[2]["sha256=".Length..];
+        if (hash.Length != 64) return false;
+        var expected = FloorBytes(generation, hash);
+        return expected.AsSpan().SequenceEqual(bytes);
+    }
+
+    // Alle vorhandenen Fassungen (Ziel, .old, .new) werden gelesen, ohne zu schreiben; die hoechste gueltige gilt. Eine .new ist
+    // vollstaendig geschrieben (erst nach .wip umbenannt), kann also hoechstens einen spaeter nicht gespeicherten Katalog nennen:
+    // Dann geht nur genau dieser Katalog wieder durch, das ist sicher.
+    private List<byte[]> ReadFloorsStorageLocked()
+    {
+        var found = new List<byte[]>(3);
+        foreach (string path in new[] { FloorPath, FloorPath + ".old", FloorPath + ".new" })
+        {
+            if (!File.Exists(path)) continue;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
+            byte[] bytes = new byte[Math.Min(stream.Length, FloorMaximumBytes + 1)];
+            stream.ReadExactly(bytes);
+            found.Add(bytes);
+        }
+        return found;
     }
 
     /// <summary>
