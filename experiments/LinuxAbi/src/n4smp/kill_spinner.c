@@ -3,7 +3,9 @@
  * muessen den Prozess trotzdem beenden, auch wenn ein Geschwister auf einer anderen CPU rechnet (zehos.linuxsmp=1).
  * Jeder Fall laeuft in einem Kind; das Kind startet Rechenthreads (reine Arithmetik, kein Aufruf), wartet, bis sie rechnen,
  * und dann sendet entweder das Kind selbst (kill, tgkill, Absturz) oder der Elternprozess (kill) das Signal. Der Elternprozess
- * meldet den Status des Kindes; ein Haenger endet am Wecker (signal 14). Zeiten stehen nicht in der Ausgabe. */
+ * meldet den Status des Kindes; ein Haenger endet am Wecker des Kindes (signal 14). Endet das Kind auch daran nicht, beendet der
+ * Elternprozess es an seinem eigenen Wecker mit SIGKILL, bevor er selbst endet: kein rechnender Waise (S3-Review P3). Zeiten stehen
+ * nicht in der Ausgabe. */
 #define _GNU_SOURCE
 #include "../s3/util.h"
 #include <pthread.h>
@@ -36,6 +38,18 @@ static void *spin(void *arg)
     }
     sink = x;
     return NULL;
+}
+
+/* Kind des laufenden Falls; der Wecker des Elternprozesses beendet es vor dem eigenen Ende. */
+static volatile pid_t current_child;
+
+static void parent_alarm(int sig)
+{
+    (void)sig;
+    if (current_child > 0) {
+        kill(current_child, SIGKILL);
+    }
+    _exit(3);
 }
 
 static void pause_ms(long ms)
@@ -74,16 +88,20 @@ static void run_case(const char *name, int threads, int self_action, int sig)
     pid_t pid = fork();
     NEED(pid >= 0);
     if (pid == 0) {
-        alarm(0);
+        signal(SIGALRM, SIG_DFL); /* der geerbte Handler des Elternprozesses gilt im Kind nicht */
+        alarm(10); /* eigener Wecker: ein Haenger erscheint als "signal 14" dieses Falls */
         child(threads, self_action, sig);
         _exit(4);
     }
+    current_child = pid;
+    alarm(20); /* je Fall neu: laenger als der Wecker des Kindes */
     if (self_action == 0) {
         wait_spinning(threads == 0 ? 1 : threads);
         NEED(kill(pid, sig) == 0);
     }
     int st = 0;
     NEED(waitpid(pid, &st, 0) == pid);
+    current_child = 0;
     if (WIFSIGNALED(st)) {
         printf("%s: signal %d\n", name, WTERMSIG(st));
     } else {
@@ -94,6 +112,7 @@ static void run_case(const char *name, int threads, int self_action, int sig)
 int main(void)
 {
     INIT();
+    NEED(signal(SIGALRM, parent_alarm) != SIG_ERR);
     sh = mmap(NULL, sizeof *sh, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     NEED(sh != MAP_FAILED);
     run_case("self kill SIGKILL, 1 spinner", 1, 1, SIGKILL);
