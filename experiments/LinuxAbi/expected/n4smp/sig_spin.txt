@@ -1,0 +1,5 @@
+tgkill spinner SIGUSR1 handler: exit 0
+tgkill spinner SIGUSR1 handler x20: exit 0
+kill process, main blocks, spinner takes it: exit 0
+parent kill, single spinner with handler: exit 0
+done

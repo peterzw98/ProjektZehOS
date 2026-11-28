@@ -1172,6 +1172,7 @@ internal static unsafe class CosmosLinuxRun
         NativeMemory.Free(probe);
         UserMode.SyscallHandler = &OnSyscall;
         UserMode.FaultHandler = &OnFault;
+        UserMode.ReturnHandler = &OnReturnWork; // N4 IRQ-Signal, Cosmos-Patch user-return-work
         if (!UserMode.Initialize())
         {
             why = "Ring 3 auf dieser CPU nicht verfügbar";
@@ -1286,6 +1287,69 @@ internal static unsafe class CosmosLinuxRun
     }
 
     /// <summary>
+    /// N4 IRQ-Signal: Rückkehr in den Ring 3 nach <see cref="UserMode.RequestWork"/> (Cosmos-Patch user-return-work), auch aus einem Interrupt.
+    /// Läuft wie <see cref="OnSyscall"/> auf dem Kernelstack des Threads mit offenen Interrupts; der Frame trägt alle Register des Programms,
+    /// das fxsave-Abbild liegt darunter. Stellt die anhängigen Signale zu wie nach rt_sigreturn: kein Aufruf, also kein Neustart und kein EINTR.
+    /// </summary>
+    [UnmanagedCallersOnly]
+    private static void OnReturnWork(UserFrame* frame)
+    {
+        Running? run = Volatile.Read(ref current);
+        Bridge? me = run == null ? null : CurrentBridge(run);
+
+        // Ein Kindthread vor seinem ersten Aufruf steht mit genullten Registern auf dem syscall des Elternthreads (Bridge.Pending): kein
+        // Signalrahmen dort, das Signal bleibt anhängig bis zum nächsten Rücksprung. Beim Abbruch verlässt der Thread den Ring 3 ohnehin.
+        if (run == null || me == null || me.Pending || run.Cancelled)
+        {
+            return;
+        }
+
+        me.Frame = frame;
+        try
+        {
+            DeliverSignals(me, frame, new SyscallArgs { Number = -1 }, 0, 0);
+        }
+        catch (Exception exception)
+        {
+            // Wie im Aufruf: Ein Fehler der Brücke beendet das Programm, nicht den Kernel.
+            run.Error = "Signalzustellung: " + exception.GetType().Name + ": " + exception.Message;
+            UserMode.LeaveCurrent(Killed);
+            LeaveAll(run, me, Killed);
+        }
+        finally
+        {
+            me.Frame = null;
+        }
+    }
+
+    /// <summary>
+    /// N4 IRQ-Signal (<see cref="LinuxUserProcess.OnSignalPending"/>): Die Kernelthreads von <paramref name="process"/> (oder nur der von
+    /// <paramref name="target"/>) stellen vor ihrer nächsten Rückkehr in den Ring 3 zu; <see cref="UserMode.RequestWork"/> stößt ihre CPU an,
+    /// wenn der Merker neu ist. Wer zuerst zurückkehrt, nimmt das Signal, die anderen finden nichts (Maske und Anhängiges stehen im Prozess).
+    /// Der aufrufende Thread nicht: Er stellt nach seinem Aufruf ohnehin zu. Ohne Sperre und ohne Allokation, wie <see cref="CurrentBridge"/>.
+    /// </summary>
+    private static void RequestSignalWork(Running run, LinuxUserProcess process, LinuxThread? target)
+    {
+        SchedulerThread? me = FaultIsolation.CurrentSchedulerThread();
+        Bridge?[] threads = run.Threads;
+        int used = Math.Min(Volatile.Read(ref run.ThreadsUsed), threads.Length);
+        for (int i = 0; i < used; i++)
+        {
+            Bridge? b = Volatile.Read(ref threads[i]);
+            if (b == null || !ReferenceEquals(b.Process, process) || (target != null && !ReferenceEquals(b.Linux, target)))
+            {
+                continue;
+            }
+
+            SchedulerThread? sched = Volatile.Read(ref b.Sched);
+            if (sched != null && !ReferenceEquals(sched, me))
+            {
+                UserMode.RequestWork(sched);
+            }
+        }
+    }
+
+    /// <summary>
     /// V18: Vor dem Rücksprung die wartenden Signale mit Handler anspringen (Rahmen auf dem Benutzerstapel, LinuxSignals.cs). Das
     /// fxsave-Abbild des Threads liegt direkt unter dem Rahmen (UserMode.s: <c>sub rsp, FPU_SIZE; fxsave64 [rsp]</c>, frame = rsp davor),
     /// fxrstor64 lädt es beim Rücksprung. Endet der Prozess dabei (SIGSEGV), verlässt der Thread den Ring 3 über OnExit.
@@ -1381,6 +1445,7 @@ internal static unsafe class CosmosLinuxRun
         process.CurrentThreadSource = () => CurrentBridge(run)?.Linux ?? process.MainThread;
         process.StartThread = child => StartChild(run, table, process, child);
         process.OnThreadExit = (_, code) => UserMode.LeaveCurrent((ulong)code);
+        process.OnSignalPending = target => RequestSignalWork(run, process, target);
         process.StartVfork = (child, stack) => StartVfork(run, child, stack);
         process.CreatePages = () =>
         {
@@ -1520,6 +1585,7 @@ internal static unsafe class CosmosLinuxRun
 
         child.OnFsBase = UserMode.SetFsBase;
         child.CurrentThreadSource = () => CurrentBridge(run)?.Linux ?? child.MainThread;
+        child.OnSignalPending = target => RequestSignalWork(run, child, target);
         child.CreatePages = () =>
         {
             UserPageTable? created = UserPageTable.TryCreate();
