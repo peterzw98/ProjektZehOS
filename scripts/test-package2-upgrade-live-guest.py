@@ -9,13 +9,15 @@ Paket lang bringt ein winziges statisches ELF (von diesem Skript erzeugt, kein U
 schlaeft --sleep Sekunden, liest dann /usr/share/lang/text aus seiner Prozesswurzel und gibt den Inhalt aus ("text rN").
 
 Ablauf: In der Textshell laeuft "run --pkg /usr/bin/lang" (r1). Waehrenddessen im Desktop-Terminal (eigene Sitzung): update und upgrade
-auf r2, resolve zeigt r2, ein zweiter Start wird abgewiesen (ein Programm zur Zeit). Erwartet:
+auf r2, resolve zeigt r2, ein zweiter Start wird abgewiesen (ein Programm zur Zeit; belegt durch die serielle Zeile
+"LINUXRUN REFUSED busy", nicht nur durch ausbleibendes LINUXRUN BEGIN). Erwartet:
   1. Das laufende Programm liest nach dem Upgrade noch "text r1" (gebundener alter Indexstand, Dateien von r1 noch auf der Platte).
   2. Der naechste Start sieht r2 ("lang r2 start", "text r2").
   3. Nach dem Ende und dem naechsten Start (CollectUnused) liegt nur noch der Ordner von r2 auf der Platte. Den Paketordner darf der
-     Testbenutzer im Gast nicht lesen ("Zugriff verweigert"); das Skript liest ihn deshalb nach dem Gastlauf offline aus der Laufplatte
-     (qemu-img und mdir aus mtools; fehlt mdir, bleibt dieser Punkt offen). Dass r1 waehrend des Laufs noch da war, belegt Punkt 1:
-     Das alte Programm oeffnet seine Datei erst nach dem Upgrade.
+     Testbenutzer im Gast nicht lesen ("Zugriff verweigert"); das Skript faehrt den Gast deshalb mit shutdown sauber herunter (Datenlaufwerk
+     ausgehaengt, FAT geschrieben) und liest den Ordner offline aus der Laufplatte (qemu-img und mdir aus mtools; ohne mdir bricht das
+     Skript vor dem Gaststart ab). Dass r1 waehrend des Laufs noch da war, belegt Punkt 1: Das alte Programm oeffnet seine Datei erst
+     nach dem Upgrade.
 """
 import argparse
 import importlib.util
@@ -97,15 +99,18 @@ def wait_output(guest, mark: int, expected: str, timeout: float) -> int:
     raise TimeoutError(f"Ausgabe {expected!r} nicht gesehen; bisher {output_since(guest, mark)[0]!r}")
 
 
-def stored_versions(disk: Path, raw: Path) -> list[str] | None:
-    """Liest die Versionsordner von lang offline aus der Laufplatte (FAT ab Sektor 63, wie vvfat sie anlegt); None ohne mdir."""
-    mdir = shutil.which("mdir")
-    if mdir is None:
-        return None
-    subprocess.run(["qemu-img", "convert", "-O", "raw", str(disk), str(raw)], check=True)
+def stored_versions(mdir: str, disk: Path, raw: Path) -> list[str]:
+    """Liest die Versionsordner von lang offline aus der Laufplatte (FAT ab Sektor 63, wie vvfat sie anlegt).
+
+    Fehler von qemu-img oder mdir (falscher Offset, fehlender Ordner) werden zu RuntimeError mit deren Meldung, damit der Lauf als FAIL endet."""
     try:
+        subprocess.run(["qemu-img", "convert", "-O", "raw", str(disk), str(raw)], check=True, capture_output=True, text=True)
         listing = subprocess.run([mdir, "-b", "-i", f"{raw}@@{63 * 512}", "::/.zehos-packages/v2/lang"], check=True, capture_output=True,
                                  text=True, env={**os.environ, "MTOOLS_SKIP_CHECK": "1"}).stdout
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(f"Versionsordner offline nicht lesbar: {error.cmd[0]} rc={error.returncode} {(error.stderr or '').strip()!r}") from error
+    except OSError as error:
+        raise RuntimeError(f"Versionsordner offline nicht lesbar: {error}") from error
     finally:
         raw.unlink(missing_ok=True)
     return sorted(line.rstrip("/").rsplit("/", 1)[-1] for line in listing.splitlines() if line.strip())
@@ -118,6 +123,11 @@ def main() -> int:
     parser.add_argument("--accel", choices=["tcg", "whpx", "kvm"], default="kvm")
     parser.add_argument("--sleep", type=int, default=150, help="Schlafdauer des Programms; muss Upgrade und Pruefungen ueberdauern")
     args = parser.parse_args()
+    # Punkt 3 braucht mdir; ohne es waere ein PASS unvollstaendig, deshalb vor dem Gaststart abbrechen.
+    mdir = shutil.which("mdir")
+    if mdir is None or shutil.which("qemu-img") is None:
+        print("PACKAGE2_UPGRADE_LIVE FAIL mdir (mtools) oder qemu-img fehlt; Versionsordner waeren nicht pruefbar", flush=True)
+        return 1
     tools = base.load_tools()
     work = ROOT / ".tools/package2-guest" / ("live-" + uuid.uuid4().hex[:12])
     build_seed(args.key.resolve(), work / "seed", work / "scratch", args.sleep)
@@ -150,11 +160,15 @@ def main() -> int:
         guest.pkg("native update --from /data/repo2", "Katalog v2 geladen (Generation 2, 1 Pakete).", 300)
         guest.pkg("native upgrade --from /data/repo2", "v2 aktualisiert: ", 300)
         guest.pkg("native resolve /usr/share/lang/text", "v2 resolve usr/share/lang/text: lang 1.0.0-r2", 60)
+        # Abweisung positiv belegen: Die Shellmeldung steht nur am Bildschirm, der Kernel meldet sie zusaetzlich seriell. "busy" (nicht
+        # "session"), weil diese Sitzung kein Programm hat; ein Start daneben muesste LINUXRUN BEGIN schreiben.
         second = guest.mark()
         guest.qmp.line("run --pkg /usr/bin/lang")
-        time.sleep(5)
+        guest.wait("LINUXRUN REFUSED busy", 30, second)
+        time.sleep(2)
         if "LINUXRUN BEGIN" in (guest.work / "serial.log").read_text(encoding="utf-8", errors="replace")[second:]:
             raise RuntimeError("zweiter Start lief neben dem ersten")
+        print("zweiter Start abgewiesen (LINUXRUN REFUSED busy)", flush=True)
         upgraded = guest.mark()
         print(f"Upgrade und Pruefungen fertig nach {time.monotonic() - begun:.0f} s (Programm schlaeft {args.sleep} s)", flush=True)
         text, end = output_since(guest, old)
@@ -181,19 +195,24 @@ def main() -> int:
             raise RuntimeError(f"neuer Start gab {text!r} aus, erwartet r2")
         print("neuer Start: lang r2 start / text r2, exit 0", flush=True)
         time.sleep(1)
-        vm.kill()
-        vm.wait()
-        versions = stored_versions(vm_dir / "data.qcow2", work / "data.raw")
-        if versions is None:
-            print("Versionsordner offline: nicht geprueft (mdir fehlt)", flush=True)
-        elif versions != ["1.0.0-r2"]:
+        # Sauber herunterfahren (haengt das Datenlaufwerk aus), damit qemu-img den geschriebenen FAT-Stand sieht; -action shutdown=poweroff
+        # beendet QEMU danach selbst.
+        guest.qmp.line("shutdown")
+        try:
+            vm.wait(120)
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("Gast nicht binnen 120 s heruntergefahren") from error
+        versions = stored_versions(mdir, vm_dir / "data.qcow2", work / "data.raw")
+        if versions != ["1.0.0-r2"]:
             raise RuntimeError(f"Versionsordner nach dem Ende: {versions}, erwartet nur 1.0.0-r2")
         else:
             print("Versionsordner offline: nur 1.0.0-r2", flush=True)
         print(f"PACKAGE2_UPGRADE_LIVE PASS; Protokolle: {work}", flush=True)
         return 0
     except (RuntimeError, TimeoutError) as error:
-        guest.shot("fehler")
+        # Nach dem Herunterfahren gibt es kein QMP mehr; das Bild ist dann verzichtbar.
+        if vm.poll() is None:
+            guest.shot("fehler")
         print(f"PACKAGE2_UPGRADE_LIVE FAIL {error}; Protokolle: {work}", flush=True)
         return 1
     finally:
