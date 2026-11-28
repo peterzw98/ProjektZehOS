@@ -890,25 +890,27 @@ internal sealed class LinuxFileSystem : ILinuxFileSystem, ILinuxFsStats
             return r;
         }
 
-        r = _store.Lookup(string.Empty, out LinuxStoreNode rootNode);
-        if (r < 0)
-        {
-            _pending.Clear();
-            return r;
-        }
-
-        if (rootNode.Kind != LinuxNodeKind.Directory)
-        {
-            _pending.Clear();
-            return -LinuxErrno.EIO; // Wurzel fehlt oder ist keine Ordner: Speicherfehler, kein Programmfehler
-        }
-
+        // Eine Klammer um die ganze Auflösung: Der Plattenspeicher fragt darin jeden Pfadteil im zuletzt gefundenen Ordner ab statt
+        // ab der Einhängewurzel (N2-Z, Cosmos-FAT liest je Abfrage das ganze Verzeichnis).
+        _store.BeginResolve();
         try
         {
+            r = _store.Lookup(string.Empty, out LinuxStoreNode rootNode);
+            if (r < 0)
+            {
+                return r;
+            }
+
+            if (rootNode.Kind != LinuxNodeKind.Directory)
+            {
+                return -LinuxErrno.EIO; // Wurzel fehlt oder ist keine Ordner: Speicherfehler, kein Programmfehler
+            }
+
             return Walk(rootNode, followFinal, out loc);
         }
         finally
         {
+            _store.EndResolve();
             _pending.Clear();
             _parents.Clear();
         }

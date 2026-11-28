@@ -175,6 +175,8 @@ public sealed class LinuxSpawnTests
         public int Reads;
 
         public StringComparison NameComparison => inner.NameComparison;
+        public void BeginResolve() => inner.BeginResolve();
+        public void EndResolve() => inner.EndResolve();
         public long Lookup(string path, out LinuxStoreNode node) => inner.Lookup(path, out node);
         public long ReadLink(string path, out string target) => inner.ReadLink(path, out target);
         public long List(string path, out string[] names) => inner.List(path, out names);

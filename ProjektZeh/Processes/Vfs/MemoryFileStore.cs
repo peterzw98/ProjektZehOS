@@ -77,6 +77,15 @@ internal sealed class MemoryFileStore : ILinuxFileStore
         return true;
     }
 
+    /// <summary>Im Arbeitsspeicher ist jede Abfrage billig; die Klammer der Auflösung braucht nichts.</summary>
+    public void BeginResolve()
+    {
+    }
+
+    public void EndResolve()
+    {
+    }
+
     public long Lookup(string path, out LinuxStoreNode node)
     {
         if (!_nodes.TryGetValue(path, out Node? n))

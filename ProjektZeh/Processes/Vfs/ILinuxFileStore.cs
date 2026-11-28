@@ -28,6 +28,15 @@ internal interface ILinuxFileStore
     /// <summary>Eintrag ohne Folgen; ein fehlender Eintrag ist Erfolg mit <see cref="LinuxNodeKind.Missing"/>.</summary>
     long Lookup(string path, out LinuxStoreNode node);
 
+    /// <summary>
+    /// Klammer um eine Pfadauflösung (<see cref="LinuxFileSystem.Resolve"/>); dazwischen nur <see cref="Lookup"/> und
+    /// <see cref="ReadLink"/>. Ein Plattenspeicher hält darin seine Sperre und die gefundenen Ordner (N2-Z), ein Speicher im
+    /// Arbeitsspeicher tut nichts. Jedes <see cref="BeginResolve"/> braucht genau ein <see cref="EndResolve"/>, auch nach Fehlern.
+    /// </summary>
+    void BeginResolve();
+
+    void EndResolve();
+
     long ReadLink(string path, out string target);
 
     /// <summary>Namen der Einträge eines Verzeichnisses (ohne "." und ".."), ordinal sortiert.</summary>

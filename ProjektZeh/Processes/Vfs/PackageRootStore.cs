@@ -59,6 +59,11 @@ internal sealed class PackageRootStore : ILinuxFileStore
         return index.Lookup(slash < 0 ? path : path[..slash]).Kind != PackageIndexNodeKind.Missing;
     }
 
+    // Der Index liegt im Arbeitsspeicher; die Klammer gilt dem Speicher darunter.
+    public void BeginResolve() => below.BeginResolve();
+
+    public void EndResolve() => below.EndResolve();
+
     public long Lookup(string path, out LinuxStoreNode node)
     {
         if (!InPackages(path)) return below.Lookup(path, out node);

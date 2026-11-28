@@ -19,8 +19,24 @@ internal interface ILinuxDiskLinks
     /// Art des Eintrags <paramref name="name"/> in <paramref name="parent"/> ohne Folgen. <paramref name="found"/> ist der Name, unter
     /// dem das Laufwerk den Eintrag führt: FAT findet einen Eintrag auch über seinen 8.3-Kurznamen ("_ZEHOS~1.DB" für
     /// ".zehos-security.db"), dann unterscheidet sich <paramref name="found"/> vom angefragten Namen.
+    /// <para>
+    /// <paramref name="entry"/> trägt bei einer Datei Länge, Schreibschutz und Änderungszeit aus derselben Abfrage, damit
+    /// <see cref="DirectoryFileStore"/> nicht über <see cref="FileInfo"/> den ganzen Pfad noch einmal auflöst (Cosmos-FAT liest dabei je
+    /// Pfadteil das Verzeichnis neu, N2-Z). Bei Ordnern, Symlinks und fehlenden Einträgen ist er <c>default</c>.
+    /// </para>
     /// </summary>
-    public LinuxNodeKind KindStorageLocked(string parent, string name, out string found);
+    public LinuxNodeKind KindStorageLocked(string parent, string name, out string found, out LinuxDiskEntry entry);
+
+    /// <summary>
+    /// Beginn einer Pfadauflösung (<see cref="ILinuxFileStore.BeginResolve"/>): Bis <see cref="EndResolveStorageLocked"/> darf die
+    /// Fassung gefundene Verzeichnisse halten und das nächste <see cref="KindStorageLocked"/> von dort aus beantworten statt ab der
+    /// Einhängewurzel. Gilt nur, weil der Aufrufer die Sperre über die ganze Auflösung hält: Dazwischen kann kein anderer Weg einen
+    /// gehaltenen Ordner entfernen und seinen Cluster neu vergeben.
+    /// </summary>
+    public void BeginResolveStorageLocked();
+
+    /// <summary>Ende der Pfadauflösung: gehaltene Verzeichnisse vergessen, noch unter der Sperre.</summary>
+    public void EndResolveStorageLocked();
 
     public string ReadLinkStorageLocked(string full);
 
@@ -28,12 +44,16 @@ internal interface ILinuxDiskLinks
     public bool CreateSymlinkStorageLocked(string full, string target);
 }
 
+/// <summary>Angaben zu einer Datei aus <see cref="ILinuxDiskLinks.KindStorageLocked"/>, mit derselben Bedeutung wie bei <see cref="FileInfo"/>.</summary>
+internal readonly record struct LinuxDiskEntry(long Length, bool ReadOnly, DateTime LastWriteTimeUtc);
+
 /// <summary>Host-Fassung über .NET (lstat-Semantik von <see cref="FileSystemInfo"/> unter Unix). Nur für Hosttests belegt.</summary>
 internal sealed class HostLinuxDiskLinks : ILinuxDiskLinks
 {
-    public LinuxNodeKind KindStorageLocked(string parent, string name, out string found)
+    public LinuxNodeKind KindStorageLocked(string parent, string name, out string found, out LinuxDiskEntry entry)
     {
         found = name; // Linux-Hosts suchen exakt; es gibt keinen zweiten Namen
+        entry = default;
         var info = new FileInfo(parent + "/" + name);
         FileAttributes attributes = info.Attributes;
         if ((int)attributes == -1)
@@ -46,7 +66,22 @@ internal sealed class HostLinuxDiskLinks : ILinuxDiskLinks
             return LinuxNodeKind.Symlink;
         }
 
-        return (attributes & FileAttributes.Directory) != 0 ? LinuxNodeKind.Directory : LinuxNodeKind.File;
+        if ((attributes & FileAttributes.Directory) != 0)
+        {
+            return LinuxNodeKind.Directory;
+        }
+
+        entry = new LinuxDiskEntry(info.Length, (attributes & FileAttributes.ReadOnly) != 0, info.LastWriteTimeUtc);
+        return LinuxNodeKind.File;
+    }
+
+    // Der Host hält nichts: jede Abfrage geht über den Pfad.
+    public void BeginResolveStorageLocked()
+    {
+    }
+
+    public void EndResolveStorageLocked()
+    {
     }
 
     public string ReadLinkStorageLocked(string full) =>
@@ -103,6 +138,10 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     // VfsManager.Paths.cs:210-229): ein zweites unlink gelänge und schriebe erneut gut. Wie bei Linux gilt der Name deshalb sofort als
     // fehlend; Anlegen unter ihm ist -EEXIST, solange das Laufwerk ihn noch führt. Zugriff nur unter StorageLock.
     private readonly Dictionary<string, OpenEntry> _pendingPaths;
+
+    // Laufende Auflösung (BeginResolve/EndResolve): Tiefe und die äußere Sperre. Nur der Thread, der StorageLock hält, ändert sie.
+    private int _resolveDepth;
+    private StorageLock.Scope _resolveScope;
 
     /// <summary>Ein offener Eintrag; mehrere Deskriptoren auf dieselbe Datei teilen ihn.</summary>
     private sealed class OpenEntry
@@ -301,18 +340,18 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
 
     private LinuxStoreNode LookupStorageLocked(string path)
     {
-        LinuxNodeKind kind = KindStorageLocked(path);
+        LinuxNodeKind kind = KindStorageLocked(path, out LinuxDiskEntry entry);
         switch (kind)
         {
             case LinuxNodeKind.File:
-                var info = new FileInfo(Full(path));
-                uint mode = (info.Attributes & FileAttributes.ReadOnly) != 0 ? ReadOnlyFileMode : FileMode;
+                // Angaben aus derselben Abfrage statt new FileInfo(Full(path)): das löste den ganzen Pfad noch einmal auf (N2-Z).
+                uint mode = entry.ReadOnly ? ReadOnlyFileMode : FileMode;
                 if (_createdModes.TryGetValue(path, out uint created))
                 {
-                    mode = (info.Attributes & FileAttributes.ReadOnly) != 0 ? created & ~0x92u : created;
+                    mode = entry.ReadOnly ? created & ~0x92u : created;
                 }
 
-                return new LinuxStoreNode(kind, info.Length, mode, FileTimeNanos(info.LastWriteTimeUtc));
+                return new LinuxStoreNode(kind, entry.Length, mode, FileTimeNanos(entry.LastWriteTimeUtc));
             case LinuxNodeKind.Directory:
                 return new LinuxStoreNode(kind, 4096, DirectoryMode, 0);
             case LinuxNodeKind.Symlink:
@@ -323,26 +362,82 @@ internal sealed class DirectoryFileStore : ILinuxFileStore
     }
 
     /// <summary>Art des Eintrags unter genau diesem Namen; ein Treffer über einen Zweitnamen (8.3) gilt als fehlend.</summary>
-    private LinuxNodeKind KindStorageLocked(string path)
+    private LinuxNodeKind KindStorageLocked(string path) => KindStorageLocked(path, out _);
+
+    private LinuxNodeKind KindStorageLocked(string path, out LinuxDiskEntry entry)
     {
+        entry = default;
         if (_pendingPaths.ContainsKey(path))
         {
             return LinuxNodeKind.Missing; // entfernt, nur noch offen: wie Linux nicht mehr unter dem Namen zu finden
         }
 
-        LinuxNodeKind kind = RawKindStorageLocked(path, out bool alias);
-        return alias ? LinuxNodeKind.Missing : kind;
+        LinuxNodeKind kind = RawKindStorageLocked(path, out bool alias, out entry);
+        if (alias)
+        {
+            entry = default;
+            return LinuxNodeKind.Missing;
+        }
+
+        return kind;
     }
 
+    private LinuxNodeKind RawKindStorageLocked(string path, out bool alias) => RawKindStorageLocked(path, out alias, out _);
+
     /// <summary>Art des Eintrags, wie das Laufwerk ihn findet; <paramref name="alias"/>, wenn es ihn unter einem anderen Namen führt.</summary>
-    private LinuxNodeKind RawKindStorageLocked(string path, out bool alias)
+    private LinuxNodeKind RawKindStorageLocked(string path, out bool alias, out LinuxDiskEntry entry)
     {
         int slash = path.LastIndexOf('/');
         string parent = slash < 0 ? _root : string.Concat(_root, "/", path.AsSpan(0, slash));
         string name = path.Substring(slash + 1);
-        LinuxNodeKind kind = _links.KindStorageLocked(parent, name, out string found);
+        LinuxNodeKind kind = _links.KindStorageLocked(parent, name, out string found, out entry);
         alias = kind != LinuxNodeKind.Missing && !SameName(found, name, NameComparison);
         return kind;
+    }
+
+    /// <summary>
+    /// Hält <see cref="StorageLock"/> über die ganze Auflösung und lässt <see cref="ILinuxDiskLinks"/> gefundene Ordner halten (N2-Z):
+    /// je Pfadteil eine Abfrage im Elternordner statt einer Auflösung ab der Einhängewurzel. Die Sperre ist reentrant; die
+    /// einzelnen <see cref="Lookup"/>- und <see cref="ReadLink"/>-Aufrufe nehmen sie darin erneut.
+    /// </summary>
+    public void BeginResolve()
+    {
+        StorageLock.Scope scope = StorageLock.Enter();
+        if (_resolveDepth++ == 0)
+        {
+            _resolveScope = scope;
+            using (StorageLock.Enter()) // reentrant; die Form, die StorageLockCoverageTests als gesperrt erkennt
+            {
+                _links.BeginResolveStorageLocked();
+            }
+
+            return;
+        }
+
+        // Verschachtelt: die äußere Sitzung hält die Sperre schon, der zweite Eintritt wird sofort zurückgegeben.
+        scope.Dispose();
+    }
+
+    public void EndResolve()
+    {
+        if (--_resolveDepth > 0)
+        {
+            return;
+        }
+
+        StorageLock.Scope scope = _resolveScope;
+        _resolveScope = default;
+        try
+        {
+            using (StorageLock.Enter())
+            {
+                _links.EndResolveStorageLocked();
+            }
+        }
+        finally
+        {
+            scope.Dispose();
+        }
     }
 
     /// <summary>

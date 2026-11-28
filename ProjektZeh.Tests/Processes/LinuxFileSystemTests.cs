@@ -242,6 +242,10 @@ public sealed class LinuxFileSystemTests
 
         public StringComparison NameComparison => inner.NameComparison;
 
+        public void BeginResolve() => inner.BeginResolve();
+
+        public void EndResolve() => inner.EndResolve();
+
         public long Lookup(string path, out LinuxStoreNode node) => inner.Lookup(path, out node);
 
         public long ReadLink(string path, out string target) => inner.ReadLink(path, out target);
@@ -335,7 +339,16 @@ public sealed class LinuxFileSystemTests
     {
         private readonly HostLinuxDiskLinks _host = new();
 
-        public LinuxNodeKind KindStorageLocked(string parent, string name, out string found) => _host.KindStorageLocked(parent, name, out found);
+        public LinuxNodeKind KindStorageLocked(string parent, string name, out string found, out LinuxDiskEntry entry) =>
+            _host.KindStorageLocked(parent, name, out found, out entry);
+
+        public void BeginResolveStorageLocked()
+        {
+        }
+
+        public void EndResolveStorageLocked()
+        {
+        }
 
         public string ReadLinkStorageLocked(string full) => _host.ReadLinkStorageLocked(full);
 
@@ -347,21 +360,115 @@ public sealed class LinuxFileSystemTests
     {
         private readonly HostLinuxDiskLinks _host = new();
 
-        public LinuxNodeKind KindStorageLocked(string parent, string name, out string found)
+        public LinuxNodeKind KindStorageLocked(string parent, string name, out string found, out LinuxDiskEntry entry)
         {
             if (aliases.TryGetValue(name, out string? longName))
             {
-                LinuxNodeKind kind = _host.KindStorageLocked(parent, longName, out _);
+                LinuxNodeKind kind = _host.KindStorageLocked(parent, longName, out _, out entry);
                 found = longName;
                 return kind;
             }
 
-            return _host.KindStorageLocked(parent, name, out found);
+            return _host.KindStorageLocked(parent, name, out found, out entry);
+        }
+
+        public void BeginResolveStorageLocked()
+        {
+        }
+
+        public void EndResolveStorageLocked()
+        {
         }
 
         public string ReadLinkStorageLocked(string full) => _host.ReadLinkStorageLocked(full);
 
         public bool CreateSymlinkStorageLocked(string full, string target) => _host.CreateSymlinkStorageLocked(full, target);
+    }
+
+    /// <summary>Zeichnet die Klammer der Auflösung und jede Abfrage auf, sonst wie der Host (N2-Z).</summary>
+    private sealed class RecordingLinks : ILinuxDiskLinks
+    {
+        private readonly HostLinuxDiskLinks _host = new();
+
+        public readonly List<string> Calls = new();
+
+        public bool LockedEverywhere = true;
+
+        public LinuxNodeKind KindStorageLocked(string parent, string name, out string found, out LinuxDiskEntry entry)
+        {
+            LockedEverywhere &= ProjektZeh.Storage.StorageLock.IsHeldByCurrentThread;
+            Calls.Add("kind " + Path.GetFileName(parent) + "/" + name);
+            return _host.KindStorageLocked(parent, name, out found, out entry);
+        }
+
+        public void BeginResolveStorageLocked()
+        {
+            LockedEverywhere &= ProjektZeh.Storage.StorageLock.IsHeldByCurrentThread;
+            Calls.Add("begin");
+        }
+
+        public void EndResolveStorageLocked()
+        {
+            LockedEverywhere &= ProjektZeh.Storage.StorageLock.IsHeldByCurrentThread;
+            Calls.Add("end");
+        }
+
+        public string ReadLinkStorageLocked(string full)
+        {
+            LockedEverywhere &= ProjektZeh.Storage.StorageLock.IsHeldByCurrentThread;
+            Calls.Add("readlink " + Path.GetFileName(full));
+            return _host.ReadLinkStorageLocked(full);
+        }
+
+        public bool CreateSymlinkStorageLocked(string full, string target) => _host.CreateSymlinkStorageLocked(full, target);
+    }
+
+    [TestMethod]
+    public void ResolveHoldsStorageLockAcrossAllPartsAndEndsAfterErrors()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel; Symlinks auf dem Host nur unter Unix.");
+        }
+
+        string tmp = TempDir();
+        try
+        {
+            string root = Path.Combine(tmp, "root");
+            Directory.CreateDirectory(Path.Combine(root, "a", "b"));
+            File.WriteAllText(Path.Combine(root, "a", "b", "f"), "12345");
+            File.SetAttributes(Path.Combine(root, "a", "b", "f"), FileAttributes.ReadOnly);
+            File.CreateSymbolicLink(Path.Combine(root, "a", "l"), "b/f");
+            var links = new RecordingLinks();
+            var store = DirectoryFileStore.Open(root, links, StringComparison.Ordinal).Value!;
+            var fs = new Fs(store, new Sink());
+
+            // Ein Pfad, ein Begin, ein End; jeder Teil darin unter der Sperre, auch das Linkziel (ReadLink prüft die Art erneut).
+            Assert.AreEqual(0, fs.Stat("/a/l", true, out LinuxStat st));
+            Assert.AreEqual("begin|kind root/a|kind a/l|kind a/l|readlink l|kind a/b|kind b/f|end", string.Join("|", links.Calls));
+            Assert.IsTrue(links.LockedEverywhere, "jede Abfrage der Auflösung unter StorageLock");
+            Assert.IsFalse(ProjektZeh.Storage.StorageLock.IsHeldByCurrentThread, "Sperre nach der Auflösung frei");
+
+            // Angaben der Datei aus derselben Abfrage: Länge 5, schreibgeschützt (0555).
+            Assert.AreEqual(5, st.Size);
+            Assert.AreEqual(0x16Du, st.Mode & 0xFFFu);
+
+            // Fehlender Zwischenteil: Klammer trotzdem geschlossen, Sperre frei.
+            links.Calls.Clear();
+            Assert.AreEqual(-E.ENOENT, fs.Stat("/a/x/y", true, out _));
+            Assert.AreEqual("end", links.Calls[^1]);
+            Assert.AreEqual(1, links.Calls.FindAll(c => c == "begin").Count);
+            Assert.IsFalse(ProjektZeh.Storage.StorageLock.IsHeldByCurrentThread);
+        }
+        finally
+        {
+            foreach (string f in Directory.GetFiles(tmp, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(f, FileAttributes.Normal);
+            }
+
+            Directory.Delete(tmp, true);
+        }
     }
 
     [TestMethod]
@@ -955,6 +1062,10 @@ public sealed class LinuxFileSystemTests
     private sealed class FoldingStore(MemoryFileStore inner) : ILinuxFileStore
     {
         public StringComparison NameComparison => StringComparison.OrdinalIgnoreCase;
+
+        public void BeginResolve() => inner.BeginResolve();
+
+        public void EndResolve() => inner.EndResolve();
 
         public long Lookup(string path, out LinuxStoreNode node) => inner.Lookup(path, out node);
 
