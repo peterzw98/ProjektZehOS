@@ -1449,6 +1449,7 @@ internal static unsafe class CosmosLinuxRun
                 UserPageTable.UnbindCurrentThread();
             }
 
+            process.ReleaseMemoryBeforeReport(); // V50: erst der Speicher, dann der Zombie (wie exit_mm vor exit_notify)
             process.ReportEnd(process.WaitStatusOf(9));
             process.Destroy();
             ReleaseSlot(run, b);
