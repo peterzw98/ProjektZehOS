@@ -191,6 +191,13 @@ internal class ARM64InterruptController : IInterruptController
     {
     }
 
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    /// <inheritdoc/>
+    /// <remarks>ARM64 has no user page tables, so no CPU ever holds one: nothing to do.</remarks>
+    public void SendTlbShootdown(ulong hardwareId)
+    {
+    }
+
     public void RouteIrq(byte irqNo, byte vector, bool startMasked)
     {
         // On ARM64, irqNo is the GIC interrupt ID.

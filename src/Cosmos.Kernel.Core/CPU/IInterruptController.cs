@@ -97,6 +97,16 @@ internal interface IInterruptController
     /// <param name="hardwareId">The target CPU's controller identity.</param>
     void SendPanicStop(ulong hardwareId);
 
+    // ZehOS patch tlb-shootdown, see PATCHES.md
+    /// <summary>
+    /// Raises the TLB shootdown interrupt on another CPU, named as for
+    /// <see cref="SendReschedule"/>: its handler reloads the translation root
+    /// (<c>UserPageTable.HandleShootdownInterrupt</c>). Nothing where there are
+    /// no user page tables. Allocation-free; any context, interrupts masked by the caller.
+    /// </summary>
+    /// <param name="hardwareId">The target CPU's controller identity.</param>
+    void SendTlbShootdown(ulong hardwareId);
+
     /// <summary>
     /// Dispatch an interrupt delivered by the arch's assembly stub. The
     /// implementation is responsible for acknowledging (where applicable),
