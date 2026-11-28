@@ -378,6 +378,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 ReadInterpreterHead = (string interpreterPath, out byte[] head, out long length, out bool lazy) =>
                 {
                     long ir = ReadProgram(interpreterPath, true, out head, out long fullLength, out ILinuxPageSource? isource);
+                    loadedInterpreter?.Release(); // ein früherer Verweis (zweiter Leseversuch) darf nicht liegen bleiben
                     loadedInterpreter = isource;
                     lazy = isource != null;
                     length = lazy ? fullLength : head.Length;
@@ -388,7 +389,6 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
         }
         catch (ElfLoadException exception)
         {
-            interpreterSource = loadedInterpreter;
             return exception.Kind switch
             {
                 ElfLoadError.ArgumentsTooLong => -E2Big,
@@ -397,8 +397,12 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 _ => -ENoExec,
             };
         }
+        finally
+        {
+            // Auch bei einer fremden Ausnahme gehört der Verweis dem Aufrufer (Exec gibt ihn in seinem finally zurück).
+            interpreterSource = loadedInterpreter;
+        }
 
-        interpreterSource = loadedInterpreter;
         IUserPages? pages = CreatePages?.Invoke(); // Exec hat CreatePages geprüft
         if (pages == null)
         {
