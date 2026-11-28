@@ -1,3 +1,4 @@
+#pragma warning disable COSMOS0001 // UserPageTable gilt als Vorschau (wie in CosmosLinuxRun).
 using System;
 using System.Collections.Generic;
 using System.IO;
