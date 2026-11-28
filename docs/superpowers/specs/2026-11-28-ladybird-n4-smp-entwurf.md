@@ -4,6 +4,8 @@
 > („danach mehrere CPUs je Prozess mit TLB-Abgleich per IPI“) und zum Tor N4-Z aus dem [Gesamtplan](../plans/2026-11-24-ladybird-nativ.md) („ein `pthread`-Programm nutzt zwei CPUs“).
 > Stand der Befunde: ZehOS `origin/story/ladybird` 4519757a, Cosmos `f2b64df6` (`deploy/cosmos/COMMIT`). Nur gelesen: kein Bau, kein Gastlauf, keine Hosttests.
 
+Der Entwurf beschreibt den Ausgangsstand. Merge- und Gastbefunde vom 28. November stehen im [N4-Plan](../plans/2026-11-24-ladybird-n4-posix.md#stand-28-november-2026).
+
 ## 1. Ausgangslage (belegt am Code)
 
 | Punkt | Stand | Beleg |
