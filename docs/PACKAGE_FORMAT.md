@@ -322,7 +322,7 @@ pkg native upgrade [--from <Verzeichnis>]            alle neueren Katalogversion
 pkg native remove <id> | --unused                    Entfernen, Abhängigkeiten geschützt
 ```
 
-Ohne `--from` gilt die HTTPS-Quelle von Version 1 (`pkg source`), `catalog2` liegt dort neben `catalog`. Mit `--from` ist die Quelle ein lokales Verzeichnis im Layout von `scripts/package2.py`. Vertraut wird in beiden Fällen nur der Signatur.
+Ohne `--from` gilt die HTTPS-Quelle von Version 1 (`pkg source`), `catalog2` liegt dort neben `catalog`. Mit `--from` ist die Quelle ein lokales Verzeichnis im Layout von `scripts/package2.py`. Vertraut wird in beiden Fällen nur die Signatur.
 
 - **Index:** entsteht nur aus `ReadActive` (Signatur vor Parse, Manifest-Hash, Mengenregeln) und ist danach unveränderlich. Er bildet Datei- und Linkpfade auf die Datei unter `v2/<id>/<version>-r<release>/files/` ab; Links und Ordner sind nur Einträge des Index. Aufgelöst werden Datei- und Ordnerlinks, auch mitten im Pfad, höchstens 40 hintereinander, ohne Groß-/Kleinschreibung (ASCII, wie FAT32). Nur kanonische Pfade werden angenommen (optional führendes `/`, keine leeren, `.`- oder `..`-Komponenten); `..` wird abgewiesen statt textuell gekürzt, damit kein Pfad über einen Link aus dem Paketbaum führt. Den Inhalt prüft erst `PackageIndex2.Verify` (Größe und SHA-256 gegen das Manifest), bevor ein Start ihm vertraut.
 - **Wechsel:** Nach jedem erfolgreichen `Activate` und beim Einbinden (nach `Reconcile`) baut der Dienst einen neuen Index; scheitert ein Auftrag vorher, bleibt der alte. Wer einen Stand hält, behält ihn: der Wechsel ersetzt nur einen Verweis. Ist `active2` beschädigt, gilt kein Index (Fehler, nie leer). Nach einem Neustart entsteht er aus dem gültigen `active2` neu.

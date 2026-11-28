@@ -72,8 +72,13 @@ internal sealed class PackageIndex2
                     return Conflict(file.Path);
             }
             foreach (var link in package.Manifest.Links)
-                if (!nodes.TryAdd(link.Path, new Node(PackageIndexKind.File, link.Path, package, null, ResolveLink(link))))
+            {
+                string? target = ResolveLink(link);
+                if (target == null)
+                    return ResultObjectFactory.CreateFailure<PackageIndex2>(ResultCode.Failure, $"Link {link.Path} zeigt ueber die Paketwurzel hinaus.");
+                if (!nodes.TryAdd(link.Path, new Node(PackageIndexKind.File, link.Path, package, null, target)))
                     return Conflict(link.Path);
+            }
         }
         // Elternordner aller Eintraege; ein Ordner darf kein Datei- oder Linkpfad sein (sonst waere die Aufloesung mehrdeutig).
         var directories = new List<string>();
@@ -168,17 +173,20 @@ internal sealed class PackageIndex2
         return true;
     }
 
-    // Ziel relativ zur Wurzel; der Parser hat Form und Ergebnis geprueft (fuehrende "../", danach normale Komponenten unter usr/, lib/, etc/).
-    private static string ResolveLink(PackageLink link)
+    // Ziel relativ zur Wurzel. Der Parser hat Form und Ergebnis geprueft (fuehrende "../", danach normale Komponenten unter usr/,
+    // lib/, etc/); trotzdem kein Verlass darauf: Fuehrt ein "../" ueber die Wurzel hinaus, ist das Ergebnis null statt einer
+    // Ausnahme aus LastIndexOf oder eines Ziels ausserhalb des Paketbaums.
+    private static string? ResolveLink(PackageLink link)
     {
         string target = link.Target;
         int keep = link.Path.LastIndexOf('/');
         while (target.StartsWith("../", StringComparison.Ordinal))
         {
+            if (keep <= 0) return null;
             target = target[3..];
             keep = link.Path.LastIndexOf('/', keep - 1);
         }
-        return link.Path[..(keep + 1)] + target;
+        return target.Length == 0 ? null : link.Path[..(keep + 1)] + target;
     }
 
     private static ResultObject<PackageIndex2> Conflict(string path) =>

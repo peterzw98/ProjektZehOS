@@ -426,7 +426,7 @@ public sealed class PackageService2Tests
         var observed = new PackageService2(Root, store, Trust) { ServiceStep = steps.Add };
         var result = observed.Upgrade(Source(), CancellationToken.None);
         Assert.IsTrue(result.IsOK(), result.Status.Message);
-        CollectionAssert.AreEqual(new[] { "stufen musl", "stufen libfoo", "stufen app", "aktivieren" }, steps);
+        CollectionAssert.AreEqual(new[] { "stufen musl", "stufen libfoo", "stufen app", "aktivieren", "index" }, steps);
         Assert.AreEqual("app 2.0.0-r1 requested,libfoo 1.1.0-r1 auto,musl 1.2.5-r2 auto", Describe(store));
         Assert.IsFalse(observed.Upgrade(Source(), CancellationToken.None).Value!.Changed);
         Assert.IsTrue(new PackageStore2(Root, Trust, Kernel).Reconcile().IsOK());

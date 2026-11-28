@@ -203,6 +203,74 @@ public sealed class PackageIndex2Tests
     }
 
     [TestMethod]
+    public void FortyLinksInARowResolveAndFortyOneFail()
+    {
+        // Ein Link je Paket: Der Parser begrenzt Ketten nur innerhalb eines Manifests, ueber Paketgrenzen zaehlt der Index.
+        // Dateilinks usr/bin/l0 -> l1 -> ... -> l40 -> ziel: ab l1 sind es 40 Links, ab l0 41.
+        var set = new List<ActivePackage2> { Active(new Pkg("ziel", "1.0.0-r1", [("usr/bin/ziel", "z", true)], [], [])) };
+        for (int link = 0; link <= 40; link++)
+            set.Add(Active(new Pkg($"kette{link}", "1.0.0-r1", [($"usr/share/kette{link}/x", "x", false)],
+                [($"usr/bin/l{link}", link == 40 ? "ziel" : $"l{link + 1}")], [])));
+        // Ordnerlinks mitten im Pfad: usr/d0 -> d1 -> ... -> d40 -> ../lib/ziel, das letzte mit "../".
+        set.Add(Active(new Pkg("zielordner", "1.0.0-r1", [("lib/ziel/datei", "d", false)], [], [])));
+        for (int link = 0; link <= 40; link++)
+            set.Add(Active(new Pkg($"ordner{link}", "1.0.0-r1", [($"usr/share/ordner{link}/x", "x", false)],
+                [($"usr/d{link}", link == 40 ? "../lib/ziel" : $"d{link + 1}")], [])));
+        var built = PackageIndex2.Build([.. set], 1);
+        Assert.IsTrue(built.IsOK(), built.Status.Message);
+        var index = built.Value!;
+
+        Assert.AreEqual("ziel 1.0.0-r1 usr/bin/ziel exec", Describe(index.Resolve("/usr/bin/l1")));
+        var tooMany = index.Resolve("/usr/bin/l0");
+        Assert.AreEqual(ResultCode.Failure, tooMany.Status.Code);
+        StringAssert.Contains(tooMany.Status.Message, "40 Links");
+
+        Assert.AreEqual("zielordner 1.0.0-r1 lib/ziel/datei", Describe(index.Resolve("/usr/d40/datei")));
+        Assert.AreEqual("zielordner 1.0.0-r1 lib/ziel/datei", Describe(index.Resolve("/usr/d1/datei")));
+        Assert.AreEqual("dir lib/ziel", Describe(index.Resolve("/usr/d1")));
+        tooMany = index.Resolve("/usr/d0/datei");
+        Assert.AreEqual(ResultCode.Failure, tooMany.Status.Code);
+        StringAssert.Contains(tooMany.Status.Message, "40 Links");
+        // "../" des Ordnerlinks fuehrt aus usr/ heraus, aber nur bis zur Paketwurzel; dahinter gibt es nur Paketpfade.
+        Assert.AreEqual(ResultCode.NotFound, index.Resolve("/usr/d40/fehlt").Status.Code);
+    }
+
+    [TestMethod]
+    public void LinkAboveRootFailsBuildInsteadOfThrowing()
+    {
+        // Der Parser liesse diesen Link nie durch; der Index verlaesst sich nicht darauf (zweites "../" ohne Elternordner).
+        foreach (string target in new[] { "../../../lib/x", "../../../../x" })
+        {
+            var package = Active(MuslR1);
+            package.Manifest.Links[0] = new PackageLink("usr/lib/libc.so", target);
+            var built = PackageIndex2.Build([package], 1);
+            Assert.IsFalse(built.IsOK(), target);
+            StringAssert.Contains(built.Status.Message, "Paketwurzel");
+        }
+        var root = Active(MuslR1);
+        root.Manifest.Links[0] = new PackageLink("wurzel", "../x");
+        Assert.IsFalse(PackageIndex2.Build([root], 1).IsOK());
+    }
+
+    [TestMethod]
+    public void FailedIndexAfterActivateIsReportedAsFailure()
+    {
+        var (store, _) = Installed();
+        // Zwischen Activate und Neubau wird ein verbleibendes Manifest beschaedigt: active2 ist neu, ein Index entsteht nicht.
+        var service = new PackageService2(Root, store, Trust)
+        {
+            ServiceStep = step =>
+            {
+                if (step == "index") File.AppendAllText(Path.Combine(Root, "v2", "libfoo", "1.0.0-r1", "manifest"), "x");
+            },
+        };
+        var removed = service.Remove("app", CancellationToken.None);
+        Assert.IsFalse(removed.IsOK());
+        StringAssert.Contains(removed.Status.Message, "Bestand gewechselt, aber kein Index");
+        Assert.IsFalse(service.CurrentIndex().IsOK());
+    }
+
+    [TestMethod]
     public void ServiceSwitchesIndexOnlyAfterSuccessfulActivateAndOldStandStaysUsable()
     {
         var (store, service) = Installed();

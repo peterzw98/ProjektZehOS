@@ -370,9 +370,7 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
         progress?.Invoke(new PackageProgress("Bestand wechseln", "active2", 0, 0));
         var activated = store.Activate(ToSet(target), cancellation);
         if (!activated.IsOK()) return ResultObjectFactory.CreateFailure<PackageChange2>(activated);
-        // Neue Starts sehen ab hier den neuen Stand; scheitert der Neubau, gilt kein Index statt des alten (active2 ist schon neu).
-        RefreshIndex();
-        return ResultObjectFactory.CreateSuccess(new PackageChange2(entries, [], true));
+        return Switched(new PackageChange2(entries, [], true));
     }
 
     private ResultObject<PackageChange2> Shrink(Func<IReadOnlyList<InstalledPackage2>, ResultObject<string[]>> select, CancellationToken cancellation)
@@ -397,10 +395,9 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
             // Ein einziger Wechsel entfernt die ganze Auswahl; Activate prueft die Abhaengigkeiten der Restmenge noch einmal.
             var activated = store.Activate(ToSet(target), cancellation);
             if (!activated.IsOK()) return ResultObjectFactory.CreateFailure<PackageChange2>(activated);
-            RefreshIndex();
             string[] names = [.. removed];
             Array.Sort(names, StringComparer.Ordinal);
-            return ResultObjectFactory.CreateSuccess(new PackageChange2([], names, true));
+            return Switched(new PackageChange2([], names, true));
         }
         catch (OperationCanceledException) { return Fail(ResultCode.Failure, "Paketauftrag abgebrochen; der bisherige Bestand gilt."); }
         finally { End(); }
@@ -480,6 +477,19 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
         tryBeginWrite() ?? throw new IOException(MigrationWriteGate.BusyMessage);
 
     private void Step(string what) => ServiceStep?.Invoke(what);
+
+    /// <summary>
+    /// Nach erfolgreichem Activate: Neue Starts sehen ab hier den neuen Stand. Scheitert der Neubau, gilt kein Index statt des alten
+    /// (active2 ist schon neu); das meldet der Auftrag als Fehler, denn ein Erfolg verspraeche startbare Pakete.
+    /// </summary>
+    private ResultObject<PackageChange2> Switched(PackageChange2 change)
+    {
+        Step("index");
+        var refreshed = RefreshIndex();
+        return refreshed.IsOK() ? ResultObjectFactory.CreateSuccess(change)
+            : Fail(ResultCode.Failure, "Bestand gewechselt, aber kein Index: " + refreshed.Message
+                + " Neue Starts scheitern bis zum naechsten erfolgreichen Neubau (Einbinden oder pkg-Auftrag).");
+    }
 
     private static ResultObject<PackageChange2> Fail(ResultCode code, string message) => ResultObjectFactory.CreateFailure<PackageChange2>(code, message);
 
