@@ -1,0 +1,5 @@
+mutex_counter=100000
+broadcast_rounds=100000
+broadcast_order_errors=0
+signal_rounds=100000
+signal_order_errors=0

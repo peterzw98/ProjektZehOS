@@ -42,6 +42,8 @@
     <ZehOSLinuxRun Condition="'$(ZehOSLinuxRunProbe)' == 'true'">true</ZehOSLinuxRun>
     <DefineConstants Condition="'$(ZehOSLinuxRun)' == 'true'">$(DefineConstants);ZEHOS_LINUX_RUN</DefineConstants>
     <DefineConstants Condition="'$(ZehOSLinuxRunProbe)' == 'true'">$(DefineConstants);ZEHOS_LINUX_RUN_PROBE</DefineConstants>
+    <!-- N4-S5: Probe wie mit zehos.linuxsmp=1, ohne die Limine-Kommandozeile zu aendern (scripts/test-linux-all.py mit linuxsmp 1, Satz n4smp). -->
+    <DefineConstants Condition="'$(ZehOSLinuxRunProbe)' == 'true' and '$(ZehOSLinuxRunSmp)' == 'true'">$(DefineConstants);ZEHOS_LINUX_RUN_SMP</DefineConstants>
     <DefineConstants Condition="'$(ZehOSSimdProbe)' == 'true'">$(DefineConstants);ZEHOS_SIMD_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_PROBE</DefineConstants>
     <DefineConstants Condition="'$(ZehOSStorageRootProbe)' == 'true'">$(DefineConstants);ZEHOS_STORAGE_ROOT_PROBE</DefineConstants>

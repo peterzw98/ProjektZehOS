@@ -264,6 +264,13 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
     /// <summary>Ein Thread endet mit exit, andere laufen weiter; im Kernel verlässt nur er den Ring 3.</summary>
     public Action<LinuxThread, int>? OnThreadExit { get; set; }
 
+    /// <summary>
+    /// N4 IRQ-Signal: Ein Signal mit Handler ist frei anhängig geworden, für den genannten Thread (tgkill) oder, bei null, für jeden Thread
+    /// des Prozesses. Im Kernel lässt die Brücke die Threads vor ihrer nächsten Rückkehr in den Ring 3 zustellen, auch nach einem Interrupt
+    /// (Cosmos-Patch user-return-work), sonst sähe ein Thread, der ohne Aufrufe rechnet, das Signal nie. Gerufen außerhalb von _threadGate.
+    /// </summary>
+    public Action<LinuxThread?>? OnSignalPending { get; set; }
+
     /// <summary>Signal, das den Prozess beendet hat (tgkill ohne Handler), sonst null.</summary>
     public int? TerminatedBySignal { get; private set; }
 
@@ -561,6 +568,8 @@ internal sealed partial class LinuxUserProcess : ILinuxCpuTime, ILinuxProcess, I
 
         if (wake)
         {
+            // N4 IRQ-Signal: rechnende Threads im Ring 3 nehmen es bei der nächsten Rückkehr aus einem Interrupt (die Brücke stößt ihre CPU an).
+            OnSignalPending?.Invoke(target);
             Futexes.Kick(); // Wartende (futex, pause, nanosleep) kehren mit -EINTR zurück, die Brücke springt den Handler an
             return 0;
         }

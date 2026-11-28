@@ -299,8 +299,9 @@ Umsetzung und Grenzen:
   genullten Registern; sein erster Aufruf übernimmt den gesicherten Frame des Elternthreads (rax 0, neuer Stack) statt verteilt zu werden. Das geht ohne
   Cosmos-Patch, weil der Rückweg aus `syscall` jedes Register aus dem Frame herstellt. FS-Basis je Thread (`CLONE_SETTLS`, `arch_prctl`).
 - Der FPU-/SSE-Zustand des Kindes ist der Startzustand (FCW 0x37F, MXCSR 0x1F80), nicht die Kopie des Elternthreads (musl und glibc setzen nichts voraus).
-- Alle Threads eines Programms laufen auf **einer** CPU (die erste der Menge des Programmthreads; Kinder erben sie): `UserPageTable` hat noch keinen TLB-Shootdown
-  (N4) und lehnt `munmap`/`mprotect` ab, solange eine andere CPU auf der Tabelle läuft. Nebenläufig ja, parallel nein.
+- Ohne `zehos.linuxsmp=1` (Vorgabe) laufen alle Threads eines Programms auf **einer** CPU (die erste der Menge des Programmthreads; Kinder erben sie).
+  Mit `zehos.linuxsmp=1` laufen sie auf der ganzen Menge (N4-S2; `munmap`/`mprotect` schießen seit dem Cosmos-Patch tlb-shootdown auf allen CPUs ab).
+  Im Gast belegt der Satz `n4smp` (`experiments/LinuxAbi/README.md`, N4-S5) beides; die Vorgabe wechselt erst nach der Messung aus N4-S5.
 - Speicher (Karte, Frames, brk) schützt eine Sperre im Prozess; futex liest den Wert unter der Sperre seines Eimers (N4-S4: 16 Eimer nach
   `(Adresse >> 2) % 16`, Requeue hält beide in aufsteigender Nummer; Reihenfolge: futex-Eimer vor Speicher vor `UserPageTable` vor `PageAllocator`).
   `FUTEX_WAKE` weckt nur die gewählten Wartenden (ein Warteobjekt je Thread), nicht alle des Prozesses. Schlafen in Scheiben von 50 ms, damit Abbruch und Zeitlimit jeden Thread erreichen.
@@ -492,9 +493,10 @@ Prüfung: `experiments/LinuxAbi/src/v18/sig.c` und `badrsp.c` (Erwartung von Lin
 - **SIGCHLD** beim Ende eines Kinds an die Eltern; Standard und SIG_IGN verwerfen es (SIG_IGN und `SA_NOCLDWAIT` holen das Kind weiter selbst ab).
 - **SIGPIPE** nach `-EPIPE` aus write, writev, pwrite, sendto, sendmsg (nicht mit `MSG_NOSIGNAL`); Standardaktion beendet den Prozess wie Linux.
 - **Grenzen**: Maske, anhängige Signale und Alternativstack je Prozess, nicht je Thread; ein Handler blockiert sein Signal für alle Threads, bis
-  rt_sigreturn die Maske des Rahmens zurückschreibt. Echtzeitsignale reihen sich nicht mehrfach ein. Kein Zustellen in einer Rechenschleife ohne
-  Aufruf (Cosmos hat keinen Haken am Rücksprung eines Interrupts in den Ring 3), auch nicht mit `zehos.linuxsmp=1` und dem Anstoß `0xF0` (N4-S3; offenes
-  Paket im N4-Entwurf, Abschnitt 6). SIGKILL und Signale mit Standardaktion „beenden“ beenden einen rechnenden Thread trotzdem (`RequestLeave`, Satz `n4smp`,
+  rt_sigreturn die Maske des Rahmens zurückschreibt. Echtzeitsignale reihen sich nicht mehrfach ein. Ein Thread, der ohne Aufruf rechnet, bekommt
+  ein Signal mit Handler seit N4 IRQ-Signal beim Rücksprung eines Interrupts in den Ring 3 (Cosmos-Patch `user-return-work`: Merker am Thread und Anstoß `0xF0`
+  an seine CPU, Rückruf `OnReturnWork` mit offenen Interrupts, Zustellung wie nach rt_sigreturn; Satz `n4smp`, `sig_spin`). Auf einer CPU wirkt das mit dem
+  nächsten Takt oder Wechsel. Ein Kindthread vor seinem ersten Aufruf (Register aus clone noch nicht geladen) nimmt es erst nach einem späteren Aufruf. SIGKILL und Signale mit Standardaktion „beenden“ beenden einen rechnenden Thread trotzdem (`RequestLeave`, Satz `n4smp`,
   `kill_spinner`); Handler für Ausnahmen seit V24 (eigener Abschnitt). sigaltstack meldet `SS_ONSTACK` nicht. Gestoppte Prozesse, `rt_sigtimedwait` und
   `signalfd` fehlen.
 

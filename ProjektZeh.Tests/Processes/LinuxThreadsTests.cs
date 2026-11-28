@@ -379,6 +379,48 @@ public sealed class LinuxThreadsTests
     }
 
     [TestMethod]
+    public void SignalMitHandlerMeldetDerBrueckeDenZielthreadNurWennFrei()
+    {
+        // N4 IRQ-Signal: Die Brücke stößt rechnende Threads nur an, wenn ein Signal mit Handler frei anhängig wird; tgkill nennt den Zielthread,
+        // kill den ganzen Prozess (null). Blockiert, ignoriert oder mit Standardaktion meldet es nichts.
+        var f = new Fixture();
+        LinuxThread child = f.Clone(0, 0);
+        ulong tid = (ulong)child.Tid;
+        var seen = new List<LinuxThread?>();
+        f.P.OnSignalPending = t => seen.Add(t);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 17), "SIGCHLD ignoriert");
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 10), "SIGUSR1 ohne Handler, Prozess endet");
+        Assert.AreEqual(0, seen.Count);
+
+        f = new Fixture();
+        child = f.Clone(0, 0);
+        tid = (ulong)child.Tid;
+        seen.Clear();
+        f.P.OnSignalPending = t => seen.Add(t);
+        SetHandler(f, 10, 0x401000);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 10));
+        Assert.AreEqual(1, seen.Count);
+        Assert.AreSame(child, seen[0], "tgkill: nur der Zielthread");
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Kill, Pid, 10));
+        Assert.AreEqual(2, seen.Count);
+        Assert.IsNull(seen[1], "kill: jeder Thread des Prozesses");
+        try
+        {
+            Fixture.Current = child;
+            SetMask(f, 0, 1UL << 11); // SIG_BLOCK SIGUSR2 im Zielthread
+        }
+        finally
+        {
+            Fixture.Current = null;
+        }
+
+        SetHandler(f, 12, 0x401000);
+        Assert.AreEqual(0, f.Call(LinuxSyscalls.Tgkill, Pid, tid, 12));
+        Assert.AreEqual(2, seen.Count, "blockiert im Zielthread: kein Anstoß");
+        Assert.AreEqual(1UL << 11, f.P.PendingSignals & (1UL << 11));
+    }
+
+    [TestMethod]
     public void TgkillBlockiertesSignalBleibtAnhaengigBisZurFreigabe()
     {
         // V38: Maske je Thread; der Zielthread blockiert selbst (der Hauptthread nicht, er nimmt das an den Zielthread gerichtete nicht).

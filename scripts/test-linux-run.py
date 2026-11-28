@@ -33,6 +33,7 @@ BEGIN = re.compile(r"LINUX_RUN begin (\S+) size=(\d+)")
 OUT = re.compile(r"LINUX_RUN out (.*)$")
 STATUS = re.compile(r"LINUX_RUN status (\S+) (exit \d+|signal \d+|notrun)(?: \((.*)\))?\s*$")
 DONE = re.compile(r"LINUX_RUN done count=(\d+)")
+TIME = re.compile(r"LINUX_RUN time (\S+) (.*)$")  # N4-S5: Laufzeit und TLB-Abschuesse je Programm, nicht verglichen
 _probe = None
 
 
@@ -149,8 +150,10 @@ def run_once(args, number: int, wanted: dict) -> bool:
             time.sleep(0.5)
         results, done = parse(text())
         problems = evaluate(results, done, wanted)
+        times = {m.group(1): m.group(2).strip() for m in (TIME.search(l) for l in text().splitlines()) if m}
         for name, got in results.items():
-            print(f"  {name}: {got['status']} {got['detail']} out={got['out']!r}".rstrip(), flush=True)
+            extra = f" [{times[name]}]" if name in times else ""
+            print(f"  {name}: {got['status']} {got['detail']} out={got['out']!r}{extra}".rstrip(), flush=True)
         verdict = "PASS" if not problems else "FAIL " + "; ".join(problems)
         print(f"Lauf {number} {args.accel} smp={args.smp}: {verdict} ({time.monotonic() - started:.0f} s, {work})", flush=True)
         return not problems
