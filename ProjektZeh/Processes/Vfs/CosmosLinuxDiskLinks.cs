@@ -40,19 +40,20 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
 
         using IVfsDirectoryHandle directory = OpenDirectoryStorageLocked(parent);
         IVfsInode inode = directory.Inode;
-        if (!inode.InodeOperations.Lookup(inode, name, out IVfsInode? child))
+        IVfsInode? child = null;
+        if (!WithReclaim(() => inode.InodeOperations.Lookup(inode, name, out child)))
         {
-            ThrowIfMemoryExhausted();
             return LinuxNodeKind.Missing;
         }
 
         // FAT findet auch über den 8.3-Kurznamen (FatInodeOperations.Lookup): den geführten Namen melden, DirectoryFileStore vergleicht.
-        found = child.Name;
+        found = child!.Name;
 
         // Unlesbare Attribute: ablehnen statt einen Symlink zu übersehen.
-        if (!child.InodeOperations.GetAttr(child, out VfsStat stat))
+        VfsStat stat = default;
+        IVfsInode attrNode = child!;
+        if (!WithReclaim(() => attrNode.InodeOperations.GetAttr(attrNode, out stat)))
         {
-            ThrowIfMemoryExhausted();
             throw new IOException("Attribute nicht lesbar.");
         }
 
@@ -90,22 +91,30 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
     }
 
     /// <summary>
-    /// V51: Cosmos-FAT meldet einen Allokationsfehler beim Lookup nur als false, ZehOS machte daraus -ENOENT (Ladybird 384M: "Spawn
-    /// RequestServer ENOENT"). Nahe der Speicherreserve gilt false als fehlender Speicher (-ENOMEM). Gast belegt: nein (offen).
+    /// V51: Cosmos-FAT meldet einen Allokationsfehler nur als false (Ladybird 384M: "Spawn RequestServer ENOENT"). Scheitert ein Versuch bei
+    /// knappem Speicher, wird einmal gesammelt (FrameReclaim.Retry) und der Versuch wiederholt; das Ergebnis des zweiten Versuchs zählt.
+    /// Keine Heuristik: eine wirklich fehlende Datei bleibt auch bei knappem Speicher -ENOENT. Gast belegt: siehe PR.
     /// </summary>
-    private static void ThrowIfMemoryExhausted()
+    private static bool WithReclaim(Func<bool> attempt)
     {
-        if (FrameReclaim.IsNearReserve(UserPageTable.FreePages, UserPageTable.ReservedPages))
+        if (attempt())
         {
-            throw new LinuxOutOfMemoryException("Speicher erschöpft.");
+            return true;
         }
+
+        if (!FrameReclaim.IsNearReserve(UserPageTable.FreePages, UserPageTable.ReservedPages))
+        {
+            return false;
+        }
+
+        return FrameReclaim.Retry(attempt, static () => GC.Collect(), static () => System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency);
     }
 
     private static IVfsDirectoryHandle OpenDirectoryStorageLocked(string parent)
     {
-        if (!VfsManager.TryOpenDirectory(parent, out IVfsDirectoryHandle? directory))
+        IVfsDirectoryHandle? directory = null;
+        if (!WithReclaim(() => VfsManager.TryOpenDirectory(parent, out directory)) || directory is null)
         {
-            ThrowIfMemoryExhausted();
             throw new DirectoryNotFoundException("Elternverzeichnis nicht lesbar.");
         }
 
