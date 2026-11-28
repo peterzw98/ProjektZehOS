@@ -113,9 +113,11 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     {
         string hash = PackageTrust.Sha256Hex(catalog);
         var floor = KnownGeneration(out byte[]? storedCatalog);
+        // Die Meldung nennt die Dateien: Ohne Boden und Katalog kann nur der Mensch entscheiden, den Schutz zurueckzusetzen.
         if (floor.Damaged && floor.Hashes.Count == 0)
             return ResultErr.CreateFailure(ResultCode.Failure,
-                "Katalog v2 und Generationsboden sind beschaedigt; Rueckstufungsschutz unbekannt, pkg update abgelehnt.");
+                "Katalog v2 und Generationsboden sind beschaedigt; Rueckstufungsschutz unbekannt, pkg update abgelehnt. Zum Zuruecksetzen "
+                + "v2/catalog2.signed und v2/catalog2.floor samt .old, .new und .wip im Paketordner loeschen, dann pkg update.");
         if (floor.Hashes.Count > 0)
         {
             if (parsed.Generation < floor.Generation)
@@ -160,9 +162,11 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
         }
         var floors = StorageLock.Run(() => ReadFloorsStorageLocked());
         bool floorValid = false;
-        foreach (byte[] bytes in floors)
+        // Beschaedigt zaehlt nur die Fassung, die RestorePendingStorageLocked behielte; ein unlesbarer Rest daneben (etwa eine
+        // Altlast-.new ohne Zeilenende) wird beim naechsten Ersetzen verworfen und darf pkg update nicht dauerhaft sperren.
+        foreach (var (bytes, effective) in floors)
             if (TryParseFloor(bytes, out long value, out string hash)) { Offer(value, hash); floorValid = true; }
-            else damaged = true;
+            else if (effective) damaged = true;
         try
         {
             var stored = ReadStored();
@@ -184,7 +188,7 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     private long HighestValidFloor()
     {
         long highest = 0;
-        foreach (byte[] bytes in StorageLock.Run(() => ReadFloorsStorageLocked()))
+        foreach (var (bytes, _) in StorageLock.Run(() => ReadFloorsStorageLocked()))
             if (TryParseFloor(bytes, out long value, out _) && value > highest) highest = value;
         return highest;
     }
@@ -217,16 +221,22 @@ internal sealed class PackageService2(string root, PackageStore2 store, PackageT
     // Alle vorhandenen Fassungen (Ziel, .old, .new) werden gelesen, ohne zu schreiben; die hoechste gueltige gilt. Eine .new ist
     // vollstaendig geschrieben (erst nach .wip umbenannt), kann also hoechstens einen spaeter nicht gespeicherten Katalog nennen:
     // Dann geht nur genau dieser Katalog wieder durch, das ist sicher.
-    private List<byte[]> ReadFloorsStorageLocked()
+    // Effective markiert die Fassung, die RestorePendingStorageLocked (textLine) behielte: das Ziel, sonst .old, sonst eine .new
+    // mit Zeilenende. Alle anderen sind Reste, die das naechste Ersetzen verwirft.
+    private List<(byte[] Bytes, bool Effective)> ReadFloorsStorageLocked()
     {
-        var found = new List<byte[]>(3);
+        var found = new List<(byte[] Bytes, bool Effective)>(3);
+        bool kept = false;
         foreach (string path in new[] { FloorPath, FloorPath + ".old", FloorPath + ".new" })
         {
             if (!File.Exists(path)) continue;
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read);
             byte[] bytes = new byte[Math.Min(stream.Length, FloorMaximumBytes + 1)];
             stream.ReadExactly(bytes);
-            found.Add(bytes);
+            // Ohne Zeilenende verwirft Restore eine .new; sie ist dann nie die behaltene Fassung.
+            bool effective = !kept && (path != FloorPath + ".new" || (bytes.Length > 0 && bytes[^1] == (byte)'\n'));
+            kept |= effective;
+            found.Add((bytes, effective));
         }
         return found;
     }
