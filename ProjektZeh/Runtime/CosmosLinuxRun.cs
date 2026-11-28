@@ -452,13 +452,17 @@ internal static unsafe class CosmosLinuxRun
     private static ResultErr StartForeground(byte[] elf, string[] arguments, string[] envp, ShellService shell, string? root, string? exePath,
         ILinuxFileStore? store = null, IDisposable? lease = null)
     {
+        // Abweisungen auch seriell melden: Die Shellmeldung steht nur am Bildschirm, Gastproben brauchen einen Beleg, dass der Start
+        // ankam und abgewiesen wurde (sonst sieht eine verlorene Eingabe genauso aus wie eine Abweisung).
         if (shell.HasForeground)
         {
+            Serial("LINUXRUN REFUSED session");
             return ResultErr.CreateFailure(ResultCode.Failure, "run: in dieser Sitzung läuft schon ein Programm");
         }
 
         if (Interlocked.CompareExchange(ref busy, 1, 0) != 0)
         {
+            Serial("LINUXRUN REFUSED busy");
             return ResultErr.CreateFailure(ResultCode.Failure, "run: es läuft schon ein Programm");
         }
 
