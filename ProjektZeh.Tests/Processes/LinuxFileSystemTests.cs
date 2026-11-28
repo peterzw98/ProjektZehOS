@@ -330,6 +330,37 @@ public sealed class LinuxFileSystemTests
         }
     }
 
+    [TestMethod]
+    public void LookupMemoryExhaustionIsEnomemNotEnoent()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Inconclusive("Die Wurzel ist ein Pfad mit '/' wie im Kernel.");
+        }
+
+        string tmp = TempDir();
+        try
+        {
+            string root = Path.Combine(tmp, "root");
+            var fs = new Fs(DirectoryFileStore.Open(root, new OutOfMemoryLinks(), StringComparison.Ordinal).Value!, new Sink());
+            Assert.AreEqual(-12L, fs.Stat("/RequestServer", false, out _)); // V51: ENOMEM, nicht ENOENT
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+
+    /// <summary>Wie Cosmos-FAT bei Speichermangel: die Abfrage scheitert mit LinuxOutOfMemoryException.</summary>
+    private sealed class OutOfMemoryLinks : ILinuxDiskLinks
+    {
+        public LinuxNodeKind KindStorageLocked(string parent, string name, out string found) => throw new LinuxOutOfMemoryException("test");
+
+        public string ReadLinkStorageLocked(string full) => throw new LinuxOutOfMemoryException("test");
+
+        public bool CreateSymlinkStorageLocked(string full, string target) => false;
+    }
+
     /// <summary>Wie FAT unter Cosmos: Symlink anlegen meldet false.</summary>
     private sealed class NoLinks : ILinuxDiskLinks
     {

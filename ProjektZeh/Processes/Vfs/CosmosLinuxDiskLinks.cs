@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Cosmos.Kernel.Core.Memory;
 using Cosmos.Kernel.System.FileSystem;
+using ProjektZeh.Processes;
 using ProjektZeh.Security;
 
 namespace ProjektZeh.Processes.Vfs;
@@ -39,6 +41,7 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         IVfsInode inode = directory.Inode;
         if (!inode.InodeOperations.Lookup(inode, name, out IVfsInode? child))
         {
+            ThrowIfMemoryExhausted();
             return LinuxNodeKind.Missing;
         }
 
@@ -48,6 +51,7 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         // Unlesbare Attribute: ablehnen statt einen Symlink zu übersehen.
         if (!child.InodeOperations.GetAttr(child, out VfsStat stat))
         {
+            ThrowIfMemoryExhausted();
             throw new IOException("Attribute nicht lesbar.");
         }
 
@@ -84,10 +88,23 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
         return inode.InodeOperations.Symlink(inode, name, target, out _);
     }
 
+    /// <summary>
+    /// V51: Cosmos-FAT meldet einen Allokationsfehler beim Lookup nur als false, ZehOS machte daraus -ENOENT (Ladybird 384M: "Spawn
+    /// RequestServer ENOENT"). Nahe der Speicherreserve gilt false als fehlender Speicher (-ENOMEM). Gast belegt: nein (offen).
+    /// </summary>
+    private static void ThrowIfMemoryExhausted()
+    {
+        if (FrameReclaim.IsNearReserve(UserPageTable.FreePages, UserPageTable.ReservedPages))
+        {
+            throw new LinuxOutOfMemoryException("Speicher erschöpft.");
+        }
+    }
+
     private static IVfsDirectoryHandle OpenDirectoryStorageLocked(string parent)
     {
         if (!VfsManager.TryOpenDirectory(parent, out IVfsDirectoryHandle? directory))
         {
+            ThrowIfMemoryExhausted();
             throw new DirectoryNotFoundException("Elternverzeichnis nicht lesbar.");
         }
 

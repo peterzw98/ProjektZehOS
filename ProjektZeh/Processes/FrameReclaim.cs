@@ -77,4 +77,11 @@ internal static class FrameReclaim
         // Die Reserve ist die Grenze, ab der Nutzer-Frames scheitern; doppelt so viel Abstand lässt Zeit für die Sammlung.
         return freePages < (totalPages >> ThresholdShift) || freePages < reservedPages * 2;
     }
+
+    /// <summary>
+    /// V51: Liegt der freie Speicher nahe der Kernel-Reserve (V43)? Dann ist ein false der Cosmos-VFS (Lookup/Öffnen, das Allokationsfehler nur
+    /// als false meldet) eher fehlender Speicher als ein fehlender Eintrag: ENOMEM statt ENOENT. Ohne Reserve (0, kein Linux-Lauf) nie.
+    /// </summary>
+    public static bool IsNearReserve(ulong freePages, ulong reservedPages) =>
+        reservedPages != 0 && freePages < reservedPages + (reservedPages >> 2);
 }
