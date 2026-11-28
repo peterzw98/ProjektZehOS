@@ -113,6 +113,11 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
     /// <summary>N2-Z: Anfang der Programmdatei, den execve mit einem Lesevorgang holt (ELF-Kopf und Programmtabelle).</summary>
     private const int ExecPrefixBytes = 4096;
 
+    // N2-Z: Der Kernel gibt kurzlebige Puffer nur über die Müllabfuhr zurück; je execve ein neuer 4-KiB-Puffer und ein neues 16-Byte-Array
+    // blieb als Heapwachstum stehen. Je ein Puffer wird wiederverwendet (Interlocked: ein Nutzer zur Zeit, jeder weitere legt neu an).
+    private static byte[]? s_prefixPool;
+    private static byte[]? s_randomPool;
+
     private const int ORdOnly = 0;
     private const long E2Big = 7, ENoExec = 8;
 
@@ -354,7 +359,19 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             return read;
         }
 
-        byte[] random = new byte[16];
+        byte[] random = System.Threading.Interlocked.Exchange(ref s_randomPool, null) ?? new byte[16];
+        try
+        {
+            return ExecWithRandom(path, argv, envp, inVfork, elf, fileLength, source, startsSelf, random);
+        }
+        finally
+        {
+            s_randomPool = random; // ElfLoader kopiert die Bytes in den Stack, nichts hält den Verweis
+        }
+    }
+
+    private long ExecWithRandom(string path, string[] argv, string[] envp, bool inVfork, byte[] elf, long fileLength, ILinuxPageSource? source, bool startsSelf, byte[] random)
+    {
         if (!TryFillRandom(random))
         {
             return -LinuxSyscalls.EAGAIN;
@@ -448,6 +465,7 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 return r < 0 ? r : -LinuxErrno.ENOENT;
             }
 
+            byte[]? rentedPrefix = null;
             try
             {
                 r = file.Stat(out LinuxStat st);
@@ -476,11 +494,12 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
                 // N2-Z: Kopf, Programmtabelle und der Rückgabepuffer des Kopfteils liegen meist in den ersten Bytes. Jeder Lesevorgang der Platte
                 // kostet im Kern Puffer (FAT liest je Aufruf Clustergröße): ein Lesevorgang am Anfang statt drei je Start.
                 ILinuxFile f = file;
-                byte[] prefix = new byte[(int)Math.Min(st.Size, ExecPrefixBytes)];
+                byte[] prefix = rentedPrefix = System.Threading.Interlocked.Exchange(ref s_prefixPool, null) ?? new byte[ExecPrefixBytes];
+                int wanted = (int)Math.Min(st.Size, ExecPrefixBytes);
                 long prefixLength = 0;
-                if (prefix.Length > 0 && f.Seek(0, 0) >= 0)
+                if (wanted > 0 && f.Seek(0, 0) >= 0)
                 {
-                    long got = f.Read(prefix);
+                    long got = f.Read(prefix.AsSpan(0, wanted));
                     prefixLength = got > 0 ? got : 0;
                 }
 
@@ -524,6 +543,11 @@ internal sealed partial class LinuxUserProcess : ILinuxUnixNames
             }
             finally
             {
+                if (rentedPrefix != null)
+                {
+                    s_prefixPool = rentedPrefix; // ReadAt endet mit ReadProgram; nur der Kopf wird kopiert (bytes)
+                }
+
                 _ = file.Close();
             }
         }
