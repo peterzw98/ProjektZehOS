@@ -60,7 +60,9 @@ Schnittstellen (Cosmos, `[Experimental(SchedulerSeamDiagId)]` wie bisher):
 public sealed unsafe class UserPageTable
 {
     // Entfällt: int _active mit Bit Changing. Neu: CPUs mit der Tabelle in CR3, ein Bit je logischer CPU
-    // (4 × ulong wie CpuSet), Interlocked.Or vor dem CR3-Schreiben, Interlocked.And nach dem nächsten.
+    // (4 × ulong wie CpuSet). Interlocked.Or vor dem CR3-Schreiben dieser Tabelle; Interlocked.And erst nach dem CR3-Schreiben,
+    // das auf dieser CPU eine andere Wurzel lädt. Ein Wechsel T -> T (gleiche Tabelle, anderer Thread) schreibt CR3 nicht
+    // (SwitchTo kehrt früh zurück, UserPageTable.cs:412-416) und lässt das Bit stehen: Der TLB der CPU hält die Einträge weiter.
     private ActiveMask _active;
 
     /// Entfernt die Seite und kehrt erst zurück, wenn keine CPU sie mehr erreicht; der Frame gehört danach dem Aufrufer.
@@ -77,7 +79,9 @@ public sealed unsafe class UserPageTable
 
 public sealed class PerCpuState
 {
-    internal ulong _tlbEpoch;   // steigt bei jedem CR3-Schreiben (SwitchTo) und in jedem Abschuss-Handler, Interlocked
+    // Steigt bei jedem CR3-Schreiben (SwitchTo) und in jedem Abschuss-Handler, immer NACH dem CR3-Schreiben (Interlocked,
+    // volle Barriere): Eine Epoche, die vor dem Flush stiege, wäre eine Bestätigung vor dem Leeren des TLB.
+    internal ulong _tlbEpoch;
 }
 
 public interface IInterruptController   // X64InterruptController
@@ -88,21 +92,40 @@ public interface IInterruptController   // X64InterruptController
 
 Ablauf `UnmapRange`:
 
-1. Unter `_lock` (`AcquireIrqSafe`, wie heute): Einträge entfernen, Frames sammeln, auf der eigenen CPU `invlpg` je Seite.
-2. Volle Barriere (`Interlocked`), dann `_active` lesen. Eine CPU, die danach einsteigt, setzt ihr Bit vor ihrem CR3-Schreiben (Interlocked) und lädt CR3 erst
-   danach; ihre Seitenwanderung sieht die neuen Einträge. Eine, die vorher einstieg, steht in der Maske. Das ersetzt `Changing`.
-3. `_lock` freigeben. Für jede andere CPU in der Maske: Epoche lesen, IPI senden (Interrupts kurz maskiert um die zwei ICR-Schreiben, wie `SendIpi` verlangt).
-4. Mit freien Interrupts warten, bis jede gemerkte Epoche weitergezählt hat (`Thread.SpinWait`; nach 100 ms Panik mit CPU-Nummer: ein Abschuss ohne Antwort ist
-   ein Kernelfehler, ein freigegebener Frame wäre Datenverlust).
+1. Unter `_lock` (`AcquireIrqSafe`, wie heute; Interrupts maskiert, der Auslöser kann nicht umziehen): Einträge entfernen, Frames sammeln, auf der eigenen CPU
+   `invlpg` je Seite.
+2. Noch unter `_lock`: volle Barriere (`Interlocked`), dann `_active` lesen, die **eigene CPU-Nummer** festhalten und für jede andere CPU der Maske die Epoche lesen
+   (Schnappschuss auf dem Stack: Maske, eigene CPU, Epochen; keine Allokation). Eine CPU, die danach einsteigt, setzt ihr Bit vor ihrem CR3-Schreiben (Interlocked)
+   und lädt CR3 erst danach; ihre Seitenwanderung sieht die neuen Einträge. Eine, die vorher einstieg, steht in der Maske. Das ersetzt `Changing`.
+3. `_lock` freigeben. Für jede CPU des Schnappschusses außer der in Schritt 2 festgehaltenen eigenen: IPI senden (Interrupts kurz maskiert um die zwei
+   ICR-Schreiben, wie `SendIpi` verlangt). Der Ausschluss gilt der CPU, die in Schritt 1 `invlpg` ausgeführt hat, nicht der, auf der der Auslöser jetzt läuft:
+   Zieht er zwischen Schritt 1 und 3 auf eine andere CPU der Maske um, bekommt diese ihr IPI trotzdem (ein IPI an die eigene CPU ist harmlos, der Handler läuft
+   nach dem Freigeben der Interrupts).
+4. Mit freien Interrupts warten, bis jede gemerkte Epoche weitergezählt hat (`Thread.SpinWait`). Grenze nicht 100 ms: Im Gast kann der Wirt eine vCPU für
+   Zehntelsekunden entziehen (QEMU unter Last, VMware), ohne dass der Kernel fehlerhaft ist. Deshalb nach 100 ms das IPI an die säumigen CPUs **erneut** senden
+   und weiter warten, nach der Grenze `zehos.tlbtimeout` (Bootoption, Vorgabe 5000 ms, 0 = nie) Panik mit CPU-Nummer: Ein Frame, der ohne Bestätigung frei würde,
+   wäre Datenverlust; deshalb nie „aufgeben und freigeben“.
 5. Rückkehr; erst jetzt darf der Aufrufer die Frames freigeben.
 
-Handler `0xF2` (Interruptkontext): Ist auf dieser CPU eine Benutzertabelle geladen, CR3 mit derselben Wurzel neu schreiben; `_tlbEpoch` erhöhen; EOI.
-Keine Allokation, kein Protokoll, keine Sperre. Ohne geladene Tabelle nur die Epoche.
+Handler `0xF2` (Interruptkontext): CR3 **aus dem Register** lesen und denselben Wert zurückschreiben (leert alle nicht globalen Einträge; ohne geladene
+Benutzertabelle trifft es nur die Kernelwurzel und ist harmlos), **danach** `_tlbEpoch` erhöhen (Interlocked), EOI. Nicht `state._loadedTable` lesen: Der Handler
+kann zwischen dem CR3-Schreiben in `SwitchTo` und dem Nachführen von `_loadedTable` kommen, das Register stimmt immer. Keine Allokation, kein Protokoll, keine Sperre.
+
+**Kontext der Aufrufer (S2-Pflicht vor dem Patch):** `Unmap`, `UnmapRange`, `TryProtect` mit Abschuss und `Destroy` warten und dürfen nur im Threadkontext mit freien
+Interrupts laufen. Zwei Auslöser, die mit IF=0 aufeinander warten, beantworten das IPI des anderen nie: Deadlock. Deshalb vor S1 alle Aufrufer auditieren und
+im PR auflisten, besonders die Abbau- und Absturzpfade: `CosmosFaultIsolation.OnCpuException` (läuft mit IF=0, gibt heute nichts frei, nur `isolated.Stage`),
+`CosmosLinuxRun.OnFault` (Ausnahmekontext; ruft nur `HandlePageFault`, das abbildet, nicht entfernt) und der Abbau nach dem Verlassen des Ring 3
+(`CosmosLinuxRun.cs:1574`, Threadkontext). Der Patch prüft die Regel selbst: `Unmap` mit IF=0 oder auf einem Interruptstack ist ein Kernelfehler (Panik mit
+Aufrufer-RIP), nicht ein stilles Warten.
 
 **Regeln:** Gewartet wird nie unter einem SpinLock oder `CosmosIrqLock` und nie mit maskierten Interrupts: Zwei Auslöser, die mit maskierten Interrupts
 aufeinander warten, hielten sich gegenseitig fest. `_lock` der Tabelle bleibt die innerste Sperre (darunter nur der `PageAllocator`). `TryMap` braucht keinen
 Abschuss (x86 speichert keine nicht vorhandenen Einträge); der dann mögliche unechte Seitenfehler ist schon abgedeckt (`IUserPagesQuery.MapsTo`, V38).
-`TryProtect` nur mit Abschuss, wenn Rechte wegfallen (RW → R, X → NX); Rechte hinzufügen braucht keinen (unechter Fehler, wie bei `TryMap`).
+`TryProtect` mit Abschuss, wenn Rechte wegfallen (RW → R, X → NX). Schreibrecht hinzufügen (R → RW) braucht keinen: Eine CPU mit altem Eintrag bekommt einen
+unechten Schreibfehler auf vorhandener Seite, den `IsStaleWriteFault` (V38b, `LinuxUserProcess.cs:975-976`, `:1011`) schon als „Zugriff jetzt erlaubt, Befehl wiederholen“
+statt SIGSEGV behandelt; diese Regel gehört in den Patchtext als Bedingung für die Abkürzung. **Ausführrecht hinzufügen (NX → X) nur mit Abschuss:** Ein unechter
+Ausführfehler auf vorhandener Seite endet heute als SIGSEGV (die Tabelle meldet kein NX-Bit, `IsStaleWriteFault` nimmt Ausführfehler bewusst aus). Erst wenn
+`IUserPagesQuery` das NX-Bit meldet und der Seitenfehler-Handler auch dafür „jetzt erlaubt → Retry“ prüft, darf auch dieser Fall ohne Abschuss laufen.
 
 **Prüfung (Cosmos-Testkern, smp4):** Thread A liest auf CPU 1 in Schleife eine Seite, Thread B entfernt sie auf CPU 2 und bildet einen anderen Frame mit
 Marke ab: A sieht die Marke nie über die alte Abbildung (Testsonde zählt Lesungen des alten Frames nach Rückkehr von `Unmap`: 0). Gegenprobe mit
@@ -123,6 +146,10 @@ Threading-, Interrupts-, Smp- und GarbageCollector-Suiten wie die Basis.
   Laufmenge (`ThreadAffinity.Current`), sonst `-EINVAL`; im PR als Abweichung.
 - Alle Stellen, die Frames freigeben, gegen die neue Regel prüfen: `DropFrame`, `LinuxMemFile.UnrefLocked` (geteilte Frames erst bei Zähler 0, also nach
   dem Unmap in jedem Prozess), execve (`ReplaceOwnImage` → `Destroy` erst nach dem Lösen aller Threads, `UserPageTable.Dispose` wirft sonst).
+- `Destroy`/execve prüfen **die Maske**, nicht nur „alle Threads gelöst“: `RequestLeave` wirkt erst am Takt, und eine CPU löscht ihr Bit erst beim nächsten
+  CR3-Schreiben einer anderen Wurzel (Wechsel T → T lässt es stehen). `Destroy` wartet im Threadkontext, bis `_active` leer ist (Grenze und Panik wie Schritt 4;
+  eine CPU, die nur noch die Tabelle hält, ohne einen ihrer Threads zu fahren, bekommt ein `0xF0`, damit sie die Kernelwurzel lädt), und gibt erst dann
+  Tabellenseiten und Frames frei.
 
 ### S3 Signale und Abbruch über CPUs
 
@@ -174,7 +201,8 @@ geteilter Speicher (`memfd_seal.c`, `unix_fdpass.c`) mit beiden Prozessen auf ve
 2. Warten auf den Abschuss: unter `_memGate` erlaubt (Monitor, die Ziel-CPUs blockieren dort, nicht mit maskierten Interrupts); nie unter `_lock`,
    `CosmosIrqLock`, Queue-Sperre oder in einem Scheduler-Hook.
 3. Handler `0xF2`: Interruptkontext, keine Sperre, keine Allokation, kein Protokoll; schreibt nur CR3 und die eigene Epoche.
-4. `SwitchFor`/`SwitchTo` (unter Queue-Sperre): Maskenbit setzen vor, löschen nach dem CR3-Schreiben, Epoche erhöhen; kein Warten mehr (entfällt mit `Changing`).
+4. `SwitchFor`/`SwitchTo` (unter Queue-Sperre): Maskenbit der neuen Tabelle setzen vor dem CR3-Schreiben, Bit der alten Tabelle löschen und Epoche erhöhen
+   **nach** dem CR3-Schreiben; T → T schreibt nichts und ändert nichts; kein Warten mehr (entfällt mit `Changing`).
 5. Statischer Zustand: keiner neu in ZehOS; in Cosmos nur der Vektor. `docs/SMP_AUDIT.md` bekommt eine Zeile für `UserPageTable._active` (Maske) und die Epoche.
 
 ## 5. Risiken
@@ -182,7 +210,9 @@ geteilter Speicher (`memfd_seal.c`, `unix_fdpass.c`) mit beiden Prozessen auf ve
 | Risiko | Wirkung | Gegenmittel |
 | --- | --- | --- |
 | Frame frei vor der Bestätigung | Ring 3 schreibt in Kernel- oder fremden Speicher | `Unmap` kehrt erst nach allen Epochen zurück; Test `tlb_munmap` mit Gegenprobe |
-| Ziel-CPU lange mit maskierten Interrupts (lange Spinlocks, Plattenwarten im IRQ-Pfad) | `munmap` wartet, Bildzeit leidet | Messung in S5; Grenze 100 ms → Panik mit CPU-Nummer statt stillem Hänger |
+| Ziel-CPU lange mit maskierten Interrupts (lange Spinlocks, Plattenwarten im IRQ-Pfad) | `munmap` wartet, Bildzeit leidet | Messung in S5; nach 100 ms IPI erneut, Panik mit CPU-Nummer erst nach `zehos.tlbtimeout` (Vorgabe 5 s) statt stillem Hänger |
+| vCPU-Entzug im Gast (QEMU unter Last, VMware) | Abschuss wartet ohne Kernelfehler lange | Grenze großzügig und einstellbar (Schritt 4); in S5 die längste Wartezeit je Lauf ausgeben |
+| Auslöser oder `Destroy` mit IF=0 (Ausnahme-, Absturzpfad) | zwei Wartende beantworten ihre IPIs nie: Deadlock | Aufrufer-Audit vor S1 (Abschnitt S1, „Kontext der Aufrufer“), Panik bei IF=0 im Patch |
 | Abschüsse häufig (Allokator mit `madvise`/`munmap`, Ladybird-GC) | IPI-Last auf allen CPUs des Laufs | Bereichsvarianten; Zahl der Abschüsse je Lauf zählen und in `/proc`-Diagnose oder Laufprotokoll ausgeben |
 | Monitor im Gast über CPUs fehlerhaft | Hänger oder Datenrennen in allen Prozesssperren | S0 vor allem anderen |
 | Schalter bleibt dauerhaft aus | kein Fortschritt zum Tor | Vorgabe 1 als Abschluss von S5, Gegenprobe smp1 bleibt im Plan |
