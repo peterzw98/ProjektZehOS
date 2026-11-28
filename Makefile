@@ -12,6 +12,7 @@ else
   TIMEOUT_DEFAULT := 300
 endif
 TIMEOUT    ?= $(TIMEOUT_DEFAULT)
+RUN_TIMEOUT ?= 30
 KERNEL     ?= HelloWorld
 
 OUTPUT     := ./output-$(ARCH)
@@ -111,7 +112,7 @@ run: build
 	  -no-reboot \
 	  -no-shutdown & \
 	QEMU_PID=$$!; \
-	sleep $(TIMEOUT); \
+	sleep $(RUN_TIMEOUT); \
 	echo "Stopping QEMU..."; \
 	kill $$QEMU_PID 2>/dev/null || true
 
