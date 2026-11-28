@@ -1,5 +1,7 @@
 # N3 · Arbeitspakete für den nativen Paketdienst
 
+Die aktuelle Umsetzung und die noch offenen Abnahmen stehen im [N3-Plan](2026-11-24-ladybird-n3-paketdienst.md#stand-28-november-2026).
+
 Entwurf für Peter, Stand 28. November 2026. P1–P4 sind auf `master` vorhanden.
 Der N2-Z-Torplan sieht den Schnitt für Index, sysroot und Laufzeitlader nach
 N2-Z vor. Bau- und Serverentwürfe können parallel vorbereitet werden. Die

@@ -16,14 +16,16 @@ Stand 28. November 2026. Auftrag Peter (Terminal, 28.11.): nach dem Vorzeigestan
 3. 1000 Prozessstarts ohne Speicherverlust über 1 MiB.
 4. Desktop und Wasm-Pakete unverändert.
 
-Stand 28.11. auf `story/ladybird` `b4f8ff82`:
+Stand 28.11. Die Prüfungen stammen von unterschiedlichen Köpfen. Für T1 und T4 sind die geprüften Stände unten genannt.
 
 | Torpunkt | Stand | Beleg |
 | --- | --- | --- |
 | (1) S1 wie Linux | erfüllt | `test-linux-all` 41/41 (KVM 1 und 4 CPUs, TCG 1 CPU) nach T2 (`badptr` ohne Symlink, Gastbeleg `v7bsymlink`: `symlink` auf FAT liefert `EPERM`); mit V50-OOM-Satz 30/30 |
 | (2) Fehler nur im Prozess | erfüllt | T3 `test-linux-faults.py`: Seitenfehler, `ud2`, Division durch null, `SIGSEGV` ohne Handler und im Thread, je 2 Runden, 23/23 bei 1 und 4 CPUs; voller Speicher beendet nur die Kinder (`test-linux-oom-desktop.py` 7/7, Fix `task/lb-n2z-oom`) |
-| (3) 1000 Starts < 1 MiB | knapp | nach 100 Aufwärmstarts 1000 Starts 980 bis 1108 KiB (4 CPUs), 580 bis 836 KiB (1 CPU); Steigung ~0,36 KiB je Start ist Fragmentierung des GC-Segments, kein Objekt- oder Frameleck; Puffer-Pool in Arbeit |
-| (4) Desktop und Wasm | weitgehend | `master` `c042ab90` und Story `161f03ae` auf MSI-KVM und Windows-TCG: Normal-, Recovery-Bau, Desktop, Energieaktionen gleich; Wasm-Teil auf dem PC offen |
+| (3) 1000 Starts < 1 MiB | offen | Nach 100 Aufwärmstarts auf `502942a2` ohne Pool 852–916 KiB (4 CPUs) und 1.108–1.236 KiB (1 CPU). Der Pool lag bei 1.364–1.556 KiB und wurde zurückgestellt. Die Allokationsanalyse läuft. |
+| (4) Desktop und Wasm | erfüllt für den geprüften Vergleich | `master` `c042ab90` und Story `161f03ae` unter Windows/QEMU-TCG je 4/4, mit Normal- und Recovery-Bau, Desktop, Energieaktionen, Rechner und Doom. [T4-Bericht](2026-11-28-ladybird-n2z-t4-pc.md) |
+
+Das Tor bleibt wegen der Speichergrenze offen. Die Gastbefunde gelten für die genannten Prüfstände.
 
 Ladybird auf `161f03ae`: Abnahme 8/8, Dauerlauf `static` 4 CPUs 30/30 ohne Hänger, 1 GiB und 768 MiB je 3/3. Nicht geprüft: VMware, echte Hardware.
 

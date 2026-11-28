@@ -232,6 +232,14 @@ Der erste vollständige **Gast-Screenshot von `static.html`** (798 × 4087 Pixel
 
 Der [Risiko-Review](superpowers/specs/2026-11-27-ladybird-risk-uebersicht.md) umfasst fünf Blöcke. P1 `readv` und die P2-Befunde bis auf die `SCM_RIGHTS`-Grenze wurden behoben und von laser nachgeprüft.
 
+### Stand 28. November 2026
+
+Bezug ist der Story-Kopf [`058c03eb`](https://github.com/peterzw98/ProjektZehOS/commit/058c03ebfd568f3b7adc61a5921a00173019e847) mit Cosmos-Pin `0fb91b8df`. Die Gastbelege gelten für die jeweils genannten Stände.
+
+- **N2-Z bleibt offen.** S1 einschließlich FAT-Gastbeleg und der Torlauf zur Fehlerisolation sind belegt. T4 verglich `c042ab90` und `161f03ae` auf Windows/QEMU-TCG mit 4/4 Prüfungen je Stand, einschließlich Rechner und Doom. Die Speichergrenze von 1 MiB pro 1.000 Starts wird nach Aufwärmen je nach CPU-Zahl und Stand überschritten. Auf `502942a2` ohne Pool meldete der Lead 852–916 KiB mit vier CPUs und 1.108–1.236 KiB mit einer CPU. Der Pool schnitt schlechter ab und wurde zurückgestellt. [Torplan](superpowers/plans/2026-11-28-ladybird-n2z-tor.md) · [T4-Bericht](superpowers/plans/2026-11-28-ladybird-n2z-t4-pc.md)
+- **N3 A, B1–B3, C, E-Vorarbeit und G sind auf der Story.** A/B/E liefen auf `502942a2` mit KVM/4 CPUs und TCG/1 CPU in je zwei Gastproben. Ein Upgrade bei laufendem Programm ist auf `738936ea` mit KVM/4 CPUs belegt. `f59c4477` prüfte die Paketproben einschließlich des seitenweisen Interpreter-Ladepfads mit KVM/1 CPU, sieben PASS-Zeilen. C ist als PR #754 gemergt. Der Updater aus G bestand fünf lokale Fälle mit `alpine/git:2.47.2`, einschließlich des verhinderten v2-Rückfalls. Offen bleiben die Toolchain-Freigabe für D, der vollständige sysroot und S2, F sowie die Ablage und der Gasttransfer für große Paketdateien. [N3-Plan](superpowers/plans/2026-11-24-ladybird-n3-paketdienst.md)
+- **N4 S0–S5 und IRQ-Signalzustellung sind gemergt.** Die Standardkonfiguration bindet je Linux-Lauf weiter an eine CPU. SMP läuft über `zehos.linuxsmp=1` oder den entsprechenden Testbau. Der IRQ-Stand `4b595fc0` mit Pin `0fb91b8df` meldete auf MSI/KVM 30/30 Standardfälle bei 1 und 4 CPUs ohne Opt-in und 15/15 auf 4 CPUs mit Opt-in, dazu 5/5 gezielte `n4smp`-Läufe. Die vollständige S5-Matrix und N4-Z stehen aus. [N4-Plan](superpowers/plans/2026-11-24-ladybird-n4-posix.md)
+
 ### Offene Punkte
 
 1. **N1-D2 (#636):** Der Headless-Screenshot ist im [Stand nach dem GO](#stand-nach-dem-go-am-27-november-2026) belegt. Offen sind der Merge von `task/ladybird-n1d2-alles`, der D2-Bericht und das förmliche Urteil D (`trägt` oder `glibc`).
