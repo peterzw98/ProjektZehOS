@@ -6,6 +6,7 @@ using Cosmos.Kernel.Core.Memory;
 using Cosmos.Kernel.System.FileSystem;
 using ProjektZeh.Processes;
 using ProjektZeh.Security;
+using ProjektZeh.Storage;
 
 namespace ProjektZeh.Processes.Vfs;
 
@@ -92,7 +93,8 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
 
     /// <summary>
     /// V51: Cosmos-FAT meldet einen Allokationsfehler nur als false (Ladybird 384M: "Spawn RequestServer ENOENT"). Scheitert ein Versuch bei
-    /// knappem Speicher, wird einmal gesammelt (FrameReclaim.Retry) und der Versuch wiederholt; das Ergebnis des zweiten Versuchs zählt.
+    /// knappem Speicher, wird die Sperre kurz gelöst, einmal gesammelt (FrameReclaim.Retry, ohne Sperre, wie dessen Doku verlangt) und der
+    /// Versuch genau einmal unter der Sperre wiederholt; das Ergebnis dieses zweiten Versuchs zählt.
     /// Keine Heuristik: eine wirklich fehlende Datei bleibt auch bei knappem Speicher -ENOENT. Gast belegt: siehe PR.
     /// </summary>
     private static bool WithReclaim(Func<bool> attempt)
@@ -107,7 +109,10 @@ internal sealed class CosmosLinuxDiskLinks : ILinuxDiskLinks
             return false;
         }
 
-        return FrameReclaim.Retry(attempt, static () => GC.Collect(), static () => System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency);
+        // Der erste Versuch lief schon; Retry bekommt deshalb einen leeren Versuch und liefert nur die gebremste Sammlung (Sturmbremse, Fehler geschluckt).
+        StorageLock.RunUnlocked(static () => FrameReclaim.Retry(static () => false, static () => GC.Collect(),
+            static () => System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency));
+        return attempt();
     }
 
     private static IVfsDirectoryHandle OpenDirectoryStorageLocked(string parent)

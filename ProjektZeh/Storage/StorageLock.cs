@@ -29,6 +29,10 @@ internal static class StorageLock
 {
     private static readonly object Gate = new();
 
+    /// <summary>Wie oft hält der aktuelle Thread die (reentrante) Sperre gerade? Nur für <see cref="RunUnlocked"/>.</summary>
+    [ThreadStatic]
+    private static int depth;
+
     /// <summary>Ab dieser Warte- oder Haltezeit meldet die Sperre den Aufrufer (Diagnose, kein Abbruch).</summary>
     internal static TimeSpan SlowThreshold { get; set; } = TimeSpan.FromSeconds(2);
 
@@ -48,6 +52,7 @@ internal static class StorageLock
         long requested = Stopwatch.GetTimestamp();
         lock (Gate)
         {
+            depth++;
             long entered = Stopwatch.GetTimestamp();
             try
             {
@@ -55,8 +60,39 @@ internal static class StorageLock
             }
             finally
             {
+                depth--;
                 Measure(requested, entered, caller, file);
             }
+        }
+    }
+
+    /// <summary>
+    /// V51: Führt <paramref name="action"/> ohne die Sperre aus, auch wenn der Aufrufer sie mehrfach (reentrant) hält, und nimmt sie danach
+    /// genauso oft wieder. Für Arbeit, die lange dauert und keine Plattendaten anfasst (Voll-GC beim Reclaim). <b>Zustand, den der Aufrufer
+    /// vor dem Aufruf unter der Sperre gelesen hat, kann danach veraltet sein</b>; der Aufrufer wiederholt seine Platten-Operation neu.
+    /// </summary>
+    public static void RunUnlocked(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        int held = depth;
+        for (int i = 0; i < held; i++)
+        {
+            Monitor.Exit(Gate);
+        }
+
+        depth = 0;
+        try
+        {
+            action();
+        }
+        finally
+        {
+            for (int i = 0; i < held; i++)
+            {
+                Monitor.Enter(Gate);
+            }
+
+            depth = held;
         }
     }
 
@@ -79,6 +115,7 @@ internal static class StorageLock
     {
         long requested = Stopwatch.GetTimestamp();
         Monitor.Enter(Gate);
+        depth++;
         return new Scope(requested, Stopwatch.GetTimestamp(), caller, file);
     }
 
@@ -88,7 +125,7 @@ internal static class StorageLock
         public void Dispose()
         {
             try { Measure(requested, entered, caller, file); }
-            finally { Monitor.Exit(Gate); }
+            finally { depth--; Monitor.Exit(Gate); }
         }
     }
 
