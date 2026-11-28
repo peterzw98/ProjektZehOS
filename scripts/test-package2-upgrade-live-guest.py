@@ -9,17 +9,20 @@ Paket lang bringt ein winziges statisches ELF (von diesem Skript erzeugt, kein U
 schlaeft --sleep Sekunden, liest dann /usr/share/lang/text aus seiner Prozesswurzel und gibt den Inhalt aus ("text rN").
 
 Ablauf: In der Textshell laeuft "run --pkg /usr/bin/lang" (r1). Waehrenddessen im Desktop-Terminal (eigene Sitzung): update und upgrade
-auf r2, resolve zeigt r2, ein zweiter Start wird abgewiesen (ein Programm zur Zeit), ls zeigt beide Versionsordner. Erwartet:
+auf r2, resolve zeigt r2, ein zweiter Start wird abgewiesen (ein Programm zur Zeit). Erwartet:
   1. Das laufende Programm liest nach dem Upgrade noch "text r1" (gebundener alter Indexstand, Dateien von r1 noch auf der Platte).
   2. Der naechste Start sieht r2 ("lang r2 start", "text r2").
-  3. Der Ordner von r1 verschwindet erst mit dem naechsten Start nach dem Ende (CollectUnused), nicht beim Upgrade.
-Die ls-Ausgaben stehen nur am Bildschirm: Bildschirmfotos ls-waehrend.png und ls-danach.png im Protokollordner (.tools/package2-guest/)
-muessen von Hand angesehen werden; das Skript prueft die seriellen Marken.
+  3. Nach dem Ende und dem naechsten Start (CollectUnused) liegt nur noch der Ordner von r2 auf der Platte. Den Paketordner darf der
+     Testbenutzer im Gast nicht lesen ("Zugriff verweigert"); das Skript liest ihn deshalb nach dem Gastlauf offline aus der Laufplatte
+     (qemu-img und mdir aus mtools; fehlt mdir, bleibt dieser Punkt offen). Dass r1 waehrend des Laufs noch da war, belegt Punkt 1:
+     Das alte Programm oeffnet seine Datei erst nach dem Upgrade.
 """
 import argparse
 import importlib.util
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -94,6 +97,20 @@ def wait_output(guest, mark: int, expected: str, timeout: float) -> int:
     raise TimeoutError(f"Ausgabe {expected!r} nicht gesehen; bisher {output_since(guest, mark)[0]!r}")
 
 
+def stored_versions(disk: Path, raw: Path) -> list[str] | None:
+    """Liest die Versionsordner von lang offline aus der Laufplatte (FAT ab Sektor 63, wie vvfat sie anlegt); None ohne mdir."""
+    mdir = shutil.which("mdir")
+    if mdir is None:
+        return None
+    subprocess.run(["qemu-img", "convert", "-O", "raw", str(disk), str(raw)], check=True)
+    try:
+        listing = subprocess.run([mdir, "-b", "-i", f"{raw}@@{63 * 512}", "::/.zehos-packages/v2/lang"], check=True, capture_output=True,
+                                 text=True, env={**os.environ, "MTOOLS_SKIP_CHECK": "1"}).stdout
+    finally:
+        raw.unlink(missing_ok=True)
+    return sorted(line.rstrip("/").rsplit("/", 1)[-1] for line in listing.splitlines() if line.strip())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--iso", type=Path, required=True)
@@ -138,9 +155,6 @@ def main() -> int:
         time.sleep(5)
         if "LINUXRUN BEGIN" in (guest.work / "serial.log").read_text(encoding="utf-8", errors="replace")[second:]:
             raise RuntimeError("zweiter Start lief neben dem ersten")
-        guest.qmp.line("ls /var/lib/zehos/packages/v2/lang")
-        time.sleep(3)
-        guest.shot("ls-waehrend")
         upgraded = guest.mark()
         print(f"Upgrade und Pruefungen fertig nach {time.monotonic() - begun:.0f} s (Programm schlaeft {args.sleep} s)", flush=True)
         text, end = output_since(guest, old)
@@ -167,10 +181,16 @@ def main() -> int:
             raise RuntimeError(f"neuer Start gab {text!r} aus, erwartet r2")
         print("neuer Start: lang r2 start / text r2, exit 0", flush=True)
         time.sleep(1)
-        guest.qmp.line("ls /var/lib/zehos/packages/v2/lang")
-        time.sleep(3)
-        guest.shot("ls-danach")
-        print(f"PACKAGE2_UPGRADE_LIVE PASS (Bildschirmfotos ls-waehrend/ls-danach ansehen); Protokolle: {work}", flush=True)
+        vm.kill()
+        vm.wait()
+        versions = stored_versions(vm_dir / "data.qcow2", work / "data.raw")
+        if versions is None:
+            print("Versionsordner offline: nicht geprueft (mdir fehlt)", flush=True)
+        elif versions != ["1.0.0-r2"]:
+            raise RuntimeError(f"Versionsordner nach dem Ende: {versions}, erwartet nur 1.0.0-r2")
+        else:
+            print("Versionsordner offline: nur 1.0.0-r2", flush=True)
+        print(f"PACKAGE2_UPGRADE_LIVE PASS; Protokolle: {work}", flush=True)
         return 0
     except (RuntimeError, TimeoutError) as error:
         guest.shot("fehler")
