@@ -16,7 +16,16 @@ Stand 28. November 2026. Auftrag Peter (Terminal, 28.11.): nach dem Vorzeigestan
 3. 1000 Prozessstarts ohne Speicherverlust über 1 MiB.
 4. Desktop und Wasm-Pakete unverändert.
 
-Stand: (1) 23 von 24 (`badptr` scheitert), (2) durch V24/V45-Gastfälle belegt, Torlauf fehlt, (3) mit V47 auf `3e1026f8` knapp verfehlt: 1000 Starts nach 100 Aufwärmstarts 1236 KiB (1 CPU) und 1172 KiB (4 CPUs), auf dem V47-Kopf 656 und 648 KiB; Rest ~0,7 KiB je Start ist Wachstum des GC-Segments durch Fragmentierung, kein Objekt- oder Frameleck; `task/lb-n2z-leck` senkt die Allokationen je Exec, (4) nicht geprüft auf dem Story-Stand.
+Stand 28.11. auf `story/ladybird` `b4f8ff82`:
+
+| Torpunkt | Stand | Beleg |
+| --- | --- | --- |
+| (1) S1 wie Linux | erfüllt | `test-linux-all` 41/41 (KVM 1 und 4 CPUs, TCG 1 CPU) nach T2 (`badptr` ohne Symlink, Gastbeleg `v7bsymlink`: `symlink` auf FAT liefert `EPERM`); mit V50-OOM-Satz 30/30 |
+| (2) Fehler nur im Prozess | erfüllt | T3 `test-linux-faults.py`: Seitenfehler, `ud2`, Division durch null, `SIGSEGV` ohne Handler und im Thread, je 2 Runden, 23/23 bei 1 und 4 CPUs; voller Speicher beendet nur die Kinder (`test-linux-oom-desktop.py` 7/7, Fix `task/lb-n2z-oom`) |
+| (3) 1000 Starts < 1 MiB | knapp | nach 100 Aufwärmstarts 1000 Starts 980 bis 1108 KiB (4 CPUs), 580 bis 836 KiB (1 CPU); Steigung ~0,36 KiB je Start ist Fragmentierung des GC-Segments, kein Objekt- oder Frameleck; Puffer-Pool in Arbeit |
+| (4) Desktop und Wasm | weitgehend | `master` `c042ab90` und Story `161f03ae` auf MSI-KVM und Windows-TCG: Normal-, Recovery-Bau, Desktop, Energieaktionen gleich; Wasm-Teil auf dem PC offen |
+
+Ladybird auf `161f03ae`: Abnahme 8/8, Dauerlauf `static` 4 CPUs 30/30 ohne Hänger, 1 GiB und 768 MiB je 3/3. Nicht geprüft: VMware, echte Hardware.
 
 ## Pakete
 
