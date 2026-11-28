@@ -260,9 +260,32 @@ public sealed class PackageService2Tests
         var refused = service.Update(Source(), CancellationToken.None);
         Assert.IsFalse(refused.IsOK());
         StringAssert.Contains(refused.Status.Message, "Rueckstufungsschutz");
+        StringAssert.Contains(refused.Status.Message, "v2/catalog2.floor", "Die Meldung nennt die zu loeschenden Dateien.");
+        StringAssert.Contains(refused.Status.Message, "v2/catalog2.signed");
         PublishCatalog(9, [MuslR1]);
         Assert.IsFalse(service.Update(Source(), CancellationToken.None).IsOK(), "Fail closed gilt fuer jede Generation.");
         Assert.AreEqual(3, File.ReadAllBytes(FloorFile).Length, "Nichts geschrieben.");
+    }
+
+    [TestMethod]
+    public void LegacyFloorNewWithoutNewlineDoesNotBlockUpdate()
+    {
+        // Altlast: nur eine gekuerzte .new ohne Zeilenende, kein Katalog. Restore verwirft sie beim Ersetzen; sie darf vorher
+        // nicht als beschaedigter Boden gelten, sonst sperrte sie pkg update dauerhaft.
+        var service = Service();
+        Directory.CreateDirectory(Path.Combine(Root, "v2"));
+        File.WriteAllBytes(FloorFile + ".new", Encoding.ASCII.GetBytes("zehos-catalog-floor 1\ngenera"));
+        PublishCatalog(2, [MuslR1]);
+        Assert.IsTrue(service.Update(Source(), CancellationToken.None).IsOK());
+        Assert.IsFalse(File.Exists(FloorFile + ".new"), "Der Rest ist verworfen.");
+        Assert.IsTrue(PackageService2.TryParseFloor(File.ReadAllBytes(FloorFile), out long generation, out _));
+        Assert.AreEqual(2, generation);
+
+        // Gegenprobe: Dieselbe Zeichenfolge als Boden selbst ist beschaedigt und sperrt ohne Katalog weiter (fail closed).
+        File.Delete(CatalogFile);
+        File.WriteAllBytes(FloorFile, Encoding.ASCII.GetBytes("zehos-catalog-floor 1\ngenera"));
+        PublishCatalog(3, [MuslR1]);
+        Assert.IsFalse(service.Update(Source(), CancellationToken.None).IsOK());
     }
 
     [TestMethod]
@@ -277,6 +300,7 @@ public sealed class PackageService2Tests
         var torn = Service(step: what => { if (what == "Katalog speichern") throw new IOException("Strom weg"); });
         Assert.IsFalse(torn.Update(Source(), CancellationToken.None).IsOK());
         CollectionAssert.AreEqual(older, File.ReadAllBytes(CatalogFile));
+        // Gewollt: Bis pkg update mit Netz den Stand des Bodens geladen hat, gibt es keinen gueltigen Katalog (auch kein install).
         var read = service.ReadCatalog();
         Assert.IsFalse(read.IsOK(), "Katalog unter dem Boden gilt nicht.");
         StringAssert.Contains(read.Status.Message, "Generationsboden");
