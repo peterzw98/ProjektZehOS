@@ -36,16 +36,19 @@ ISO = ROOT / "ProjektZeh/bin/Release/net10.0/linux-x64/cosmos/ProjektZeh.iso"
 
 # Abweichungen vom Standard (alle Programme aus out/<satz>, Erwartung expected/<satz>, alle Stufen).
 #   build:   Saetze fuer build.sh (Standard: der Satz selbst)
+#   exclude: Programme aus out/<satz>, die nicht ins Buendel kommen (Gast kann sie nicht)
 #   files:   (Satz, Programm), woraus das Buendel besteht (Standard: alle Dateien aus out/<satz>)
 #   status:  Status fuer Programme ohne Erwartung (--status name=status)
 #   expected: Erwartungsordner (None: keiner)
 #   runner:  anderes Laufskript; configs: nur diese Stufen (Praefix des Beschleunigers)
 SPECIAL = {
+    # symlinks braucht ein Dateisystem mit Symlinks; das FAT-Datenlaufwerk des Gastes liefert -EPERM (wie vfat unter Linux), belegt durch v7bsymlink.
+    "s1": {"exclude": ["symlinks"]},
     # spin kommt aus v3neg: Es laeuft endlos und wird mit signal 9 beendet.
     "v3": {"build": ["v3", "v3neg"], "extra": [("v3neg", "spin")], "status": {"spin": "signal 9"}},
-    # drei v7b-Programme ohne Erwartungsdatei, nur Exit 0; v7bfull braucht eine fast volle Datenplatte (Fuelldatei).
-    "v7b": {"build": ["v7b"], "files": [("v7b", "v7bnames"), ("v7b", "v7bopen"), ("v7b", "v7bquota")], "expected": None,
-            "status": {"v7bnames": "exit 0", "v7bopen": "exit 0", "v7bquota": "exit 0"}},
+    # vier v7b-Programme ohne Erwartungsdatei, nur Exit 0; v7bfull braucht eine fast volle Datenplatte (Fuelldatei).
+    "v7b": {"build": ["v7b"], "files": [("v7b", "v7bnames"), ("v7b", "v7bopen"), ("v7b", "v7bquota"), ("v7b", "v7bsymlink")], "expected": None,
+            "status": {"v7bnames": "exit 0", "v7bopen": "exit 0", "v7bquota": "exit 0", "v7bsymlink": "exit 0"}},
     "v7bfull": {"build": ["v7b"], "files": [("v7b", "v7bfull")], "expected": None, "status": {"v7bfull": "exit 0"},
                 "runner": FULL, "accel": {"kvm"}},
 }
@@ -161,7 +164,7 @@ def main(argv=None) -> int:
             if "files" in cfg:
                 files = [ABI / "out" / d / n for d, n in cfg["files"]]
             else:
-                files = sorted(p for p in (ABI / "out" / s).iterdir() if p.is_file())
+                files = sorted(p for p in (ABI / "out" / s).iterdir() if p.is_file() and p.name not in cfg.get("exclude", []))
             files += [ABI / "out" / d / n for d, n in cfg.get("extra", [])]
             programs = [f.name for f in files]
             bundle = work / f"{s}.bundle"
